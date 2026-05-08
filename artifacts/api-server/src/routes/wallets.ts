@@ -36,6 +36,9 @@ const COIN_ID_MAP: Record<string, string> = {
   dag: "constellation-labs",
 };
 
+// XRP uses public XRPL cluster JSON-RPC; others use CoinStats
+const COINSTATS_CHAINS = ["xlm", "hbar", "xdc", "dag"];
+
 function weiToEth(wei: string): string {
   const val = BigInt(wei);
   return (Number(val) / 1e18).toFixed(6);
@@ -87,16 +90,18 @@ async function btcFetch(address: string): Promise<Record<string, unknown>> {
   return resp.json() as Promise<Record<string, unknown>>;
 }
 
-async function xrpFetch(address: string, limit = 50): Promise<Record<string, unknown>> {
-  const resp = await fetch(`https://api.xrpl.org/v2/accounts/${address}/transactions?limit=${limit}`);
-  if (!resp.ok) throw new Error(`XRPL request failed: ${resp.status}`);
-  return resp.json() as Promise<Record<string, unknown>>;
-}
-
-async function xrpAccountFetch(address: string): Promise<Record<string, unknown>> {
-  const resp = await fetch(`https://api.xrpl.org/v2/accounts/${address}`);
-  if (!resp.ok) throw new Error(`XRPL account request failed: ${resp.status}`);
-  return resp.json() as Promise<Record<string, unknown>>;
+// XRPL cluster JSON-RPC — publicly accessible on port 443
+async function xrplRpc(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const resp = await fetch("https://xrplcluster.com/", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ method, params: [params] }),
+  });
+  if (!resp.ok) throw new Error(`XRPL cluster request failed: ${resp.status}`);
+  const data = await resp.json() as Record<string, unknown>;
+  const result = data["result"] as Record<string, unknown>;
+  if (result?.["status"] === "error") throw new Error(`XRPL error: ${result["error_message"] ?? result["error"]}`);
+  return result;
 }
 
 async function coinstatsFetch(path: string): Promise<Record<string, unknown>> {
@@ -123,18 +128,28 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
 
   try {
     if (chain === "xrp") {
-      const [acctData, txData] = await Promise.all([
-        xrpAccountFetch(address),
-        xrpFetch(address, 5),
+      const [acctResult, txResult] = await Promise.allSettled([
+        xrplRpc("account_info", { account: address, ledger_index: "validated" }),
+        xrplRpc("account_tx", { account: address, limit: 5, forward: false }),
       ]);
-      const acct = (acctData["account_data"] ?? {}) as Record<string, unknown>;
+      const acct = acctResult.status === "fulfilled"
+        ? ((acctResult.value["account_data"] ?? {}) as Record<string, unknown>)
+        : {};
       const balanceDrops = String(acct["Balance"] ?? "0");
       const balance = dropToXrp(balanceDrops);
       const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
-      const txs = (txData["transactions"] as Array<Record<string, unknown>>) ?? [];
-      const firstSeen = txs.length > 0 ? String(txs[txs.length - 1]["date"] ?? "") : null;
-      const lastSeen = txs.length > 0 ? String(txs[0]["date"] ?? "") : null;
-      const txCount = Number(acctData["ledger_index"] ?? 0);
+      const txsArr = txResult.status === "fulfilled"
+        ? ((txResult.value["transactions"] as Array<Record<string, unknown>>) ?? [])
+        : [];
+      const toIso = (dateVal: unknown) =>
+        dateVal ? new Date((Number(dateVal) + 946684800) * 1000).toISOString() : null;
+      const firstTx = txsArr[txsArr.length - 1];
+      const lastTx = txsArr[0];
+      const firstSeen = toIso(firstTx ? (firstTx["tx"] as Record<string, unknown> | undefined)?.["date"] ?? firstTx["date"] : null);
+      const lastSeen = toIso(lastTx ? (lastTx["tx"] as Record<string, unknown> | undefined)?.["date"] ?? lastTx["date"] : null);
+      const txCount = acctResult.status === "fulfilled"
+        ? Number(acctResult.value["ledger_index"] ?? 0)
+        : txsArr.length;
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -159,16 +174,33 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       return;
     }
 
-    if (["xlm", "hbar", "xdc", "dag"].includes(chain)) {
+    if (COINSTATS_CHAINS.includes(chain)) {
       const connectionId = COIN_ID_MAP[chain] ?? chain;
       try {
-        const data = await coinstatsFetch(`/wallet/balance?address=${address}&connectionId=${connectionId}`);
-        const balance = parseFloat(String(data["balance"] ?? "0")).toFixed(6);
+        const [balData, txData] = await Promise.allSettled([
+          coinstatsFetch(`/wallet/balance?address=${address}&connectionId=${connectionId}`),
+          coinstatsFetch(`/wallet/transactions?address=${address}&connectionId=${connectionId}&limit=5`),
+        ]);
+        const balance = balData.status === "fulfilled"
+          ? parseFloat(String(balData.value["balance"] ?? "0")).toFixed(6)
+          : "0.000000";
         const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
-        const tags = guessTags(false, 0);
+        const txsArr = txData.status === "fulfilled"
+          ? ((txData.value["transactions"] as Array<Record<string, unknown>>) ?? [])
+          : [];
+        const firstSeen = txsArr.length > 0
+          ? new Date(String(txsArr[txsArr.length - 1]["date"] ?? "")).toISOString()
+          : null;
+        const lastSeen = txsArr.length > 0
+          ? new Date(String(txsArr[0]["date"] ?? "")).toISOString()
+          : null;
+        const txCount = txData.status === "fulfilled"
+          ? Number(txData.value["total"] ?? txsArr.length)
+          : 0;
+        const tags = guessTags(false, txCount);
         res.json(GetWalletResponse.parse({
-          address, chain, balance, balanceUsd, transactionCount: 0,
-          firstSeen: null, lastSeen: null, tags, riskScore: null, isContract: false,
+          address, chain, balance, balanceUsd, transactionCount: txCount,
+          firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
         }));
       } catch {
         res.json(GetWalletResponse.parse({
@@ -224,17 +256,33 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
   const chain = query.success ? query.data.chain : "ethereum";
   const page = query.success ? query.data.page : 1;
   const limit = query.success ? query.data.limit : 20;
-  const address = params.data.address.toLowerCase();
+  // XRP, XLM, HBAR, XDC addresses are case-sensitive — never lowercase them
+  const evmChains = ["ethereum", "polygon", "bsc"];
+  const rawAddress = params.data.address;
+  const address = evmChains.includes(chain) ? rawAddress.toLowerCase() : rawAddress;
   const priceUsd = PRICE_MAP[chain] ?? 1;
 
   try {
     if (chain === "xrp") {
-      const data = await xrpFetch(address, 100);
-      const rawTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
-      const total = rawTxs.length;
-      const paginated = rawTxs.slice((page - 1) * limit, page * limit);
+      const result = await xrplRpc("account_tx", {
+        account: address, limit: limit + 10, forward: false,
+        ...(page > 1 ? { offset: (page - 1) * limit } : {}),
+      });
+      const rawTxs = (result["transactions"] as Array<Record<string, unknown>>) ?? [];
 
-      const transactions = paginated.map((entry) => {
+      // Deduplicate by hash
+      const seen = new Set<string>();
+      const unique = rawTxs.filter((entry) => {
+        const tx = (entry["tx"] ?? entry) as Record<string, unknown>;
+        const hash = String(tx["hash"] ?? "");
+        if (!hash || seen.has(hash)) return false;
+        seen.add(hash);
+        return true;
+      }).slice(0, limit);
+
+      const total = result["ledger_index_max"] ? rawTxs.length : unique.length;
+
+      const transactions = unique.map((entry) => {
         const tx = (entry["tx"] ?? entry) as Record<string, unknown>;
         const meta = entry["meta"] as Record<string, unknown> | undefined;
         const deliveredAmt = String(meta?.["delivered_amount"] ?? tx["Amount"] ?? "0");
@@ -242,9 +290,14 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
         const from = String(tx["Account"] ?? "");
         const to = String(tx["Destination"] ?? "");
-        const direction = from.toLowerCase() === address ? (to.toLowerCase() === address ? "self" : "out") : "in";
+        // Case-sensitive comparison — XRP addresses must not be lowercased
+        const isOut = from === address;
+        const isSelf = from === address && to === address;
+        const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
         const dateVal = tx["date"] as number | undefined;
-        const timestamp = dateVal ? new Date((dateVal + 946684800) * 1000).toISOString() : new Date().toISOString();
+        const timestamp = dateVal
+          ? new Date((dateVal + 946684800) * 1000).toISOString()
+          : new Date().toISOString();
         const feeDrops = String(tx["Fee"] ?? "0");
         const fee = dropToXrp(feeDrops);
         return {
@@ -253,10 +306,10 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           feeUsd: parseFloat((parseFloat(fee) * priceUsd).toFixed(4)),
           timestamp,
           blockNumber: Number(tx["ledger_index"] ?? 0),
-          status: ((meta?.["TransactionResult"] as string | undefined) === "tesSUCCESS" ? "success" : "failed") as "success" | "failed",
-          direction: direction as "in" | "out" | "self",
-          tokenSymbol: String(tx["TransactionType"] ?? "XRP"),
-          tokenName: null,
+          status: ((meta?.["TransactionResult"] as string | undefined) === "tesSUCCESS"
+            ? "success" : "failed") as "success" | "failed",
+          direction,
+          tokenSymbol: "XRP", tokenName: null,
         };
       });
 
@@ -301,39 +354,46 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       return;
     }
 
-    if (["xlm", "hbar", "xdc", "dag"].includes(chain)) {
+    if (COINSTATS_CHAINS.includes(chain)) {
       const connectionId = COIN_ID_MAP[chain] ?? chain;
       const data = await coinstatsFetch(
-        `/wallet/transactions?address=${address}&connectionId=${connectionId}&limit=${limit}`
+        `/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=${connectionId}&limit=${limit}&page=${page}`
       );
       const rawTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
+      const totalFromApi = Number(data["total"] ?? rawTxs.length);
+
+      // Deduplicate by hash on the backend too
       const seen = new Set<string>();
       const deduplicated = rawTxs.filter((tx) => {
-        const hash = String(tx["hash"] ?? tx["txid"] ?? tx["id"] ?? Math.random());
+        const hash = String(tx["hash"] ?? tx["txid"] ?? tx["id"] ?? "");
+        if (!hash) return true;
         if (seen.has(hash)) return false;
         seen.add(hash);
         return true;
       });
 
       const transactions = deduplicated.map((tx) => {
-        const value = parseFloat(String(tx["amount"] ?? "0")).toFixed(6);
+        const value = parseFloat(String(tx["amount"] ?? tx["value"] ?? "0")).toFixed(6);
         const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
-        const fromAddr = String(tx["from"] ?? address);
-        const toAddr = String(tx["to"] ?? "");
-        const direction = fromAddr.toLowerCase() === address ? "out" : "in";
+        const fromAddr = String(tx["from"] ?? tx["sender"] ?? address);
+        const toAddr = String(tx["to"] ?? tx["receiver"] ?? "");
+        // Case-sensitive comparison — XRP/XLM/HBAR addresses must not be lowercased
+        const isOutgoing = fromAddr === address;
+        const isSelf = fromAddr === address && toAddr === address;
+        const direction: "in" | "out" | "self" = isSelf ? "self" : isOutgoing ? "out" : "in";
         return {
           hash: String(tx["hash"] ?? tx["txid"] ?? tx["id"] ?? ""),
           from: fromAddr, to: toAddr || null, value, valueUsd,
           fee: "0.000000", feeUsd: 0,
           timestamp: tx["date"] ? new Date(String(tx["date"])).toISOString() : new Date().toISOString(),
-          blockNumber: Number(tx["blockNumber"] ?? 0),
+          blockNumber: Number(tx["blockNumber"] ?? tx["ledger"] ?? 0),
           status: "success" as const,
-          direction: direction as "in" | "out" | "self",
+          direction,
           tokenSymbol: chain.toUpperCase(), tokenName: null,
         };
       });
 
-      res.json(GetWalletTransactionsResponse.parse({ transactions, total: transactions.length, page, limit }));
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total: totalFromApi, page, limit }));
       return;
     }
 
@@ -383,7 +443,9 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
   const query = GetWalletConnectionsQueryParams.safeParse(req.query);
   const chain = query.success ? query.data.chain : "ethereum";
-  const address = params.data.address.toLowerCase();
+  const evmChainsConn = ["ethereum", "polygon", "bsc"];
+  const rawAddressConn = params.data.address;
+  const address = evmChainsConn.includes(chain) ? rawAddressConn.toLowerCase() : rawAddressConn;
   const priceUsd = PRICE_MAP[chain] ?? 1;
 
   const buildGraph = (
@@ -409,16 +471,16 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
   try {
     if (chain === "xrp") {
-      const data = await xrpFetch(address, 50);
-      const rawTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
+      const result = await xrplRpc("account_tx", { account: address, limit: 50, forward: false });
+      const rawTxs = (result["transactions"] as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
 
       for (const entry of rawTxs) {
         const tx = (entry["tx"] ?? entry) as Record<string, unknown>;
         const meta = entry["meta"] as Record<string, unknown> | undefined;
-        const from = String(tx["Account"] ?? "").toLowerCase();
-        const to = String(tx["Destination"] ?? "").toLowerCase();
+        const from = String(tx["Account"] ?? "");
+        const to = String(tx["Destination"] ?? "");
         if (!from || !to) continue;
         peerSet.add(from); peerSet.add(to);
         const deliveredAmt = String(meta?.["delivered_amount"] ?? tx["Amount"] ?? "0");
@@ -463,19 +525,20 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       return;
     }
 
-    if (["xlm", "hbar", "xdc", "dag"].includes(chain)) {
+    if (COINSTATS_CHAINS.includes(chain)) {
       const connectionId = COIN_ID_MAP[chain] ?? chain;
-      const data = await coinstatsFetch(`/wallet/transactions?address=${address}&connectionId=${connectionId}&limit=30`);
+      const data = await coinstatsFetch(`/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=${connectionId}&limit=30`);
       const rawTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
 
       for (const tx of rawTxs) {
-        const fromAddr = String(tx["from"] ?? address).toLowerCase();
-        const toAddr = String(tx["to"] ?? "").toLowerCase();
+        // Preserve original casing — XRP/XLM/HBAR addresses are case-sensitive
+        const fromAddr = String(tx["from"] ?? tx["sender"] ?? address);
+        const toAddr = String(tx["to"] ?? tx["receiver"] ?? "");
         if (!toAddr) continue;
         peerSet.add(fromAddr); peerSet.add(toAddr);
-        const val = parseFloat(String(tx["amount"] ?? "0"));
+        const val = parseFloat(String(tx["amount"] ?? tx["value"] ?? "0"));
         const ts = tx["date"] ? new Date(String(tx["date"])).toISOString() : new Date().toISOString();
         const key = `${fromAddr}:${toAddr}`;
         const ex = edgeMap.get(key);

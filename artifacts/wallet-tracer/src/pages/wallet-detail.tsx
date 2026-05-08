@@ -1,241 +1,461 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useLocation, useParams } from "wouter";
-import { 
-  useGetWallet, 
-  useGetWalletTransactions, 
+import {
+  useGetWallet,
+  useGetWalletTransactions,
   getGetWalletQueryKey,
-  getGetWalletTransactionsQueryKey
+  getGetWalletTransactionsQueryKey,
 } from "@workspace/api-client-react";
 import { AddressDisplay } from "@/components/address-display";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { ArrowLeftRight, ArrowDownLeft, ArrowUpRight, Network, FileCode, Tag, ShieldAlert, ShieldCheck, Shield } from "lucide-react";
+import {
+  ArrowLeftRight,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Network,
+  GitFork,
+  FileCode,
+  Tag,
+  ShieldAlert,
+  ShieldCheck,
+  Shield,
+  ExternalLink,
+} from "lucide-react";
 import { Link } from "wouter";
+
+const EXPLORER_MAP: Record<string, (hash: string) => string> = {
+  ethereum: (h) => `https://etherscan.io/tx/${h}`,
+  bitcoin: (h) => `https://blockchair.com/bitcoin/transaction/${h}`,
+  polygon: (h) => `https://polygonscan.com/tx/${h}`,
+  bsc: (h) => `https://bscscan.com/tx/${h}`,
+  xrp: (h) => `https://xrpscan.com/tx/${h}`,
+  xlm: (h) => `https://stellarchain.io/transactions/${h}`,
+  hbar: (h) => `https://hashscan.io/mainnet/transaction/${h}`,
+  xdc: (h) => `https://xdcscan.io/txs/${h}`,
+  dag: (h) => `https://dagexplorer.io/transaction/${h}`,
+};
+
+const WALLET_EXPLORER_MAP: Record<string, (addr: string) => string> = {
+  ethereum: (a) => `https://etherscan.io/address/${a}`,
+  bitcoin: (a) => `https://blockchair.com/bitcoin/address/${a}`,
+  polygon: (a) => `https://polygonscan.com/address/${a}`,
+  bsc: (a) => `https://bscscan.com/address/${a}`,
+  xrp: (a) => `https://xrpscan.com/account/${a}`,
+  xlm: (a) => `https://stellarchain.io/accounts/${a}`,
+  hbar: (a) => `https://hashscan.io/mainnet/account/${a}`,
+  xdc: (a) => `https://xdcscan.io/address/${a}`,
+  dag: (a) => `https://dagexplorer.io/address/${a}`,
+};
 
 export default function WalletDetail() {
   const params = useParams();
+  const [, setLocation] = useLocation();
   const address = params.address || "";
-  // In a real app we'd get chain from search params, defaulting to ethereum here for simplicity
   const chain = new URLSearchParams(window.location.search).get("chain") || "ethereum";
   const [page, setPage] = useState(1);
-  const limit = 20;
+  const limit = 50;
 
-  const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(address, { chain }, {
-    query: {
-      enabled: !!address,
-      queryKey: getGetWalletQueryKey(address, { chain })
-    }
-  });
+  const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(
+    address,
+    { chain },
+    { query: { enabled: !!address, queryKey: getGetWalletQueryKey(address, { chain }) } }
+  );
 
-  const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(address, { chain, page, limit }, {
-    query: {
-      enabled: !!address,
-      queryKey: getGetWalletTransactionsQueryKey(address, { chain, page, limit })
-    }
-  });
+  const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
+    address,
+    { chain, page, limit },
+    { query: { enabled: !!address, queryKey: getGetWalletTransactionsQueryKey(address, { chain, page, limit }) } }
+  );
+
+  const deduplicatedTxs = useMemo(() => {
+    if (!transactionsData?.transactions) return [];
+    const seen = new Set<string>();
+    return transactionsData.transactions.filter((tx) => {
+      const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [transactionsData]);
 
   const getRiskBadge = (score: number | null) => {
-    if (score === null) return <div className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-muted text-muted-foreground"><Shield className="w-3 h-3" /> UNSCORED</div>;
-    if (score <= 30) return <div className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-success/20 text-success"><ShieldCheck className="w-3 h-3" /> LOW RISK ({score})</div>;
-    if (score <= 70) return <div className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-warning/20 text-warning"><ShieldAlert className="w-3 h-3" /> MED RISK ({score})</div>;
-    return <div className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-destructive/20 text-destructive"><ShieldAlert className="w-3 h-3" /> HIGH RISK ({score})</div>;
+    if (score === null)
+      return (
+        <span className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-muted text-muted-foreground font-mono">
+          <Shield className="w-3 h-3" /> UNSCORED
+        </span>
+      );
+    if (score <= 30)
+      return (
+        <span className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-green-950/60 text-green-400 font-mono">
+          <ShieldCheck className="w-3 h-3" /> LOW RISK ({score})
+        </span>
+      );
+    if (score <= 70)
+      return (
+        <span className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-yellow-950/60 text-yellow-400 font-mono">
+          <ShieldAlert className="w-3 h-3" /> MED RISK ({score})
+        </span>
+      );
+    return (
+      <span className="flex items-center gap-1 text-xs px-2 py-1 rounded bg-red-950/60 text-red-400 font-mono">
+        <ShieldAlert className="w-3 h-3" /> HIGH RISK ({score})
+      </span>
+    );
+  };
+
+  const explorerTxUrl = EXPLORER_MAP[chain];
+  const explorerAddrUrl = WALLET_EXPLORER_MAP[chain];
+
+  const handleCounterpartyClick = (addr: string) => {
+    setLocation(`/wallet/${addr}?chain=${chain}`);
   };
 
   if (walletError) {
     return (
-      <div className="p-8 flex flex-col items-center justify-center h-full text-center space-y-4">
-        <ShieldAlert className="w-12 h-12 text-destructive opacity-50" />
-        <h2 className="text-xl font-mono text-destructive">PROFILE NOT FOUND</h2>
-        <p className="text-muted-foreground text-sm max-w-md">Target address could not be resolved on the specified network. Verify the address and chain selection.</p>
+      <div className="p-8 flex flex-col items-center justify-center min-h-[60vh] text-center space-y-4">
+        <ShieldAlert className="w-16 h-16 text-destructive opacity-40" />
+        <h2 className="text-xl font-mono text-destructive tracking-widest">PROFILE NOT FOUND</h2>
+        <p className="text-muted-foreground text-sm max-w-md font-mono">
+          Target address could not be resolved on the{" "}
+          <span className="text-primary uppercase">{chain}</span> network.
+          Verify the address and chain selection.
+        </p>
         <Link href="/">
-          <Button variant="outline" className="font-mono mt-4">RETURN TO SEARCH</Button>
+          <Button variant="outline" className="font-mono mt-4 tracking-wider">
+            RETURN TO SEARCH
+          </Button>
         </Link>
       </div>
     );
   }
 
   return (
-    <div className="p-8 max-w-7xl mx-auto space-y-6">
-      {/* Header Profile */}
-      <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
-        <div className="space-y-2">
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold tracking-tight font-mono break-all text-primary">
-              <AddressDisplay address={address} truncate={false} />
-            </h1>
-          </div>
-          <div className="flex flex-wrap items-center gap-3">
-            <span className="px-2 py-1 bg-accent text-accent-foreground text-xs font-mono rounded uppercase">
+    <div className="p-6 max-w-7xl mx-auto space-y-6">
+      {/* Header */}
+      <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+        <div className="space-y-3 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-mono rounded uppercase border border-primary/20">
               {chain}
             </span>
             {walletLoading ? (
-              <div className="w-24 h-6 bg-muted/50 rounded animate-pulse" />
+              <div className="w-28 h-5 bg-muted/50 rounded animate-pulse" />
             ) : (
               getRiskBadge(wallet?.riskScore ?? null)
             )}
             {wallet?.isContract && (
-              <span className="flex items-center gap-1 px-2 py-1 bg-primary/20 text-primary text-xs font-mono rounded">
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-blue-950/50 text-blue-400 text-xs font-mono rounded border border-blue-500/20">
                 <FileCode className="w-3 h-3" /> CONTRACT
               </span>
             )}
-            {wallet?.tags.map(tag => (
-              <span key={tag} className="flex items-center gap-1 px-2 py-1 bg-muted text-muted-foreground text-xs font-mono rounded">
+            {wallet?.tags.map((tag) => (
+              <span
+                key={tag}
+                className="flex items-center gap-1 px-2 py-0.5 bg-muted text-muted-foreground text-xs font-mono rounded"
+              >
                 <Tag className="w-3 h-3" /> {tag.toUpperCase()}
               </span>
             ))}
           </div>
+          <div className="font-mono text-sm text-foreground break-all bg-muted/20 px-3 py-2 rounded border border-border/40">
+            <AddressDisplay address={address} truncate={false} showIcon />
+          </div>
         </div>
-        
-        <div className="flex items-center gap-3">
+
+        <div className="flex items-center gap-2 shrink-0">
           <Link href={`/trace/${address}?chain=${chain}`}>
-            <Button className="font-mono bg-primary/20 text-primary hover:bg-primary hover:text-primary-foreground border border-primary/50">
-              <Network className="w-4 h-4 mr-2" />
-              VIEW TRACE GRAPH
+            <Button
+              variant="outline"
+              className="font-mono border-primary/30 text-primary hover:bg-primary/10 text-xs"
+            >
+              <Network className="w-3.5 h-3.5 mr-1.5" />
+              TRACE GRAPH
+            </Button>
+          </Link>
+          <Link href={`/trace/${address}?chain=${chain}`}>
+            <Button className="font-mono bg-primary text-primary-foreground hover:bg-primary/90 text-xs">
+              <GitFork className="w-3.5 h-3.5 mr-1.5" />
+              START TRAIL TRACE
             </Button>
           </Link>
         </div>
       </div>
 
-      {/* Stats Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="bg-card/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Native Balance</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {walletLoading ? <div className="h-8 bg-muted/50 rounded animate-pulse" /> : (
-              <div>
-                <div className="text-2xl font-mono text-foreground">{wallet?.balance || "0"}</div>
-                <div className="text-sm font-mono text-success">${wallet?.balanceUsd?.toLocaleString() || "0.00"}</div>
+      {/* Stats Row */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        {[
+          {
+            label: "BALANCE",
+            value: walletLoading ? null : wallet?.balance ?? "0",
+            sub: walletLoading ? null : `$${(wallet?.balanceUsd ?? 0).toLocaleString()}`,
+            subClass: "text-green-400",
+          },
+          {
+            label: "TRANSACTIONS",
+            value: walletLoading ? null : (wallet?.transactionCount ?? 0).toLocaleString(),
+            sub: null,
+          },
+          {
+            label: "FIRST SEEN",
+            value: walletLoading
+              ? null
+              : wallet?.firstSeen
+              ? new Date(wallet.firstSeen).toLocaleDateString()
+              : "UNKNOWN",
+            sub: null,
+          },
+          {
+            label: "LAST ACTIVE",
+            value: walletLoading
+              ? null
+              : wallet?.lastSeen
+              ? new Date(wallet.lastSeen).toLocaleDateString()
+              : "UNKNOWN",
+            sub: null,
+          },
+        ].map((stat) => (
+          <Card key={stat.label} className="bg-card/40 border-border/40">
+            <CardContent className="p-4">
+              <div className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
+                {stat.label}
               </div>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="bg-card/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Transactions</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {walletLoading ? <div className="h-8 bg-muted/50 rounded animate-pulse" /> : (
-              <div className="text-2xl font-mono text-foreground">{wallet?.transactionCount?.toLocaleString() || "0"}</div>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="bg-card/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">First Seen</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {walletLoading ? <div className="h-8 bg-muted/50 rounded animate-pulse" /> : (
-              <div className="text-sm font-mono text-foreground">{wallet?.firstSeen ? new Date(wallet.firstSeen).toLocaleDateString() : 'UNKNOWN'}</div>
-            )}
-          </CardContent>
-        </Card>
-        <Card className="bg-card/40">
-          <CardHeader className="pb-2">
-            <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Last Active</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {walletLoading ? <div className="h-8 bg-muted/50 rounded animate-pulse" /> : (
-              <div className="text-sm font-mono text-foreground">{wallet?.lastSeen ? new Date(wallet.lastSeen).toLocaleDateString() : 'UNKNOWN'}</div>
-            )}
-          </CardContent>
-        </Card>
+              {stat.value === null ? (
+                <div className="h-7 bg-muted/50 rounded animate-pulse" />
+              ) : (
+                <>
+                  <div className="text-xl font-mono text-foreground truncate">{stat.value}</div>
+                  {stat.sub && (
+                    <div className={`text-xs font-mono mt-0.5 ${stat.subClass ?? "text-muted-foreground"}`}>
+                      {stat.sub}
+                    </div>
+                  )}
+                </>
+              )}
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
-      {/* Transactions Table */}
-      <Card className="bg-card/40 flex-1 flex flex-col">
-        <CardHeader className="border-b border-border/50 pb-4">
+      {/* Transaction Ledger */}
+      <Card className="bg-card/40 border-border/40">
+        <CardHeader className="border-b border-border/40 pb-4 px-5 pt-5">
           <div className="flex items-center justify-between">
-            <CardTitle className="text-sm font-medium uppercase tracking-wider text-foreground">Transaction Ledger</CardTitle>
-            <div className="text-xs font-mono text-muted-foreground">
-              {transactionsData ? `SHOWING ${transactionsData.transactions.length} OF ${transactionsData.total}` : 'LOADING...'}
+            <div>
+              <CardTitle className="text-sm font-mono uppercase tracking-widest text-foreground">
+                Transaction Ledger
+              </CardTitle>
+              <p className="text-xs text-muted-foreground font-mono mt-1">
+                Deduplicated by tx hash
+              </p>
+            </div>
+            <div className="text-right">
+              <div className="text-xs font-mono text-muted-foreground">
+                {txLoading
+                  ? "LOADING..."
+                  : `${deduplicatedTxs.length} TXS${transactionsData?.total && transactionsData.total > deduplicatedTxs.length ? ` / ${transactionsData.total} TOTAL` : ""}`}
+              </div>
+              <div className="flex gap-3 mt-1 text-xs font-mono">
+                <span className="text-green-400">
+                  ↓ {deduplicatedTxs.filter((t) => t.direction === "in").length} IN
+                </span>
+                <span className="text-red-400">
+                  ↑ {deduplicatedTxs.filter((t) => t.direction === "out").length} OUT
+                </span>
+              </div>
             </div>
           </div>
         </CardHeader>
-        <CardContent className="p-0 overflow-x-auto">
+
+        <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="border-b border-border/50 text-xs font-mono text-muted-foreground bg-muted/20">
-                <th className="p-4 font-normal">TYPE</th>
-                <th className="p-4 font-normal">HASH</th>
-                <th className="p-4 font-normal">TIMESTAMP</th>
-                <th className="p-4 font-normal">COUNTERPARTY</th>
-                <th className="p-4 font-normal text-right">VALUE</th>
-                <th className="p-4 font-normal text-right">ASSET</th>
+              <tr className="border-b border-border/40 text-xs font-mono text-muted-foreground bg-muted/10">
+                <th className="px-5 py-3 font-normal w-20">DIR</th>
+                <th className="px-5 py-3 font-normal">TX HASH</th>
+                <th className="px-5 py-3 font-normal">TIMESTAMP</th>
+                <th className="px-5 py-3 font-normal">COUNTERPARTY</th>
+                <th className="px-5 py-3 font-normal text-right">AMOUNT</th>
+                <th className="px-5 py-3 font-normal text-right">ASSET</th>
               </tr>
             </thead>
-            <tbody className="text-sm font-mono divide-y divide-border/50">
+            <tbody className="divide-y divide-border/30">
               {txLoading ? (
-                Array.from({ length: 5 }).map((_, i) => (
+                Array.from({ length: 8 }).map((_, i) => (
                   <tr key={i}>
-                    <td colSpan={6} className="p-4"><div className="h-6 bg-muted/50 rounded animate-pulse" /></td>
+                    <td colSpan={6} className="px-5 py-3">
+                      <div className="h-5 bg-muted/40 rounded animate-pulse" />
+                    </td>
                   </tr>
                 ))
-              ) : transactionsData?.transactions.length === 0 ? (
+              ) : deduplicatedTxs.length === 0 ? (
                 <tr>
-                  <td colSpan={6} className="p-8 text-center text-muted-foreground">NO TRANSACTIONS FOUND</td>
+                  <td colSpan={6} className="px-5 py-12 text-center text-muted-foreground font-mono text-sm">
+                    NO TRANSACTIONS FOUND
+                  </td>
                 </tr>
               ) : (
-                transactionsData?.transactions.map((tx) => (
-                  <tr key={tx.hash} className="hover:bg-muted/20 transition-colors">
-                    <td className="p-4">
-                      {tx.direction === 'in' ? (
-                        <span className="flex items-center gap-1 text-success bg-success/10 px-2 py-1 rounded w-max"><ArrowDownLeft className="w-3 h-3" /> IN</span>
-                      ) : tx.direction === 'out' ? (
-                        <span className="flex items-center gap-1 text-destructive bg-destructive/10 px-2 py-1 rounded w-max"><ArrowUpRight className="w-3 h-3" /> OUT</span>
-                      ) : (
-                        <span className="flex items-center gap-1 text-muted-foreground bg-muted px-2 py-1 rounded w-max"><ArrowLeftRight className="w-3 h-3" /> SELF</span>
-                      )}
-                    </td>
-                    <td className="p-4">
-                      <AddressDisplay address={tx.hash} showIcon={false} className="text-primary hover:underline" />
-                    </td>
-                    <td className="p-4 text-muted-foreground">
-                      {new Date(tx.timestamp).toLocaleString(undefined, { 
-                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit'
-                      })}
-                    </td>
-                    <td className="p-4">
-                      {tx.direction === 'in' ? (
-                        <AddressDisplay address={tx.from} />
-                      ) : tx.to ? (
-                        <AddressDisplay address={tx.to} />
-                      ) : (
-                        <span className="text-muted-foreground">CONTRACT CREATION</span>
-                      )}
-                    </td>
-                    <td className="p-4 text-right">
-                      <div>{tx.value}</div>
-                      <div className="text-xs text-success">${tx.valueUsd.toLocaleString()}</div>
-                    </td>
-                    <td className="p-4 text-right text-muted-foreground">
-                      {tx.tokenSymbol || chain.toUpperCase()}
-                    </td>
-                  </tr>
-                ))
+                deduplicatedTxs.map((tx, idx) => {
+                  const counterparty = tx.direction === "in" ? tx.from : tx.to;
+                  const isIn = tx.direction === "in";
+                  const isOut = tx.direction === "out";
+                  const valueNum = parseFloat(tx.value);
+                  const hasValue = valueNum > 0;
+
+                  return (
+                    <tr
+                      key={tx.hash || idx}
+                      className="hover:bg-muted/10 transition-colors text-sm font-mono"
+                    >
+                      {/* Direction */}
+                      <td className="px-5 py-3">
+                        {isIn ? (
+                          <span className="inline-flex items-center gap-1 text-green-400 bg-green-950/40 border border-green-500/20 px-2 py-0.5 rounded text-xs font-bold">
+                            <ArrowDownLeft className="w-3 h-3" />
+                            IN
+                          </span>
+                        ) : isOut ? (
+                          <span className="inline-flex items-center gap-1 text-red-400 bg-red-950/40 border border-red-500/20 px-2 py-0.5 rounded text-xs font-bold">
+                            <ArrowUpRight className="w-3 h-3" />
+                            OUT
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-muted-foreground bg-muted/40 border border-border/40 px-2 py-0.5 rounded text-xs">
+                            <ArrowLeftRight className="w-3 h-3" />
+                            SELF
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Tx Hash */}
+                      <td className="px-5 py-3">
+                        {tx.hash ? (
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-primary/80 text-xs">
+                              {tx.hash.length > 12
+                                ? `${tx.hash.slice(0, 8)}…${tx.hash.slice(-4)}`
+                                : tx.hash}
+                            </span>
+                            {explorerTxUrl && (
+                              <a
+                                href={explorerTxUrl(tx.hash)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-muted-foreground hover:text-primary transition-colors"
+                                title="View on explorer"
+                              >
+                                <ExternalLink className="w-3 h-3" />
+                              </a>
+                            )}
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+
+                      {/* Timestamp */}
+                      <td className="px-5 py-3 text-muted-foreground text-xs">
+                        {tx.timestamp
+                          ? new Date(tx.timestamp).toLocaleString(undefined, {
+                              month: "short",
+                              day: "numeric",
+                              year: "numeric",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })
+                          : "—"}
+                      </td>
+
+                      {/* Counterparty */}
+                      <td className="px-5 py-3">
+                        {counterparty ? (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              onClick={() => handleCounterpartyClick(counterparty)}
+                              className="text-primary/80 hover:text-primary text-xs hover:underline transition-colors font-mono"
+                              title={`Trace ${counterparty}`}
+                            >
+                              {counterparty.length > 14
+                                ? `${counterparty.slice(0, 8)}…${counterparty.slice(-4)}`
+                                : counterparty}
+                            </button>
+                            {explorerAddrUrl && (
+                              <a
+                                href={explorerAddrUrl(counterparty)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="text-muted-foreground hover:text-primary transition-colors"
+                                title="View on explorer"
+                              >
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                          </div>
+                        ) : tx.direction === "out" ? (
+                          <span className="text-muted-foreground text-xs">CONTRACT CREATION</span>
+                        ) : (
+                          <span className="text-muted-foreground text-xs">—</span>
+                        )}
+                      </td>
+
+                      {/* Amount */}
+                      <td className="px-5 py-3 text-right">
+                        <div
+                          className={
+                            hasValue
+                              ? isIn
+                                ? "text-green-400"
+                                : isOut
+                                ? "text-red-400"
+                                : "text-foreground"
+                              : "text-muted-foreground"
+                          }
+                        >
+                          {isIn ? "+" : isOut ? "−" : ""}
+                          {tx.value}
+                        </div>
+                        {tx.valueUsd > 0 && (
+                          <div className="text-xs text-muted-foreground mt-0.5">
+                            ${tx.valueUsd.toLocaleString()}
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Asset */}
+                      <td className="px-5 py-3 text-right text-muted-foreground text-xs uppercase">
+                        {tx.tokenSymbol || chain.toUpperCase()}
+                      </td>
+                    </tr>
+                  );
+                })
               )}
             </tbody>
           </table>
-        </CardContent>
+        </div>
+
+        {/* Pagination */}
         {transactionsData && transactionsData.total > limit && (
-          <div className="p-4 border-t border-border/50 flex items-center justify-between bg-muted/10">
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="font-mono"
+          <div className="px-5 py-3 border-t border-border/40 flex items-center justify-between bg-muted/5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="font-mono text-xs"
               disabled={page === 1}
-              onClick={() => setPage(p => Math.max(1, p - 1))}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
             >
               PREV
             </Button>
-            <span className="text-xs font-mono text-muted-foreground">PAGE {page}</span>
-            <Button 
-              variant="outline" 
-              size="sm" 
-              className="font-mono"
+            <span className="text-xs font-mono text-muted-foreground">
+              PAGE {page} · {deduplicatedTxs.length} RECORDS
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="font-mono text-xs"
               disabled={page * limit >= transactionsData.total}
-              onClick={() => setPage(p => p + 1)}
+              onClick={() => setPage((p) => p + 1)}
             >
               NEXT
             </Button>

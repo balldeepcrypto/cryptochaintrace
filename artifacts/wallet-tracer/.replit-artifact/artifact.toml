@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "Crypto Wallet Tracer"
+version = "1.0.0"
+id = "artifacts/wallet-tracer"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 24096
+
+[services.development]
+run = "pnpm --filter @workspace/wallet-tracer run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/wallet-tracer", "run", "build" ]
+publicDir = "artifacts/wallet-tracer/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "24096"
+BASE_PATH = "/"

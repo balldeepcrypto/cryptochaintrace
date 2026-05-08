@@ -3,20 +3,23 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Crypto Blockchain Wallet Tracing API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: wallets
+    description: Wallet lookup and tracing
+  - name: searches
+    description: Recent search history
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +27,156 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /wallets/{address}:
+    get:
+      operationId: getWallet
+      tags: [wallets]
+      summary: Get wallet info and balance
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chain
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ethereum, bitcoin, polygon, bsc]
+            default: ethereum
+      responses:
+        "200":
+          description: Wallet info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletInfo"
+        "404":
+          description: Wallet not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /wallets/{address}/transactions:
+    get:
+      operationId: getWalletTransactions
+      tags: [wallets]
+      summary: Get wallet transaction history
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chain
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ethereum, bitcoin, polygon, bsc]
+            default: ethereum
+        - name: page
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Transaction list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransactionList"
+
+  /wallets/{address}/connections:
+    get:
+      operationId: getWalletConnections
+      tags: [wallets]
+      summary: Get connected wallets (traced relationships)
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: chain
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [ethereum, bitcoin, polygon, bsc]
+            default: ethereum
+        - name: depth
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 1
+            minimum: 1
+            maximum: 3
+      responses:
+        "200":
+          description: Wallet connections graph
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WalletConnections"
+
+  /searches:
+    get:
+      operationId: getRecentSearches
+      tags: [searches]
+      summary: Get recent wallet searches
+      responses:
+        "200":
+          description: Recent searches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/RecentSearch"
+    post:
+      operationId: saveSearch
+      tags: [searches]
+      summary: Save a wallet search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveSearchBody"
+      responses:
+        "201":
+          description: Search saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecentSearch"
+
+  /searches/stats:
+    get:
+      operationId: getSearchStats
+      tags: [searches]
+      summary: Get search statistics and popular wallets
+      responses:
+        "200":
+          description: Search stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchStats"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +187,266 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+      required:
+        - error
+        - message
+
+    WalletInfo:
+      type: object
+      properties:
+        address:
+          type: string
+        chain:
+          type: string
+        balance:
+          type: string
+        balanceUsd:
+          type: number
+        transactionCount:
+          type: integer
+        firstSeen:
+          type: string
+          nullable: true
+        lastSeen:
+          type: string
+          nullable: true
+        tags:
+          type: array
+          items:
+            type: string
+        riskScore:
+          type: number
+          nullable: true
+        isContract:
+          type: boolean
+      required:
+        - address
+        - chain
+        - balance
+        - balanceUsd
+        - transactionCount
+        - firstSeen
+        - lastSeen
+        - tags
+        - riskScore
+        - isContract
+
+    Transaction:
+      type: object
+      properties:
+        hash:
+          type: string
+        from:
+          type: string
+        to:
+          type: string
+          nullable: true
+        value:
+          type: string
+        valueUsd:
+          type: number
+        fee:
+          type: string
+        feeUsd:
+          type: number
+        timestamp:
+          type: string
+        blockNumber:
+          type: integer
+        status:
+          type: string
+          enum: [success, failed, pending]
+        direction:
+          type: string
+          enum: [in, out, self]
+        tokenSymbol:
+          type: string
+          nullable: true
+        tokenName:
+          type: string
+          nullable: true
+      required:
+        - hash
+        - from
+        - to
+        - value
+        - valueUsd
+        - fee
+        - feeUsd
+        - timestamp
+        - blockNumber
+        - status
+        - direction
+        - tokenSymbol
+        - tokenName
+
+    TransactionList:
+      type: object
+      properties:
+        transactions:
+          type: array
+          items:
+            $ref: "#/components/schemas/Transaction"
+        total:
+          type: integer
+        page:
+          type: integer
+        limit:
+          type: integer
+      required:
+        - transactions
+        - total
+        - page
+        - limit
+
+    WalletNode:
+      type: object
+      properties:
+        address:
+          type: string
+        label:
+          type: string
+          nullable: true
+        balance:
+          type: string
+        transactionCount:
+          type: integer
+        isContract:
+          type: boolean
+        riskScore:
+          type: number
+          nullable: true
+      required:
+        - address
+        - label
+        - balance
+        - transactionCount
+        - isContract
+        - riskScore
+
+    WalletEdge:
+      type: object
+      properties:
+        from:
+          type: string
+        to:
+          type: string
+        totalValue:
+          type: string
+        totalValueUsd:
+          type: number
+        transactionCount:
+          type: integer
+        lastSeen:
+          type: string
+      required:
+        - from
+        - to
+        - totalValue
+        - totalValueUsd
+        - transactionCount
+        - lastSeen
+
+    WalletConnections:
+      type: object
+      properties:
+        nodes:
+          type: array
+          items:
+            $ref: "#/components/schemas/WalletNode"
+        edges:
+          type: array
+          items:
+            $ref: "#/components/schemas/WalletEdge"
+        centerAddress:
+          type: string
+      required:
+        - nodes
+        - edges
+        - centerAddress
+
+    RecentSearch:
+      type: object
+      properties:
+        id:
+          type: integer
+        address:
+          type: string
+        chain:
+          type: string
+        searchedAt:
+          type: string
+        label:
+          type: string
+          nullable: true
+      required:
+        - id
+        - address
+        - chain
+        - searchedAt
+        - label
+
+    SaveSearchBody:
+      type: object
+      properties:
+        address:
+          type: string
+        chain:
+          type: string
+        label:
+          type: string
+          nullable: true
+      required:
+        - address
+        - chain
+
+    SearchStats:
+      type: object
+      properties:
+        totalSearches:
+          type: integer
+        uniqueWallets:
+          type: integer
+        popularWallets:
+          type: array
+          items:
+            type: object
+            properties:
+              address:
+                type: string
+              chain:
+                type: string
+              searchCount:
+                type: integer
+              label:
+                type: string
+                nullable: true
+            required:
+              - address
+              - chain
+              - searchCount
+              - label
+        recentActivity:
+          type: array
+          items:
+            type: object
+            properties:
+              date:
+                type: string
+              count:
+                type: integer
+            required:
+              - date
+              - count
+      required:
+        - totalSearches
+        - uniqueWallets
+        - popularWallets
+        - recentActivity

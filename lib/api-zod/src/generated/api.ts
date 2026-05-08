@@ -25,7 +25,17 @@ export const getWalletQueryChainDefault = `ethereum`;
 
 export const GetWalletQueryParams = zod.object({
   chain: zod
-    .enum(["ethereum", "bitcoin", "polygon", "bsc"])
+    .enum([
+      "ethereum",
+      "bitcoin",
+      "polygon",
+      "bsc",
+      "xrp",
+      "xlm",
+      "hbar",
+      "xdc",
+      "dag",
+    ])
     .default(getWalletQueryChainDefault),
 });
 
@@ -55,7 +65,17 @@ export const getWalletTransactionsQueryLimitDefault = 20;
 
 export const GetWalletTransactionsQueryParams = zod.object({
   chain: zod
-    .enum(["ethereum", "bitcoin", "polygon", "bsc"])
+    .enum([
+      "ethereum",
+      "bitcoin",
+      "polygon",
+      "bsc",
+      "xrp",
+      "xlm",
+      "hbar",
+      "xdc",
+      "dag",
+    ])
     .default(getWalletTransactionsQueryChainDefault),
   page: zod.coerce.number().default(getWalletTransactionsQueryPageDefault),
   limit: zod.coerce.number().default(getWalletTransactionsQueryLimitDefault),
@@ -97,7 +117,17 @@ export const getWalletConnectionsQueryDepthMax = 3;
 
 export const GetWalletConnectionsQueryParams = zod.object({
   chain: zod
-    .enum(["ethereum", "bitcoin", "polygon", "bsc"])
+    .enum([
+      "ethereum",
+      "bitcoin",
+      "polygon",
+      "bsc",
+      "xrp",
+      "xlm",
+      "hbar",
+      "xdc",
+      "dag",
+    ])
     .default(getWalletConnectionsQueryChainDefault),
   depth: zod.coerce
     .number()

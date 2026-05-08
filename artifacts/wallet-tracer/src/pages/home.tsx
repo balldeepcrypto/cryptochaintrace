@@ -1,12 +1,24 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useGetRecentSearches, useGetSearchStats, useSaveSearch } from "@workspace/api-client-react";
-import { Search, ShieldAlert, Zap, History, LayoutDashboard } from "lucide-react";
+import { Search, ShieldAlert, History, LayoutDashboard } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { AddressDisplay } from "@/components/address-display";
+
+const CHAINS = [
+  { value: "ethereum", label: "Ethereum" },
+  { value: "bitcoin", label: "Bitcoin" },
+  { value: "polygon", label: "Polygon" },
+  { value: "bsc", label: "BSC" },
+  { value: "xrp", label: "XRP (XRPL)" },
+  { value: "xlm", label: "XLM (Stellar)" },
+  { value: "hbar", label: "HBAR (Hedera)" },
+  { value: "xdc", label: "XDC" },
+  { value: "dag", label: "DAG (Constellation)" },
+];
 
 export default function Home() {
   const [, setLocation] = useLocation();
@@ -41,25 +53,24 @@ export default function Home() {
       <Card className="border-primary/20 bg-card/40 shadow-lg shadow-primary/5">
         <CardContent className="p-6">
           <form onSubmit={handleSearch} className="flex flex-col md:flex-row gap-4">
-            <div className="w-48">
+            <div className="w-52">
               <Select value={chain} onValueChange={setChain}>
                 <SelectTrigger className="font-mono">
                   <SelectValue placeholder="Network" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="ethereum">Ethereum</SelectItem>
-                  <SelectItem value="bitcoin">Bitcoin</SelectItem>
-                  <SelectItem value="polygon">Polygon</SelectItem>
-                  <SelectItem value="bsc">BSC</SelectItem>
+                  {CHAINS.map((c) => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
             </div>
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-              <Input 
+              <Input
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
-                placeholder="0x... or bc1..." 
+                placeholder="0x..., bc1..., r..., G..."
                 className="pl-9 font-mono bg-background/50 border-input"
               />
             </div>
@@ -88,7 +99,7 @@ export default function Home() {
             ) : recentSearches?.length ? (
               <div className="space-y-1">
                 {recentSearches.map((search) => (
-                  <div 
+                  <div
                     key={search.id}
                     onClick={() => setLocation(`/wallet/${search.address}?chain=${search.chain}`)}
                     className="flex items-center justify-between p-3 rounded hover:bg-accent/50 cursor-pointer transition-colors group border border-transparent hover:border-border/50"
@@ -153,22 +164,22 @@ export default function Home() {
               </div>
             </CardHeader>
             <CardContent>
-               {statsLoading ? (
-                 <div className="h-20 bg-muted/50 rounded animate-pulse" />
-               ) : stats?.popularWallets?.length ? (
-                 <div className="space-y-2">
-                   {stats.popularWallets.slice(0, 3).map((w, idx) => (
-                     <div key={idx} className="flex items-center justify-between text-sm">
-                       <AddressDisplay address={w.address} className="text-xs" showIcon={false} />
-                       <span className="text-xs font-mono bg-destructive/10 text-destructive px-1.5 rounded">
-                         {w.searchCount} HITS
-                       </span>
-                     </div>
-                   ))}
-                 </div>
-               ) : (
-                 <div className="text-xs text-muted-foreground font-mono">NO DATA</div>
-               )}
+              {statsLoading ? (
+                <div className="h-20 bg-muted/50 rounded animate-pulse" />
+              ) : stats?.popularWallets?.length ? (
+                <div className="space-y-2">
+                  {stats.popularWallets.slice(0, 3).map((w, idx) => (
+                    <div key={idx} className="flex items-center justify-between text-sm">
+                      <AddressDisplay address={w.address} className="text-xs" showIcon={false} />
+                      <span className="text-xs font-mono bg-destructive/10 text-destructive px-1.5 rounded">
+                        {w.searchCount} HITS
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="text-xs text-muted-foreground font-mono">NO DATA</div>
+              )}
             </CardContent>
           </Card>
         </div>

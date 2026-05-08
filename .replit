@@ -24,5 +24,14 @@ localPort = 8080
 externalPort = 80
 
 [[ports]]
+localPort = 8081
+externalPort = 8081
+
+[[ports]]
 localPort = 24096
 externalPort = 3000
+
+[userenv]
+
+[userenv.shared]
+COINSTATS_API_KEY = "MEHYzJF+whQI5PnOd5acpbTmwLl9SzetNbb/S0pnLes="

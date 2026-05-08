@@ -44,7 +44,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [ethereum, bitcoin, polygon, bsc]
+            enum: [ethereum, bitcoin, polygon, bsc, xrp, xlm, hbar, xdc, dag]
             default: ethereum
       responses:
         "200":
@@ -76,7 +76,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [ethereum, bitcoin, polygon, bsc]
+            enum: [ethereum, bitcoin, polygon, bsc, xrp, xlm, hbar, xdc, dag]
             default: ethereum
         - name: page
           in: query
@@ -114,7 +114,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [ethereum, bitcoin, polygon, bsc]
+            enum: [ethereum, bitcoin, polygon, bsc, xrp, xlm, hbar, xdc, dag]
             default: ethereum
         - name: depth
           in: query

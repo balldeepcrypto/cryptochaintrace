@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>ChainTrace - Your Wallet Tracer</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #0a0a0a; color: #fff; margin: 0; padding: 20px; }
+    h1 { color: #00ff9d; }
+    select, input, button { padding: 15px; margin: 10px 0; width: 100%; max-width: 600px; font-size: 18px; border-radius: 10px; }
+    button { background: #00ff9d; color: black; font-weight: bold; cursor: pointer; }
+    .result { margin-top: 20px; background: #1a1a1a; padding: 20px; border-radius: 12px; }
+    .tx { background: #222; padding: 12px; margin: 10px 0; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>🔍 ChainTrace</h1>
+  <p>Enter any wallet address on your supported chains</p>
+
+  <select id="chain">
+    <option value="xrp">XRP (XRPL)</option>
+    <option value="xlm">XLM (Stellar)</option>
+    <option value="hbar">HBAR (Hedera)</option>
+    <option value="xdc">XDC</option>
+    <option value="dag">Constellation DAG</option>
+  </select>
+
+  <input type="text" id="address" placeholder="Paste wallet address here" style="font-size:16px;">
+
+  <button onclick="searchWallet()">TRACE WALLET</button>
+
+  <div id="result" class="result"></div>
+
+  <script>
+    const COINSTATS_KEY = "MEHYzJF+whQI5PnOd5acpbTmwLl9SzetNbb/S0pnLes="; // Your key
+
+    async function searchWallet() {
+      const address = document.getElementById("address").value.trim();
+      const chain = document.getElementById("chain").value;
+      const resultDiv = document.getElementById("result");
+
+      if (!address) {
+        resultDiv.innerHTML = "<p style='color:red'>Please paste a wallet address</p>";
+        return;
+      }
+
+      resultDiv.innerHTML = "<p>Loading full transaction history...</p>";
+
+      try {
+        let url = '';
+        if (chain === 'xrp') {
+          url = `https://api.xrpl.org/v2/accounts/${address}/transactions?limit=100`;
+        } else {
+          // CoinStats for other chains
+          url = `https://openapiv1.coinstats.app/wallet/transactions?address=${address}&connectionId=${getConnectionId(chain)}&limit=200&X-API-KEY=${COINSTATS_KEY}`;
+        }
+
+        const response = await fetch(url);
+        const data = await response.json();
+
+        let html = `<h2>Results for ${address} on ${chain.toUpperCase()}</h2>`;
+
+        let txs = data.transactions || data || [];
+        
+        // Deduplicate by tx hash
+        const seen = new Set();
+        txs = txs.filter(tx => {
+          const hash = tx.hash || tx.txid || tx.id;
+          if (seen.has(hash)) return false;
+          seen.add(hash);
+          return true;
+        });
+
+        if (txs.length === 0) {
+          html += "<p>No transactions found or wallet is new.</p>";
+        } else {
+          txs.slice(0, 50).forEach(tx => {   // Show first 50 for speed
+            const type = tx.TransactionType || tx.type || 'Transfer';
+            const amount = tx.Amount ? (tx.Amount / 1000000) + " XRP" : (tx.amount || 'Unknown');
+            html += `
+              <div class="tx">
+                <strong>${type}</strong> • ${amount}<br>
+                <small>Tx: ${tx.hash || tx.txid || '—'}</small><br>
+                <small>Date: ${tx.date ? new Date(tx.date * 1000).toLocaleString() : '—'}</small>
+              </div>`;
+          });
+        }
+
+        resultDiv.innerHTML = html + "<p><small>Showing up to 50 recent unique transactions. Trail feature coming next.</small></p>";
+
+      } catch (err) {
+        resultDiv.innerHTML = `<p style='color:orange'>Error: ${err.message}<br>Try another address or check the chain.</p>`;
+      }
+    }
+
+    function getConnectionId(chain) {
+      const map = { xlm: 'stellar', hbar: 'hedera', xdc: 'xdc' };
+      return map[chain] || chain;
+    }
+  </script>
+</body>
+</html>

@@ -137,6 +137,11 @@ export const GetWalletChain = {
   bitcoin: "bitcoin",
   polygon: "polygon",
   bsc: "bsc",
+  xrp: "xrp",
+  xlm: "xlm",
+  hbar: "hbar",
+  xdc: "xdc",
+  dag: "dag",
 } as const;
 
 export type GetWalletTransactionsParams = {
@@ -153,6 +158,11 @@ export const GetWalletTransactionsChain = {
   bitcoin: "bitcoin",
   polygon: "polygon",
   bsc: "bsc",
+  xrp: "xrp",
+  xlm: "xlm",
+  hbar: "hbar",
+  xdc: "xdc",
+  dag: "dag",
 } as const;
 
 export type GetWalletConnectionsParams = {
@@ -172,4 +182,9 @@ export const GetWalletConnectionsChain = {
   bitcoin: "bitcoin",
   polygon: "polygon",
   bsc: "bsc",
+  xrp: "xrp",
+  xlm: "xlm",
+  hbar: "hbar",
+  xdc: "xdc",
+  dag: "dag",
 } as const;

@@ -1090,13 +1090,15 @@ export default function WalletDetail() {
           {showDonate && (
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
               {([
-                { symbol: "ETH", label: "Ethereum", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-300", bg: "bg-blue-950/30", border: "border-blue-500/25" },
-                { symbol: "BTC", label: "Bitcoin",  address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-300", bg: "bg-orange-950/30", border: "border-orange-500/25" },
-                { symbol: "XRP", label: "Ripple",   address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-300",   bg: "bg-cyan-950/30",   border: "border-cyan-500/25" },
-                { symbol: "DAG", label: "Constellation", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-300", bg: "bg-purple-950/30", border: "border-purple-500/25" },
+                { symbol: "XRP",  label: "Ripple",        address: "YOUR_XRP_DONATION_ADDRESS_HERE",  color: "text-cyan-300",   bg: "bg-cyan-950/30",   border: "border-cyan-500/25" },
+                { symbol: "XLM",  label: "Stellar",       address: "YOUR_XLM_DONATION_ADDRESS_HERE",  color: "text-sky-300",    bg: "bg-sky-950/30",    border: "border-sky-500/25" },
+                { symbol: "HBAR", label: "Hedera",        address: "YOUR_HBAR_DONATION_ADDRESS_HERE", color: "text-violet-300", bg: "bg-violet-950/30", border: "border-violet-500/25" },
+                { symbol: "BTC",  label: "Bitcoin",       address: "YOUR_BTC_DONATION_ADDRESS_HERE",  color: "text-orange-300", bg: "bg-orange-950/30", border: "border-orange-500/25" },
+                { symbol: "XDC",  label: "XinFin",        address: "YOUR_XDC_DONATION_ADDRESS_HERE",  color: "text-teal-300",   bg: "bg-teal-950/30",   border: "border-teal-500/25" },
+                { symbol: "ETH",  label: "Ethereum",      address: "YOUR_ETH_DONATION_ADDRESS_HERE",  color: "text-blue-300",   bg: "bg-blue-950/30",   border: "border-blue-500/25" },
               ] as { symbol: string; label: string; address: string; color: string; bg: string; border: string }[]).map((d) => (
                 <div key={d.symbol} className={`flex items-center gap-3 ${d.bg} border ${d.border} px-3 py-2.5 rounded-lg`}>
-                  <div className="shrink-0 text-center">
+                  <div className="shrink-0 text-center w-10">
                     <span className={`text-xs font-mono font-bold ${d.color} block leading-none`}>{d.symbol}</span>
                     <span className="text-[9px] font-mono text-muted-foreground/50 block mt-0.5">{d.label}</span>
                   </div>

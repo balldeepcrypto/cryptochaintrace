@@ -45,10 +45,12 @@ export default function Home() {
   };
 
   const DONATE_ADDRESSES = [
-    { chain: "ETH", symbol: "ETH", address: "0x742d35Cc6634C0532925a3b8D4C9b9b8D8b8D8b8" },
-    { chain: "BTC", symbol: "BTC", address: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh" },
-    { chain: "XRP", symbol: "XRP", address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh" },
-    { chain: "DAG", symbol: "DAG", address: "DAG3WnpWbwnnKBLtu8FvBp3VUkmxJgdcs41dTHg5" },
+    { chain: "XRP",  symbol: "XRP",  color: "text-cyan-300",   bg: "bg-cyan-950/40",   border: "border-cyan-500/30",   address: "YOUR_XRP_DONATION_ADDRESS_HERE" },
+    { chain: "XLM",  symbol: "XLM",  color: "text-sky-300",    bg: "bg-sky-950/40",    border: "border-sky-500/30",    address: "YOUR_XLM_DONATION_ADDRESS_HERE" },
+    { chain: "HBAR", symbol: "HBAR", color: "text-violet-300", bg: "bg-violet-950/40", border: "border-violet-500/30", address: "YOUR_HBAR_DONATION_ADDRESS_HERE" },
+    { chain: "BTC",  symbol: "BTC",  color: "text-orange-300", bg: "bg-orange-950/40", border: "border-orange-500/30", address: "YOUR_BTC_DONATION_ADDRESS_HERE" },
+    { chain: "XDC",  symbol: "XDC",  color: "text-teal-300",   bg: "bg-teal-950/40",   border: "border-teal-500/30",   address: "YOUR_XDC_DONATION_ADDRESS_HERE" },
+    { chain: "ETH",  symbol: "ETH",  color: "text-blue-300",   bg: "bg-blue-950/40",   border: "border-blue-500/30",   address: "YOUR_ETH_DONATION_ADDRESS_HERE" },
   ];
 
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
@@ -89,14 +91,14 @@ export default function Home() {
             </div>
 
             {showDonate && (
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
-                {DONATE_ADDRESSES.map(({ chain: c, symbol, address: addr }) => (
-                  <div key={c} className="flex items-center gap-2 rounded-lg bg-black/30 border border-pink-500/20 px-3 py-2 group">
-                    <span className="text-xs font-mono font-bold text-pink-400 w-8 flex-shrink-0">{symbol}</span>
-                    <span className="text-xs font-mono text-muted-foreground truncate flex-1">{addr}</span>
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                {DONATE_ADDRESSES.map(({ chain: c, symbol, color, bg, border, address: addr }) => (
+                  <div key={c} className={`flex items-center gap-2.5 rounded-lg ${bg} border ${border} px-3 py-2.5 group`}>
+                    <span className={`text-xs font-mono font-bold ${color} w-10 flex-shrink-0`}>{symbol}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground truncate flex-1">{addr}</span>
                     <button
                       onClick={() => copyAddr(addr)}
-                      className="flex-shrink-0 text-muted-foreground hover:text-pink-300 transition-colors"
+                      className={`flex-shrink-0 ${color} opacity-60 hover:opacity-100 transition-opacity`}
                       title={`Copy ${symbol} address`}
                     >
                       <Copy className={`w-3.5 h-3.5 ${copiedAddr === addr ? "text-green-400" : ""}`} />

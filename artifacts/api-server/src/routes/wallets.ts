@@ -387,29 +387,20 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     }
 
     if (chain === "dag") {
-      const searchAfter = cursorParam ?? "";
-      const url = `/addresses/${address}/transactions?limit=${limit}${searchAfter ? `&search_after=${encodeURIComponent(searchAfter)}` : ""}`;
+      // Constellation API pagination:
+      // - The response includes meta.next = base64-encoded JSON {hash: "..."} token
+      // - Pass as ?next=<token> to get the next zero-overlap page of 100 txs
+      // - This is the only correct cursor; search_after causes massive page overlap
+
+      const dagNextToken = cursorParam ?? "";
+      const url = `/addresses/${address}/transactions?limit=${limit}${dagNextToken ? `&next=${encodeURIComponent(dagNextToken)}` : ""}`;
       const data = await dagFetch(url);
       const rawTxs = (data["data"] as Array<Record<string, unknown>>) ?? [];
-
-      // Deduplicate by hash
-      const seen = new Set<string>();
-      const unique = rawTxs.filter((tx) => {
-        const hash = String(tx["hash"] ?? "");
-        if (!hash || seen.has(hash)) return false;
-        seen.add(hash);
-        return true;
-      });
-
-      // Use rawTxs.length (pre-dedup) to decide if a full page was returned.
-      // Using unique.length would incorrectly set hasMore=false when deduplication
-      // drops the count just below `limit` even though more pages exist.
-      const nextCursor = (rawTxs.length >= limit && unique.length > 0)
-        ? String(unique[unique.length - 1]?.["hash"] ?? "") || null
-        : null;
+      const metaNext = (data["meta"] as Record<string, unknown> | undefined)?.["next"];
+      const nextCursor = (metaNext && typeof metaNext === "string" && rawTxs.length >= limit) ? metaNext : null;
       const hasMore = nextCursor !== null;
 
-      const transactions = unique.map((tx) => {
+      const transactions = rawTxs.map((tx) => {
         const amountDatum = Number(tx["amount"] ?? 0);
         const feeDatum = Number(tx["fee"] ?? 0);
         const value = datumToDag(amountDatum);

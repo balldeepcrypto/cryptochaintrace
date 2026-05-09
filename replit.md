@@ -34,7 +34,7 @@ A crypto blockchain wallet tracing tool with a dark intelligence-dashboard UI. U
 ## Architecture decisions
 
 - **Contract-first**: All API shapes live in `openapi.yaml`; never hand-write request/response types
-- **DAG via Constellation Network API**: `https://be-mainnet.constellationnetwork.io` (NOT CoinStats). Balance in DATUM (÷1e8). Transactions use `search_after` cursor param.
+- **DAG via Constellation Network API**: `https://be-mainnet.constellationnetwork.io` (NOT CoinStats). Balance in DATUM (÷1e8). Transactions use `meta.next` token as cursor (base64-encoded JSON `{hash:"..."}`), passed as `?next=<token>` — zero overlap between pages. Do NOT use `search_after` — it causes massive page overlap (95-99 duplicate txs per page).
 - **XRP cursor pagination**: Uses XRPL marker objects (JSON-encoded) as cursor strings; marker returned by `account_tx` RPC is stringified and returned as `nextCursor`
 - **Address case sensitivity**: Only EVM chains (ethereum/polygon/bsc) get `.toLowerCase()`. XRP, XLM, HBAR, XDC, DAG are case-sensitive — never lowercase them.
 - **Transaction accumulation**: Frontend accumulates transactions across pages in local state (`allTxs`). React Query fetches page 1; "Load More" and "Load All History" buttons fetch subsequent pages via direct `fetch()` with cursor params.

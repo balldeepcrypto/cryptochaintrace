@@ -24,7 +24,7 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const [address, setAddress] = useState("");
   const [chain, setChain] = useState("ethereum");
-  const [showDonate, setShowDonate] = useState(false);
+  const [showDonate, setShowDonate] = useState(true);
 
   const { data: recentSearches, isLoading: recentLoading } = useGetRecentSearches();
   const { data: stats, isLoading: statsLoading } = useGetSearchStats();

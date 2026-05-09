@@ -178,6 +178,10 @@ export default function WalletDetail() {
     try { localStorage.setItem("chaintrace-view-mode", m); } catch { /* noop */ }
   }
 
+  // ── Group sort (only active when groupByCounterparty is ON) ──
+  type GroupSort = "most-txs" | "highest-value" | "recent";
+  const [groupSort, setGroupSort] = useState<GroupSort>("most-txs");
+
   // ── Minimum amount filter ──
   const [minAmount, setMinAmount] = useState(1.0);
   const [minAmountInput, setMinAmountInput] = useState("1");
@@ -420,16 +424,18 @@ export default function WalletDetail() {
       }
     }
     const rows = Array.from(map.values());
-    // Apply viewMode-aware sort: direction grouping first, then newest-last-interaction within group
+    // Direction grouping (viewMode) as primary, groupSort as secondary within each group
     rows.sort((a, b) => {
-      if (viewMode === "in-first" && a.direction !== b.direction)
-        return a.direction === "in" ? -1 : 1;
-      if (viewMode === "out-first" && a.direction !== b.direction)
-        return a.direction === "out" ? -1 : 1;
+      if (viewMode !== "mixed" && a.direction !== b.direction) {
+        if (viewMode === "in-first") return a.direction === "in" ? -1 : 1;
+        if (viewMode === "out-first") return a.direction === "out" ? -1 : 1;
+      }
+      if (groupSort === "most-txs")      return b.txCount - a.txCount;
+      if (groupSort === "highest-value") return b.totalValue - a.totalValue;
       return new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime();
     });
     return rows;
-  }, [allTxs, minAmount, viewMode, chain]);
+  }, [allTxs, minAmount, viewMode, groupSort, chain]);
 
   // ── Commingling detection ──
   const comminglingAddresses = useMemo(() => {
@@ -643,17 +649,22 @@ export default function WalletDetail() {
     return <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-red-950/60 text-red-400 font-mono"><ShieldAlert className="w-3 h-3" /> HIGH RISK ({score})</span>;
   };
 
-  const getKnownBadge = (info?: { label: string; type: string }) => {
+  const getKnownBadge = (info?: { label: string; type: string }, size: "sm" | "md" = "sm") => {
     if (!info) return null;
-    const colors: Record<string, string> = {
-      exchange: "bg-blue-950/60 text-blue-400 border-blue-500/20",
-      genesis: "bg-purple-950/60 text-purple-400 border-purple-500/20",
-      defi: "bg-teal-950/60 text-teal-400 border-teal-500/20",
-      flagged: "bg-red-950/60 text-red-400 border-red-500/20",
+    const config: Record<string, { bg: string; text: string; border: string; emoji: string }> = {
+      exchange: { bg: "bg-blue-900/80",   text: "text-blue-200",   border: "border-blue-400/50",   emoji: "🏦" },
+      genesis:  { bg: "bg-purple-900/80", text: "text-purple-200", border: "border-purple-400/50", emoji: "⚡" },
+      defi:     { bg: "bg-teal-900/80",   text: "text-teal-200",   border: "border-teal-400/50",   emoji: "🔄" },
+      flagged:  { bg: "bg-red-900/80",    text: "text-red-200",    border: "border-red-400/50",    emoji: "🚨" },
     };
+    const c = config[info.type] ?? config.exchange;
+    const sz = size === "md"
+      ? "text-xs px-2.5 py-1 gap-1.5 rounded-md"
+      : "text-[11px] px-2 py-0.5 gap-1 rounded";
     return (
-      <span className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${colors[info.type] ?? colors.exchange}`}>
-        {info.label}
+      <span className={`inline-flex items-center shrink-0 font-mono font-semibold border shadow-sm ${sz} ${c.bg} ${c.text} ${c.border}`}>
+        <span>{c.emoji}</span>
+        <span>{info.label}</span>
       </span>
     );
   };
@@ -980,6 +991,34 @@ export default function WalletDetail() {
               </div>
             </div>
           </div>
+
+          {/* ── Group sort controls — only visible when Group By Counterparty is ON ── */}
+          {groupByCounterparty && (
+            <div className="flex items-center gap-2.5 pt-3 mt-1 border-t border-border/30 flex-wrap">
+              <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider whitespace-nowrap">Sort Counterparties:</span>
+              <div className="flex items-center rounded border border-border/40 overflow-hidden text-[10px] font-mono">
+                {(["most-txs", "highest-value", "recent"] as const).map((key) => {
+                  const label = { "most-txs": "⬆ MOST TXS", "highest-value": "💰 HIGHEST VALUE", recent: "🕐 RECENT" }[key];
+                  return (
+                    <button
+                      key={key}
+                      onClick={() => setGroupSort(key)}
+                      className={`px-3 py-1.5 border-r last:border-r-0 border-border/40 transition-colors whitespace-nowrap ${
+                        groupSort === key
+                          ? "bg-primary/20 text-primary font-semibold"
+                          : "bg-muted/10 text-muted-foreground hover:text-primary hover:bg-muted/20"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  );
+                })}
+              </div>
+              <span className="text-[10px] font-mono text-muted-foreground/50 hidden sm:inline">
+                + {viewMode === "in-first" ? "IN first" : viewMode === "out-first" ? "OUT first" : "mixed order"}
+              </span>
+            </div>
+          )}
         </CardHeader>
 
         <div className="overflow-x-auto">
@@ -1139,16 +1178,16 @@ export default function WalletDetail() {
                             </div>
                           ) : <span className="text-muted-foreground text-xs">—</span>}
                           {tx.destinationTag != null && (
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 px-1.5 py-0.5 rounded">
-                                TAG: {tx.destinationTag}
+                            <div className="flex items-center gap-1 mt-1">
+                              <span className="inline-flex items-center gap-1 text-xs font-mono font-bold text-cyan-200 bg-cyan-900/70 border border-cyan-400/50 px-2 py-0.5 rounded-md shadow-sm whitespace-nowrap">
+                                🏷 TAG {tx.destinationTag}
                               </span>
                             </div>
                           )}
                           {tx.memo && (
-                            <div className="flex items-center gap-1 mt-0.5">
-                              <MessageSquare className="w-2.5 h-2.5 text-muted-foreground/60 shrink-0" />
-                              <span className="text-[10px] font-mono text-muted-foreground/80 truncate max-w-[120px]" title={tx.memo}>
+                            <div className="flex items-center gap-1 mt-1 max-w-[200px]">
+                              <span className="inline-flex items-center gap-1 text-xs font-mono text-amber-200 bg-amber-900/60 border border-amber-400/40 px-2 py-0.5 rounded-md shadow-sm truncate w-full" title={tx.memo}>
+                                <MessageSquare className="w-3 h-3 shrink-0 text-amber-300" />
                                 {tx.memo}
                               </span>
                             </div>

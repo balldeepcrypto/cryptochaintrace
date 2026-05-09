@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CryptoChainTrace</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #0a0a0a; color: #fff; margin: 0; padding: 20px; }
+    h1 { color: #00ff9d; }
+    button, input, select { padding: 12px; margin: 8px 0; font-size: 16px; border-radius: 8px; }
+    button { background: #00ff9d; color: black; font-weight: bold; cursor: pointer; }
+    .result { background: #1a1a1a; padding: 20px; border-radius: 12px; margin-top: 20px; max-height: 70vh; overflow-y: auto; }
+    .tx { background: #222; padding: 12px; margin: 8px 0; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>CryptoChainTrace</h1>
+  <p>Full history wallet tracer</p>
+
+  <select id="chain">
+    <option value="dag">Constellation DAG</option>
+    <!-- Add others later -->
+  </select>
+
+  <input type="text" id="address" placeholder="Paste DAG wallet address" style="width:80%">
+
+  <button onclick="loadWallet()">LOAD WALLET</button>
+
+  <div id="status"></div>
+  <div id="result" class="result"></div>
+
+  <script>
+    let allTxs = [];
+    let nextCursor = null;
+
+    async function loadWallet(more = false) {
+      const address = document.getElementById("address").value.trim();
+      const status = document.getElementById("status");
+      const result = document.getElementById("result");
+
+      if (!address) return;
+
+      status.innerHTML = more ? "Loading more..." : "Fetching transactions...";
+
+      try {
+        let url = `https://be-mainnet.constellationnetwork.io/addresses/${address}/transactions?limit=300`;
+        if (nextCursor) url += `&search_after=${nextCursor}`;
+
+        const res = await fetch(url);
+        const data = await res.json();
+
+        const newTxs = data.transactions || [];
+        allTxs = allTxs.concat(newTxs);   // <-- Append only
+
+        nextCursor = data.nextCursor || null;
+
+        let html = `<h2>DAG Wallet: ${address}</h2><p>${allTxs.length} transactions loaded</p>`;
+
+        allTxs.forEach(tx => {
+          const dir = tx.source === address ? "OUT" : "IN";
+          html += `
+            <div class="tx">
+              <strong>${dir}</strong> — ${tx.amount || '—'} DAG<br>
+              Counterparty: ${tx.destination || tx.source || '—'}<br>
+              Date: ${tx.timestamp ? new Date(tx.timestamp).toLocaleString() : '—'}
+            </div>`;
+        });
+
+        if (nextCursor) {
+          html += `<button onclick="loadWallet(true)">LOAD MORE (+300)</button>`;
+        } else {
+          html += `<p><strong>Full history loaded.</strong></p>`;
+        }
+
+        result.innerHTML = html;
+        status.innerHTML = "";
+
+      } catch (err) {
+        status.innerHTML = `Error: ${err.message}. Try again.`;
+      }
+    }
+  </script>
+</body>
+</html>

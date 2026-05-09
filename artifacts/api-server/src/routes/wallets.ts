@@ -509,7 +509,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       const xrpMarker = cursorParam ? (() => { try { return JSON.parse(cursorParam); } catch { return undefined; } })() : undefined;
       const result = await xrplRpc("account_tx", {
         account: address,
-        limit: Math.min(limit, 400),
+        limit: Math.min(limit, 1000),
         forward: false,
         ...(xrpMarker ? { marker: xrpMarker } : {}),
       });

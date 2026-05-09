@@ -152,21 +152,38 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8
 }
 
 // XRPL cluster JSON-RPC — publicly accessible on port 443
+const XRPL_ENDPOINTS = [
+  "https://s2.ripple.com:51234/",
+  "https://s1.ripple.com:51234/",
+  "https://xrplcluster.com/",
+];
+
 async function xrplRpc(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const resp = await fetchWithTimeout(
-    "https://xrplcluster.com/",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ method, params: [params] }),
-    },
-    8000,
-  );
-  if (!resp.ok) throw new Error(`XRPL cluster request failed: ${resp.status}`);
-  const data = await resp.json() as Record<string, unknown>;
-  const result = data["result"] as Record<string, unknown>;
-  if (result?.["status"] === "error") throw new Error(`XRPL error: ${result["error_message"] ?? result["error"]}`);
-  return result;
+  let lastErr: Error = new Error("No XRPL endpoints available");
+  for (const endpoint of XRPL_ENDPOINTS) {
+    try {
+      const resp = await fetchWithTimeout(
+        endpoint,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ method, params: [params] }),
+        },
+        10000,
+      );
+      if (!resp.ok) { lastErr = new Error(`XRPL request failed (${endpoint}): ${resp.status}`); continue; }
+      const data = await resp.json() as Record<string, unknown>;
+      const result = data["result"] as Record<string, unknown>;
+      if (result?.["status"] === "error") {
+        lastErr = new Error(`XRPL error: ${result["error_message"] ?? result["error"]}`);
+        continue;
+      }
+      return result;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw lastErr;
 }
 
 async function coinstatsFetch(path: string): Promise<Record<string, unknown>> {

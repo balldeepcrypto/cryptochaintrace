@@ -271,6 +271,8 @@ interface MultiAnalysisResult {
 }
 
 const DAG_BATCH = 250;
+const XRP_INIT = 200;
+const XRP_BATCH = 500;
 const OTHER_BATCH = 1000;
 const MAX_TOTAL = 25000;
 
@@ -394,7 +396,7 @@ export default function WalletDetail() {
   // Initial page — DAG uses 100 to stay well within Constellation API limits.
   // staleTime: Infinity + refetchOnWindowFocus: false prevent background refetches from
   // racing with accumulated Load More state.
-  const initLimit = chain === "dag" ? DAG_BATCH : OTHER_BATCH;
+  const initLimit = chain === "dag" ? DAG_BATCH : chain === "xrp" ? XRP_INIT : OTHER_BATCH;
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
     address, { chain, page: 1, limit: initLimit },
     {
@@ -433,7 +435,7 @@ export default function WalletDetail() {
     return res.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
   }
 
-  const loadMoreLabel = chain === "dag" ? "LOAD MORE (+250)" : "LOAD MORE (+1000)";
+  const loadMoreLabel = chain === "dag" ? "LOAD MORE (+250)" : chain === "xrp" ? "LOAD MORE (+500)" : "LOAD MORE (+1000)";
 
   // ── Load More: fetch one batch, append, re-render ──
   // page.current is always current — no stale closure possible.
@@ -449,7 +451,7 @@ export default function WalletDetail() {
     page.current.status = null;
     setAllTxs([...existing]); // force re-render so button goes to LOADING state
 
-    const limit = chain === "dag" ? DAG_BATCH : OTHER_BATCH;
+    const limit = chain === "dag" ? DAG_BATCH : chain === "xrp" ? XRP_BATCH : OTHER_BATCH;
     try {
       const data = await fetchPage(cursor, limit);
       const seen = new Set(existing.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
@@ -480,7 +482,7 @@ export default function WalletDetail() {
     page.current.busy = true;
     page.current.error = null;
 
-    const limit = chain === "dag" ? DAG_BATCH : OTHER_BATCH;
+    const limit = chain === "dag" ? DAG_BATCH : chain === "xrp" ? XRP_BATCH : OTHER_BATCH;
     let cursor: string | null = page.current.cursor;
     let accumulated = [...page.current.txs];
     let pageNum = 0;

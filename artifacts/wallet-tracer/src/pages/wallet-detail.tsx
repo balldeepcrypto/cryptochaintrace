@@ -49,6 +49,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: { label: "Bybit XRP",        type: "exchange" },
   rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV: { label: "KuCoin XRP",       type: "exchange" },
   rGsxGQNdaDyFhZQ5JqDGPkT3VGFFexCaM3: { label: "Gate.io XRP",      type: "exchange" },
+  rMJXDzU1N9ZSDzPF7s1i2GGKyjM2wB3iom: { label: "Robinhood XRP",    type: "exchange" },
   // ── XLM (Stellar) ──────────────────────────────────────────────────────────
   GDDEAH46MNFO6JD7NTQ5FWJBC4ZSA47YEK3RKFHQWADYTS6NDVD5NZN: { label: "Binance XLM",     type: "exchange" },
   GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN: { label: "Coinbase XLM",    type: "exchange" },

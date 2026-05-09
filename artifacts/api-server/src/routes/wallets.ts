@@ -515,10 +515,10 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
     }
 
     if (chain === "xlm") {
-      const [acctResult, lastOpResult, firstOpResult] = await Promise.allSettled([
+      const [acctResult, lastTxResult, firstTxResult] = await Promise.allSettled([
         stellarFetch(`/accounts/${address}`),
-        stellarFetch(`/accounts/${address}/operations?limit=1&order=desc`),
-        stellarFetch(`/accounts/${address}/operations?limit=1&order=asc`),
+        stellarFetch(`/accounts/${address}/transactions?limit=1&order=desc`),
+        stellarFetch(`/accounts/${address}/transactions?limit=1&order=asc`),
       ]);
       const acct = acctResult.status === "fulfilled" ? acctResult.value : {};
       // If account not found or invalid, return empty wallet
@@ -533,16 +533,19 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       const nativeBal = balances.find((b) => b["asset_type"] === "native");
       const balance = parseFloat(String(nativeBal?.["balance"] ?? "0")).toFixed(6);
       const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
-      const lastOpRecs = lastOpResult.status === "fulfilled"
-        ? ((lastOpResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
+      const lastTxRecs = lastTxResult.status === "fulfilled"
+        ? ((lastTxResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
         : [];
-      const firstOpRecs = firstOpResult.status === "fulfilled"
-        ? ((firstOpResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
+      const firstTxRecs = firstTxResult.status === "fulfilled"
+        ? ((firstTxResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
         : [];
-      const lastSeen = lastOpRecs[0]?.["created_at"] ? String(lastOpRecs[0]["created_at"]) : null;
-      const firstSeen = firstOpRecs[0]?.["created_at"] ? String(firstOpRecs[0]["created_at"]) : null;
-      const subentryCount = Number(acct["subentry_count"] ?? 0);
-      const txCount = Math.max(subentryCount, lastOpRecs.length);
+      const lastSeen = lastTxRecs[0]?.["created_at"] ? String(lastTxRecs[0]["created_at"]) : null;
+      const firstSeen = firstTxRecs[0]?.["created_at"] ? String(firstTxRecs[0]["created_at"]) : null;
+      // Estimate tx count from sequence number delta (Stellar sequence is per-account, starts at account creation ledger)
+      // Use sequence to derive approximate tx count; clamp 0 for brand-new accounts
+      const seqStr = String(acct["sequence"] ?? "0");
+      const seqNum = BigInt(seqStr.replace(/\D/g, "") || "0");
+      const txCount = lastTxRecs.length > 0 ? Math.max(1, Number(seqNum & BigInt(0xffffffff))) : 0;
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -850,25 +853,46 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     }
 
     if (chain === "xlm") {
-      // Stellar Horizon operations endpoint — broader than /payments (catches path payments, merges, etc.)
+      // Stellar Horizon /transactions endpoint — one record per transaction envelope
       // cursor = paging_token of last record, up to 200 per page, no overlap
       const stellarLimit = Math.min(limit, 200);
-      const path = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
+      const path = `/accounts/${address}/transactions?limit=${stellarLimit}&order=desc${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
       const data = await stellarFetch(path);
       if (data["_empty"]) {
         res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit: stellarLimit, nextCursor: null, hasMore: false }));
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
-      // Filter to value-bearing ops only (skip change_trust, manage_offer, etc.)
-      const transactions = records.flatMap((rec) => {
-        const parsed = parseStellarOp(rec, address, priceUsd);
-        return parsed ? [parsed] : [];
+      const transactions = records.map((rec) => {
+        const sourceAccount = String(rec["source_account"] ?? "");
+        const isOut = sourceAccount === address;
+        const direction: "in" | "out" | "self" = isOut ? "out" : "in";
+        const ts = String(rec["created_at"] ?? new Date().toISOString());
+        const ledger = Number(rec["ledger"] ?? 0);
+        const feeStroops = Number(rec["fee_charged"] ?? 0);
+        const feeXlm = (feeStroops / 1e7).toFixed(7);
+        const feeUsd = parseFloat((feeStroops / 1e7 * priceUsd).toFixed(2));
+        const successful = rec["successful"] !== false;
+        return {
+          hash: String(rec["hash"] ?? rec["id"] ?? ""),
+          from: sourceAccount,
+          to: null as string | null,
+          value: "0.000000",
+          valueUsd: 0,
+          fee: feeXlm,
+          feeUsd,
+          timestamp: ts,
+          blockNumber: ledger,
+          status: (successful ? "success" : "failed") as "success" | "failed",
+          direction,
+          tokenSymbol: null as string | null,
+          tokenName: null as string | null,
+        };
       });
       const hasMore = records.length === stellarLimit;
       const lastRec = records[records.length - 1];
       const nextCursor = hasMore && lastRec ? String(lastRec["paging_token"] ?? "") : null;
-      res.json(GetWalletTransactionsResponse.parse({ transactions, total: transactions.length, page, limit: stellarLimit, nextCursor, hasMore }));
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total: (page - 1) * stellarLimit + transactions.length + (hasMore ? 1 : 0), page, limit: stellarLimit, nextCursor, hasMore }));
       return;
     }
 
@@ -877,19 +901,20 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       let rawTxs: Record<string, unknown>[] = [];
       let total = 0;
       let usedBlocksScan = false;
+      // cursor = page number as string for server-side pagination
+      let xdcPageNum = cursorParam ? Math.max(1, parseInt(cursorParam) || 1) : page;
       try {
+        // xdcscan may return all results at once regardless of page/offset params,
+        // so we always fetch with offset=1000 and apply server-side slicing.
         const bsData = await xdcBlocksScanFetch({
           module: "account", action: "txlist",
-          address: rpcAddr, page: String(page), offset: String(limit), sort: "desc",
+          address: rpcAddr, page: "1", offset: "1000", sort: "desc",
         });
-        let allTxs = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
-        // api.xdcscan.io may return all results at once — apply server-side pagination slice
-        if (allTxs.length > limit) {
-          const startIdx = (page - 1) * limit;
-          allTxs = allTxs.slice(startIdx, startIdx + limit);
-        }
-        rawTxs = allTxs;
-        total = typeof bsData["total"] === "number" ? Number(bsData["total"]) : rawTxs.length;
+        const allTxs = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
+        total = allTxs.length;
+        // Apply server-side pagination slice
+        const startIdx = (xdcPageNum - 1) * limit;
+        rawTxs = allTxs.slice(startIdx, startIdx + limit);
         usedBlocksScan = true;
       } catch {
         if (COINSTATS_KEY) {
@@ -949,11 +974,11 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
             direction, tokenSymbol: null, tokenName: null,
           };
         });
-        const hasMore = rawTxs.length >= limit;
-        const calcTotal = hasMore ? page * limit + 1 : (page - 1) * limit + transactions.length;
+        const hasMore = rawTxs.length >= limit && total > xdcPageNum * limit;
+        const calcTotal = total || ((hasMore ? xdcPageNum * limit + 1 : (xdcPageNum - 1) * limit + transactions.length));
         res.json(GetWalletTransactionsResponse.parse({
-          transactions, total: total || calcTotal,
-          page, limit, nextCursor: hasMore ? String(page + 1) : null, hasMore,
+          transactions, total: calcTotal,
+          page, limit, nextCursor: hasMore ? String(xdcPageNum + 1) : null, hasMore,
         }));
         return;
       }

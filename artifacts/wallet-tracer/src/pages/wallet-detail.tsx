@@ -138,8 +138,17 @@ export default function WalletDetail() {
   type ChainId = "ethereum" | "bitcoin" | "polygon" | "bsc" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
   const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
 
-  // ── Ledger view toggle ──
+  // ── Ledger view toggles ──
   const [groupByCounterparty, setGroupByCounterparty] = useState(true);
+  type ViewMode = "in-first" | "out-first" | "mixed";
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    try { return (localStorage.getItem("chaintrace-view-mode") as ViewMode) ?? "in-first"; }
+    catch { return "in-first"; }
+  });
+  function setAndSaveViewMode(m: ViewMode) {
+    setViewMode(m);
+    try { localStorage.setItem("chaintrace-view-mode", m); } catch { /* noop */ }
+  }
 
   // ── Minimum amount filter ──
   const [minAmount, setMinAmount] = useState(1.0);
@@ -343,11 +352,17 @@ export default function WalletDetail() {
     }
   }
 
-  // ── Apply minimum amount filter ──
+  // ── Apply minimum amount filter + view mode sort ──
   const filteredTxs = useMemo(() => {
-    if (minAmount <= 0) return allTxs;
-    return allTxs.filter((tx) => parseFloat(tx.value) >= minAmount);
-  }, [allTxs, minAmount]);
+    const base = minAmount <= 0 ? allTxs : allTxs.filter((tx) => parseFloat(tx.value) >= minAmount);
+    if (viewMode === "mixed") return base; // already newest-first from commit()
+    // Partition into IN, OUT, self — each sub-list is already newest-first (stable after partition)
+    const ins = base.filter((t) => t.direction === "in");
+    const outs = base.filter((t) => t.direction === "out");
+    const self = base.filter((t) => t.direction === "self");
+    if (viewMode === "in-first") return [...ins, ...outs, ...self];
+    return [...outs, ...ins, ...self]; // out-first
+  }, [allTxs, minAmount, viewMode]);
 
   // ── Group by (address + direction) ──
   const groupedRows = useMemo((): GroupedRow[] => {
@@ -789,6 +804,29 @@ export default function WalletDetail() {
                 />
                 <span className="text-[10px] font-mono text-muted-foreground/60 uppercase">{chain}</span>
               </div>
+
+              {/* ── View Mode Segmented Control ── */}
+              {!groupByCounterparty && (
+                <div className="flex items-center rounded border border-border/40 overflow-hidden text-[10px] font-mono">
+                  {(["in-first", "out-first", "mixed"] as const).map((m) => {
+                    const labels: Record<string, string> = { "in-first": "IN FIRST", "out-first": "OUT FIRST", mixed: "MIXED" };
+                    const colors: Record<string, string> = {
+                      "in-first": viewMode === m ? "bg-green-950/60 text-green-400 border-green-500/30" : "bg-muted/10 text-muted-foreground hover:text-green-400",
+                      "out-first": viewMode === m ? "bg-red-950/60 text-red-400 border-red-500/30" : "bg-muted/10 text-muted-foreground hover:text-red-400",
+                      mixed: viewMode === m ? "bg-primary/20 text-primary border-primary/30" : "bg-muted/10 text-muted-foreground hover:text-primary",
+                    };
+                    return (
+                      <button
+                        key={m}
+                        onClick={() => setAndSaveViewMode(m)}
+                        className={`px-2.5 py-1.5 transition-colors border-r last:border-r-0 border-border/40 ${colors[m]}`}
+                      >
+                        {labels[m]}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               <button
                 onClick={() => setGroupByCounterparty((v) => !v)}

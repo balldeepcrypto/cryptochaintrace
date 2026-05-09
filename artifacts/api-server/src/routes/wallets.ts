@@ -200,7 +200,7 @@ const XDC_RPC_ENDPOINTS = [
   "https://erpc.xinfin.network",
   "https://rpc.ankr.com/xdc",
 ];
-const XDC_BLOCKSSCAN = "https://xdc.blocksscan.io/api";
+const XDC_BLOCKSSCAN = "https://api.xdcscan.io/api";
 
 function normalizeXdcAddress(addr: string): string {
   return addr.startsWith("xdc") ? "0x" + addr.slice(3) : addr;
@@ -480,28 +480,32 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
 
     if (chain === "xdc") {
       const rpcAddr = normalizeXdcAddress(address);
-      const [balHex, nonceHex] = await Promise.all([
-        xdcRpc("eth_getBalance", [rpcAddr, "latest"]),
-        xdcRpc("eth_getTransactionCount", [rpcAddr, "latest"]),
+      // Fetch balance + recent txs from api.xdcscan.io in parallel
+      const [balData, recentData] = await Promise.allSettled([
+        xdcBlocksScanFetch({ module: "account", action: "balance", address: rpcAddr }),
+        xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "100", sort: "desc" }),
       ]);
-      const balance = weiToEth(BigInt(String(balHex ?? "0x0")).toString());
+      // Balance returned as decimal wei string (not hex)
+      const rawBal = balData.status === "fulfilled" ? String(balData.value["result"] ?? "0") : "0";
+      const balance = weiToEth(rawBal === "" ? "0" : rawBal);
       const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
-      let txCount = parseInt(String(nonceHex ?? "0x0"), 16);
+      // Tx list for first/last seen and count
+      const recentTxs = recentData.status === "fulfilled" && Array.isArray(recentData.value["result"])
+        ? recentData.value["result"] as Record<string, unknown>[]
+        : [];
+      // api.xdcscan.io may return all results at once; estimate count from result length
+      let txCount = recentTxs.length;
+      if (txCount >= 100) txCount = 101; // signal "100+" — frontend shows it as high-volume
+      const lastSeen = recentTxs.length > 0 ? new Date(Number(recentTxs[0]["timeStamp"]) * 1000).toISOString() : null;
+      // First seen: fetch oldest tx separately
       let firstSeen: string | null = null;
-      let lastSeen: string | null = null;
-      try {
-        const [firstPage, lastPage] = await Promise.all([
-          xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "1", sort: "asc" }),
-          xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "1", sort: "desc" }),
-        ]);
-        const firstTxs = Array.isArray(firstPage["result"]) ? firstPage["result"] as Record<string, unknown>[] : [];
-        const lastTxs = Array.isArray(lastPage["result"]) ? lastPage["result"] as Record<string, unknown>[] : [];
-        if (firstTxs.length > 0) firstSeen = new Date(Number(firstTxs[0]["timeStamp"]) * 1000).toISOString();
-        if (lastTxs.length > 0) lastSeen = new Date(Number(lastTxs[0]["timeStamp"]) * 1000).toISOString();
-        if (typeof firstPage["total"] === "number" && Number(firstPage["total"]) > txCount) {
-          txCount = Number(firstPage["total"]);
-        }
-      } catch { /* use RPC nonce as fallback tx count */ }
+      if (recentTxs.length > 0) {
+        try {
+          const firstData = await xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "1", sort: "asc" });
+          const firstTxs = Array.isArray(firstData["result"]) ? firstData["result"] as Record<string, unknown>[] : [];
+          if (firstTxs.length > 0) firstSeen = new Date(Number(firstTxs[0]["timeStamp"]) * 1000).toISOString();
+        } catch { firstSeen = recentTxs.length > 0 ? new Date(Number(recentTxs[recentTxs.length - 1]["timeStamp"]) * 1000).toISOString() : null; }
+      }
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -761,7 +765,13 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           module: "account", action: "txlist",
           address: rpcAddr, page: String(page), offset: String(limit), sort: "desc",
         });
-        rawTxs = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
+        let allTxs = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
+        // api.xdcscan.io may return all results at once — apply server-side pagination slice
+        if (allTxs.length > limit) {
+          const startIdx = (page - 1) * limit;
+          allTxs = allTxs.slice(startIdx, startIdx + limit);
+        }
+        rawTxs = allTxs;
         total = typeof bsData["total"] === "number" ? Number(bsData["total"]) : rawTxs.length;
         usedBlocksScan = true;
       } catch {

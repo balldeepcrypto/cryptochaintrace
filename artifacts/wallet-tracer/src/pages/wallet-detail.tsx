@@ -149,6 +149,8 @@ export default function WalletDetail() {
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
+  const [loadProgress, setLoadProgress] = useState<{ page: number; txCount: number } | null>(null);
+  const [showDonate, setShowDonate] = useState(false);
 
   // ── Saved wallets (localStorage) ──
   const [savedWallets, setSavedWallets] = useState<Set<string>>(() => {
@@ -218,36 +220,21 @@ export default function WalletDetail() {
     setHasMore(transactionsData.hasMore ?? false);
   }, [transactionsData]);
 
-  // ── Load More (one page) ──
-  const loadMore = useCallback(async () => {
-    if (!nextCursor || loadingMore || loadingAll) return;
-    setLoadingMore(true);
-    try {
-      const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(nextCursor)}`;
-      const resp = await fetch(url);
-      const data = await resp.json() as { transactions: Tx[]; nextCursor: string | null; hasMore: boolean };
-      const existingKeys = new Set(allTxs.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
-      const newTxs = (data.transactions || []).filter((tx) => {
-        const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
-        return !existingKeys.has(key);
-      });
-      setAllTxs((prev) => [...prev, ...newTxs]);
-      setNextCursor(data.nextCursor ?? null);
-      setHasMore(data.hasMore ?? false);
-    } catch { /* silently fail */ } finally {
-      setLoadingMore(false);
-    }
-  }, [nextCursor, loadingMore, loadingAll, allTxs, address, chain]);
+  const MAX_TOTAL = 25000;
 
-  // ── Load All (loop until no more pages, cap at 2000) ──
-  const loadAll = useCallback(async () => {
-    if (!hasMore || loadingAll || loadingMore) return;
-    setLoadingAll(true);
+  // ── Load More Batch (+5,000 txs ≈ 10 pages of 500) ──
+  const loadMore = useCallback(async () => {
+    if (!hasMore || loadingMore || loadingAll) return;
+    setLoadingMore(true);
+    setLoadProgress({ page: 0, txCount: allTxs.length });
     let cursor = nextCursor;
     let accumulated = [...allTxs];
-    const MAX_TXS = 2000;
+    const TARGET = Math.min(accumulated.length + 5000, MAX_TOTAL);
+    let pageNum = 0;
     try {
-      while (cursor && accumulated.length < MAX_TXS) {
+      while (cursor && accumulated.length < TARGET) {
+        pageNum++;
+        setLoadProgress({ page: pageNum, txCount: accumulated.length });
         const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(cursor)}`;
         const resp = await fetch(url);
         const data = await resp.json() as { transactions: Tx[]; nextCursor: string | null; hasMore: boolean };
@@ -262,9 +249,48 @@ export default function WalletDetail() {
       }
       setAllTxs(accumulated);
       setNextCursor(cursor);
-      setHasMore(cursor !== null && accumulated.length < MAX_TXS);
+      setHasMore(cursor !== null && accumulated.length < MAX_TOTAL);
+    } catch { /* silently fail */ } finally {
+      setLoadingMore(false);
+      setLoadProgress(null);
+    }
+  }, [hasMore, loadingMore, loadingAll, nextCursor, allTxs, address, chain]);
+
+  // ── Load All (loop until no more pages, hard cap 25k) ──
+  const loadAll = useCallback(async () => {
+    if (!hasMore || loadingAll || loadingMore) return;
+    if (allTxs.length > 20000) {
+      if (!window.confirm(
+        `You already have ${allTxs.length.toLocaleString()} transactions loaded.\n\nLoading more may slow or freeze your browser.\n\nContinue?`
+      )) return;
+    }
+    setLoadingAll(true);
+    setLoadProgress({ page: 0, txCount: allTxs.length });
+    let cursor = nextCursor;
+    let accumulated = [...allTxs];
+    let pageNum = 0;
+    try {
+      while (cursor && accumulated.length < MAX_TOTAL) {
+        pageNum++;
+        setLoadProgress({ page: pageNum, txCount: accumulated.length });
+        const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(cursor)}`;
+        const resp = await fetch(url);
+        const data = await resp.json() as { transactions: Tx[]; nextCursor: string | null; hasMore: boolean };
+        const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+        const newTxs = (data.transactions || []).filter((tx) => {
+          const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
+          return !existingKeys.has(key);
+        });
+        accumulated = [...accumulated, ...newTxs];
+        cursor = data.nextCursor ?? null;
+        if (!cursor || !data.hasMore) break;
+      }
+      setAllTxs(accumulated);
+      setNextCursor(cursor);
+      setHasMore(cursor !== null && accumulated.length < MAX_TOTAL);
     } catch { /* silently fail */ } finally {
       setLoadingAll(false);
+      setLoadProgress(null);
     }
   }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, address, chain]);
 
@@ -615,6 +641,45 @@ export default function WalletDetail() {
         </div>
       </div>
 
+      {/* ── Support Banner (collapsible) ── */}
+      <div className="rounded border border-pink-500/10 bg-pink-950/5 overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-2.5">
+          <Heart className="w-3.5 h-3.5 text-pink-400 shrink-0" />
+          <p className="text-xs font-mono text-muted-foreground flex-1 min-w-0">
+            <span className="text-pink-400 font-semibold">Free to use</span> — no fees, ads, or data selling.
+            If ChainTrace helped your investigation, a small donation keeps it running.
+          </p>
+          <button
+            onClick={() => setShowDonate((v) => !v)}
+            className="shrink-0 text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground border border-border/20 hover:border-border/40 px-2 py-0.5 rounded transition-colors ml-2"
+          >
+            {showDonate ? "HIDE ↑" : "DONATE ↓"}
+          </button>
+        </div>
+        {showDonate && (
+          <div className="px-4 pb-3 pt-2 border-t border-pink-500/10 grid grid-cols-2 gap-1.5">
+            {([
+              { symbol: "ETH", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-400" },
+              { symbol: "BTC", address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-400" },
+              { symbol: "XRP", address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-400" },
+              { symbol: "DAG", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-400" },
+            ] as { symbol: string; address: string; color: string }[]).map((d) => (
+              <div key={d.symbol} className="flex items-center gap-2 bg-muted/10 px-2.5 py-1.5 rounded group">
+                <span className={`text-[10px] font-mono font-bold ${d.color} w-8 shrink-0`}>{d.symbol}</span>
+                <code className="text-[10px] font-mono text-muted-foreground/70 truncate flex-1 min-w-0">{d.address}</code>
+                <button
+                  onClick={() => void navigator.clipboard.writeText(d.address)}
+                  className="opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-muted-foreground transition-all shrink-0"
+                  title={`Copy ${d.symbol} address`}
+                >
+                  <Copy className="w-2.5 h-2.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* ── Stats ── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
@@ -897,35 +962,68 @@ export default function WalletDetail() {
 
         {/* ── Load More / Load All ── */}
         {hasMore && !txLoading && (
-          <div className="px-5 py-4 border-t border-border/40 bg-muted/5 flex items-center justify-between gap-4">
-            <span className="text-xs font-mono text-muted-foreground">
-              {allTxs.length} transactions loaded · more available
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="font-mono text-xs"
-                disabled={loadingMore || loadingAll}
-                onClick={loadMore}
-              >
-                {loadingMore ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</> : `LOAD +${LOAD_LIMIT} TRANSACTIONS`}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="font-mono text-xs border-primary/30 text-primary hover:bg-primary/10"
-                disabled={loadingMore || loadingAll}
-                onClick={loadAll}
-              >
-                {loadingAll ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING ALL…</> : "LOAD ALL HISTORY"}
-              </Button>
+          <div className="px-5 py-4 border-t border-border/40 bg-muted/5">
+            {loadProgress && (
+              <div className="mb-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-mono text-primary flex items-center gap-1.5">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    {loadingAll ? "FETCHING FULL HISTORY" : "LOADING BATCH"} · PAGE {loadProgress.page}
+                  </span>
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {loadProgress.txCount.toLocaleString()} / {MAX_TOTAL.toLocaleString()} TXS LOADED
+                  </span>
+                </div>
+                <div className="h-1 w-full bg-muted/40 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-primary/60 rounded-full transition-all duration-500"
+                    style={{ width: `${Math.min((loadProgress.txCount / MAX_TOTAL) * 100, 99)}%` }}
+                  />
+                </div>
+              </div>
+            )}
+            {allTxs.length >= 20000 && hasMore && !loadProgress && (
+              <div className="mb-2.5 flex items-center gap-1.5 text-xs font-mono text-yellow-400">
+                <AlertTriangle className="w-3 h-3" />
+                {allTxs.length.toLocaleString()} transactions loaded — loading more may slow your browser.
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-4">
+              <span className="text-xs font-mono text-muted-foreground">
+                {allTxs.length.toLocaleString()} loaded · more available
+              </span>
+              {!loadProgress && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="font-mono text-xs"
+                    disabled={loadingMore || loadingAll}
+                    onClick={loadMore}
+                  >
+                    {loadingMore
+                      ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</>
+                      : "LOAD +5,000"}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="font-mono text-xs border-primary/30 text-primary hover:bg-primary/10"
+                    disabled={loadingMore || loadingAll}
+                    onClick={loadAll}
+                  >
+                    {loadingAll
+                      ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING ALL…</>
+                      : "LOAD ALL (UP TO 25K)"}
+                  </Button>
+                </div>
+              )}
             </div>
           </div>
         )}
-        {!hasMore && allTxs.length > 0 && !txLoading && (
+        {!hasMore && allTxs.length > 0 && !txLoading && !loadProgress && (
           <div className="px-5 py-3 border-t border-border/40 text-center text-xs font-mono text-muted-foreground/60">
-            FULL HISTORY LOADED · {allTxs.length} TRANSACTIONS
+            FULL HISTORY LOADED · {allTxs.length.toLocaleString()} TRANSACTIONS
           </div>
         )}
       </Card>
@@ -1043,44 +1141,6 @@ export default function WalletDetail() {
           </div>
         </Card>
       )}
-      {/* ── Support / Donate ── */}
-      <Card className="bg-card/40 border-border/20">
-        <CardHeader className="pb-3 px-5 pt-5">
-          <div className="flex items-center gap-2">
-            <Heart className="w-4 h-4 text-pink-400" />
-            <CardTitle className="text-sm font-mono uppercase tracking-widest text-foreground">
-              Support This Free Tool
-            </CardTitle>
-            <span className="text-xs font-mono text-muted-foreground">No fees · No ads · No data selling</span>
-          </div>
-          <p className="text-xs text-muted-foreground font-mono mt-1 leading-relaxed">
-            ChainTrace is maintained independently. If it helped your investigation, a small donation keeps the servers running.
-          </p>
-        </CardHeader>
-        <CardContent className="px-5 pb-5">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            {([
-              { chain: "ETH / EVM", symbol: "ETH", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-400", bg: "bg-blue-950/20 border-blue-500/20" },
-              { chain: "Bitcoin", symbol: "BTC", address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-400", bg: "bg-orange-950/20 border-orange-500/20" },
-              { chain: "XRP", symbol: "XRP", address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-400", bg: "bg-cyan-950/20 border-cyan-500/20" },
-              { chain: "DAG", symbol: "DAG", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-400", bg: "bg-purple-950/20 border-purple-500/20" },
-            ] as { chain: string; symbol: string; address: string; color: string; bg: string }[]).map((d) => (
-              <div key={d.symbol} className={`flex items-center gap-2 px-3 py-2.5 rounded border ${d.bg} group`}>
-                <span className={`text-[10px] font-mono font-bold ${d.color} shrink-0 w-14 uppercase`}>{d.symbol}</span>
-                <code className="text-[10px] font-mono text-muted-foreground/80 truncate flex-1 min-w-0">{d.address}</code>
-                <button
-                  onClick={() => { void navigator.clipboard.writeText(d.address); }}
-                  className="shrink-0 text-muted-foreground/40 hover:text-muted-foreground transition-colors opacity-0 group-hover:opacity-100"
-                  title={`Copy ${d.symbol} address`}
-                >
-                  <Copy className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
     </div>
   );
 }

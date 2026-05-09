@@ -307,7 +307,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
   const query = GetWalletTransactionsQueryParams.safeParse(req.query);
   const chain = query.success ? query.data.chain : "ethereum";
   const page = query.success ? query.data.page : 1;
-  const limit = Math.min(query.success ? (query.data.limit ?? 100) : 100, 200);
+  const limit = Math.min(query.success ? (query.data.limit ?? 500) : 500, 500);
   const cursorParam = query.success ? query.data.cursor : undefined;
   // XRP, XLM, HBAR, XDC, DAG addresses are case-sensitive — never lowercase them
   const evmChains = ["ethereum", "polygon", "bsc"];
@@ -321,7 +321,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       const xrpMarker = cursorParam ? (() => { try { return JSON.parse(cursorParam); } catch { return undefined; } })() : undefined;
       const result = await xrplRpc("account_tx", {
         account: address,
-        limit: Math.min(limit, 200),
+        limit: Math.min(limit, 400),
         forward: false,
         ...(xrpMarker ? { marker: xrpMarker } : {}),
       });

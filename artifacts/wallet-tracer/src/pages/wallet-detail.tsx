@@ -14,6 +14,7 @@ import {
   Network, GitFork, FileCode, Tag, ShieldAlert, ShieldCheck, Shield,
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
   AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Heart, MessageSquare,
+  Plus, GitMerge, Layers,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -155,6 +156,50 @@ interface GroupedRow {
   asset: string;
 }
 
+// ─── Multi-wallet analysis color palette ─────────────────────────────────────
+const WALLET_COLORS = [
+  { dot: "bg-emerald-400", text: "text-emerald-300", bg: "bg-emerald-950/40", border: "border-emerald-500/30" },
+  { dot: "bg-blue-400",    text: "text-blue-300",    bg: "bg-blue-950/40",    border: "border-blue-500/30"    },
+  { dot: "bg-amber-400",   text: "text-amber-300",   bg: "bg-amber-950/40",   border: "border-amber-500/30"   },
+  { dot: "bg-purple-400",  text: "text-purple-300",  bg: "bg-purple-950/40",  border: "border-purple-500/30"  },
+  { dot: "bg-rose-400",    text: "text-rose-300",    bg: "bg-rose-950/40",    border: "border-rose-500/30"    },
+] as const;
+
+// ─── Multi-wallet commingling types ──────────────────────────────────────────
+interface MultiGraphNode {
+  address: string;
+  depth: number;
+  via: string | null;
+  txCount: number;
+  totalValueUsd: number;
+}
+
+interface MultiSharedEntry {
+  address: string;
+  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" };
+  appearances: Array<{
+    wallet: string;
+    depth: number;
+    txCount: number;
+    totalValueUsd: number;
+    via: string | null;
+  }>;
+}
+
+interface MultiAnalysisResult {
+  trackedWallets: string[];
+  sharedCounterparties: MultiSharedEntry[];
+  commonEndpoints: MultiSharedEntry[];
+  patterns: Array<{
+    id: number;
+    sharedAddr: string;
+    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" };
+    totalTxCount: number;
+    totalValueUsd: number;
+    paths: Array<{ wallet: string; path: string[] }>;
+  }>;
+}
+
 const DAG_BATCH = 250;
 const OTHER_BATCH = 800;
 const MAX_TOTAL = 25000;
@@ -241,6 +286,16 @@ export default function WalletDetail() {
   const [showNodeTree, setShowNodeTree] = useState(true);
   const fetchingRef = useRef(new Set<string>());
   const trailPanelRef = useRef<HTMLDivElement>(null);
+  const multiPanelRef = useRef<HTMLDivElement>(null);
+
+  // ── Multi-wallet commingling analysis ──
+  const [showMultiPanel, setShowMultiPanel] = useState(false);
+  const [multiWallets, setMultiWallets] = useState<string[]>([]);
+  const [multiWalletInput, setMultiWalletInput] = useState("");
+  const [multiResult, setMultiResult] = useState<MultiAnalysisResult | null>(null);
+  const [multiLoading, setMultiLoading] = useState(false);
+  const [multiProgress, setMultiProgress] = useState("");
+  const [multiError, setMultiError] = useState<string | null>(null);
 
   // ── Blocks React Query background-refetches from overwriting accumulated txs ──
   const txInitializedRef = useRef(false);
@@ -638,6 +693,104 @@ export default function WalletDetail() {
     startTrailTrace(addr);
   }, [startTrailTrace]);
 
+  // ── Multi-wallet commingling analysis ──
+  const runMultiAnalysis = useCallback(async () => {
+    const allWallets = [address, ...multiWallets].filter(Boolean);
+    if (allWallets.length < 2) {
+      setMultiError("Add at least one additional wallet address to compare.");
+      return;
+    }
+    setMultiLoading(true);
+    setMultiError(null);
+    setMultiResult(null);
+
+    const fetchConns = async (addr: string) => {
+      try {
+        const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/connections?chain=${chain}`);
+        if (!resp.ok) return { nodes: [] as Array<{ address: string }>, edges: [] as Array<{ from: string; to: string; totalValueUsd: number; transactionCount: number }> };
+        return resp.json() as Promise<{ nodes: Array<{ address: string }>; edges: Array<{ from: string; to: string; totalValueUsd: number; transactionCount: number }> }>;
+      } catch { return { nodes: [], edges: [] }; }
+    };
+
+    try {
+      // Build a per-wallet map: address → MultiGraphNode (depth 1 + 2)
+      const walletNodeMaps: Array<{ wallet: string; nodes: Map<string, MultiGraphNode> }> = [];
+
+      for (const wallet of allWallets) {
+        setMultiProgress(`Depth-1: ${wallet.slice(0, 10)}…`);
+        const nodeMap = new Map<string, MultiGraphNode>();
+
+        const d1 = await fetchConns(wallet);
+        const d1peers = d1.nodes.filter((n) => n.address !== wallet && !allWallets.includes(n.address)).slice(0, 12);
+        for (const peer of d1peers) {
+          const edge = d1.edges.find((e) => (e.from === wallet && e.to === peer.address) || (e.to === wallet && e.from === peer.address));
+          nodeMap.set(peer.address, { address: peer.address, depth: 1, via: wallet, txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0 });
+        }
+
+        // Depth-2: top 6 depth-1 peers in parallel
+        const top6 = d1peers.slice(0, 6);
+        const d2results = await Promise.all(top6.map((p) => fetchConns(p.address)));
+        for (let pi = 0; pi < top6.length; pi++) {
+          const peer = top6[pi];
+          setMultiProgress(`Depth-2: ${peer.address.slice(0, 10)}…`);
+          const d2 = d2results[pi];
+          const d2peers = d2.nodes.filter((n) => n.address !== peer.address && !allWallets.includes(n.address)).slice(0, 8);
+          for (const node of d2peers) {
+            if (!nodeMap.has(node.address)) {
+              const edge = d2.edges.find((e) => (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
+              nodeMap.set(node.address, { address: node.address, depth: 2, via: peer.address, txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0 });
+            }
+          }
+        }
+        walletNodeMaps.push({ wallet, nodes: nodeMap });
+      }
+
+      // Aggregate: address → all wallet appearances
+      const addressMap = new Map<string, MultiSharedEntry>();
+      for (const { wallet, nodes } of walletNodeMaps) {
+        for (const [addr, node] of nodes) {
+          if (!addressMap.has(addr)) {
+            addressMap.set(addr, { address: addr, knownInfo: KNOWN_LABELS[addr], appearances: [] });
+          }
+          addressMap.get(addr)!.appearances.push({ wallet, depth: node.depth, txCount: node.txCount, totalValueUsd: node.totalValueUsd, via: node.via });
+        }
+      }
+
+      const shared = Array.from(addressMap.values()).filter((e) => e.appearances.length >= 2);
+
+      const sharedCounterparties = shared
+        .filter((s) => s.appearances.some((a) => a.depth === 1))
+        .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0));
+
+      const commonEndpoints = shared
+        .filter((s) => s.appearances.every((a) => a.depth === 2))
+        .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0));
+
+      const patterns = shared
+        .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0))
+        .slice(0, 20)
+        .map((s, i) => ({
+          id: i + 1,
+          sharedAddr: s.address,
+          knownInfo: s.knownInfo,
+          totalTxCount: s.appearances.reduce((sum, a) => sum + a.txCount, 0),
+          totalValueUsd: s.appearances.reduce((sum, a) => sum + a.totalValueUsd, 0),
+          paths: s.appearances.map((a) => ({
+            wallet: a.wallet,
+            path: a.depth === 1 ? [a.wallet, s.address] : [a.wallet, a.via ?? "?", s.address],
+          })),
+        }));
+
+      setMultiResult({ trackedWallets: allWallets, sharedCounterparties, commonEndpoints, patterns });
+      setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+    } catch (err) {
+      setMultiError(err instanceof Error ? err.message : "Analysis failed");
+    } finally {
+      setMultiLoading(false);
+      setMultiProgress("");
+    }
+  }, [address, multiWallets, chain]);
+
   // ── Helpers ──
   const getRiskBadge = (score: number | null) => {
     if (score === null)
@@ -828,6 +981,13 @@ export default function WalletDetail() {
               <Network className="w-3.5 h-3.5 mr-1.5" /> TRACE GRAPH
             </Button>
           </Link>
+          <Button
+            variant="outline"
+            className={`font-mono text-xs ${showMultiPanel ? "border-violet-500/60 text-violet-300 bg-violet-950/30 hover:bg-violet-950/50" : "border-violet-500/30 text-violet-400 hover:bg-violet-950/30 hover:border-violet-500/60"}`}
+            onClick={() => { setShowMultiPanel((v) => !v); if (!showMultiPanel) setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
+          >
+            <Layers className="w-3.5 h-3.5 mr-1.5" /> MULTI-WALLET ANALYSIS
+          </Button>
           <Button
             className="font-mono bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
             onClick={() => startTrailTrace(address)}
@@ -1606,6 +1766,311 @@ export default function WalletDetail() {
           )}
         </Card>
       )}
+      {/* ── Multi-Wallet Commingling Analysis Panel ── */}
+      {showMultiPanel && (
+        <Card ref={multiPanelRef} className="bg-card/40 border-violet-500/30 shadow-lg shadow-violet-500/5">
+          <CardHeader className="border-b border-border/40 pb-4 px-5 pt-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-violet-400 animate-pulse" />
+                <CardTitle className="text-sm font-mono uppercase tracking-widest text-violet-300">
+                  Multi-Wallet Commingling Analysis
+                </CardTitle>
+                {multiResult && (
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {multiResult.trackedWallets.length} wallets · {multiResult.sharedCounterparties.length + multiResult.commonEndpoints.length} shared nodes
+                  </span>
+                )}
+              </div>
+              <button onClick={() => setShowMultiPanel(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
+              Map depth-2 connections for multiple wallets and surface shared counterparties, common endpoints, and commingling paths. Add up to 4 additional wallets to cross-reference.
+            </p>
+
+            {/* ── Tracked Wallet List ── */}
+            <div className="mt-4 space-y-2.5">
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Tracked Wallets</div>
+
+              {/* Primary wallet (always included) */}
+              {(() => { const c = WALLET_COLORS[0]; return (
+                <div className={`flex items-center gap-2.5 ${c.bg} border ${c.border} rounded-lg px-3 py-2`}>
+                  <div className={`w-2 h-2 rounded-full ${c.dot} shrink-0`} />
+                  <span className={`text-xs font-mono ${c.text} flex-1 truncate min-w-0`}>{address}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0 uppercase">Primary</span>
+                  {KNOWN_LABELS[address] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[address])}</span>}
+                </div>
+              ); })()}
+
+              {/* Additional wallets */}
+              {multiWallets.map((w, i) => {
+                const c = WALLET_COLORS[(i + 1) % WALLET_COLORS.length];
+                return (
+                  <div key={w} className={`flex items-center gap-2.5 ${c.bg} border ${c.border} rounded-lg px-3 py-2`}>
+                    <div className={`w-2 h-2 rounded-full ${c.dot} shrink-0`} />
+                    <span className={`text-xs font-mono ${c.text} flex-1 truncate min-w-0`}>{w}</span>
+                    <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">Wallet {i + 2}</span>
+                    {KNOWN_LABELS[w] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[w])}</span>}
+                    <button
+                      onClick={() => setMultiWallets((prev) => prev.filter((_, j) => j !== i))}
+                      className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                );
+              })}
+
+              {/* Add wallet input */}
+              {multiWallets.length < 4 && (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={multiWalletInput}
+                    onChange={(e) => setMultiWalletInput(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && multiWalletInput.trim() && !multiWallets.includes(multiWalletInput.trim())) {
+                        setMultiWallets((prev) => [...prev, multiWalletInput.trim()]);
+                        setMultiWalletInput("");
+                      }
+                    }}
+                    placeholder="Paste additional wallet address…"
+                    className="flex-1 bg-muted/20 border border-border/40 focus:border-violet-500/50 rounded-lg px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none transition-colors"
+                  />
+                  <button
+                    onClick={() => {
+                      const trimmed = multiWalletInput.trim();
+                      if (trimmed && !multiWallets.includes(trimmed)) {
+                        setMultiWallets((prev) => [...prev, trimmed]);
+                        setMultiWalletInput("");
+                      }
+                    }}
+                    disabled={!multiWalletInput.trim()}
+                    className="px-3 py-2 rounded-lg bg-violet-900/60 border border-violet-500/40 text-violet-300 hover:bg-violet-900/80 disabled:opacity-40 transition-colors shrink-0"
+                    title="Add wallet"
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              )}
+
+              {/* Analyze button */}
+              <button
+                onClick={runMultiAnalysis}
+                disabled={multiLoading || multiWallets.length === 0}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:bg-muted/30 disabled:text-muted-foreground/60 text-white font-mono text-xs font-bold tracking-widest transition-colors mt-1"
+              >
+                {multiLoading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    <span>ANALYZING…</span>
+                    {multiProgress && <span className="opacity-60 truncate max-w-[240px] font-normal">{multiProgress}</span>}
+                  </>
+                ) : (
+                  <><GitMerge className="w-3.5 h-3.5" /> RUN COMMINGLING ANALYSIS</>
+                )}
+              </button>
+              {multiError && (
+                <p className="text-xs font-mono text-red-400 flex items-center gap-1.5 mt-0.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0" /> {multiError}
+                </p>
+              )}
+            </div>
+          </CardHeader>
+
+          {multiResult && (
+            <div className="divide-y divide-border/20">
+
+              {/* ── Wallet legend ── */}
+              <div className="px-5 py-3 flex items-center gap-4 flex-wrap bg-muted/5">
+                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Legend:</span>
+                {multiResult.trackedWallets.map((w, i) => {
+                  const c = WALLET_COLORS[i % WALLET_COLORS.length];
+                  return (
+                    <div key={w} className="flex items-center gap-1.5">
+                      <div className={`w-2 h-2 rounded-full ${c.dot} shrink-0`} />
+                      <span className={`text-[10px] font-mono ${c.text}`}>
+                        {i === 0 ? "PRIMARY" : `W${i + 1}`}: {w.length > 18 ? `${w.slice(0, 10)}…${w.slice(-4)}` : w}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* ── § 1 Shared Counterparties (depth-1 overlap) ── */}
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-violet-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-violet-300 font-bold tracking-widest uppercase">§ 1 — Shared Counterparties</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">wallets all targets transact with directly</span>
+                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${multiResult.sharedCounterparties.length > 0 ? "bg-violet-950/60 text-violet-200 border-violet-400/40" : "text-muted-foreground border-border/30"}`}>
+                    {multiResult.sharedCounterparties.length} found
+                  </span>
+                </div>
+                {multiResult.sharedCounterparties.length === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
+                    No direct shared counterparties. These wallets may be connected at depth-2 — check Common Endpoints below.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {multiResult.sharedCounterparties.map((entry, i) => (
+                      <div key={entry.address} className="bg-violet-950/20 border border-violet-500/20 rounded-lg p-3">
+                        <div className="flex items-center gap-2 flex-wrap mb-2.5">
+                          <span className="text-[10px] font-mono bg-violet-900/70 text-violet-200 px-1.5 py-0.5 rounded border border-violet-400/40 font-bold shrink-0">
+                            #{i + 1}
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: entry.address, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {entry.address.length > 20 ? `${entry.address.slice(0, 10)}…${entry.address.slice(-6)}` : entry.address}
+                          </button>
+                          {entry.knownInfo && getKnownBadge(entry.knownInfo, "md")}
+                          {savedWallets.has(entry.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                          <span className="ml-auto text-[10px] font-mono text-violet-400 font-bold shrink-0">
+                            {entry.appearances.length}/{multiResult.trackedWallets.length} wallets
+                          </span>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          {entry.appearances.map((app) => {
+                            const idx = multiResult.trackedWallets.indexOf(app.wallet);
+                            const c = WALLET_COLORS[idx % WALLET_COLORS.length];
+                            return (
+                              <div key={app.wallet} className={`flex items-center gap-1.5 ${c.bg} border ${c.border} rounded px-2 py-1 text-[10px] font-mono`}>
+                                <div className={`w-1.5 h-1.5 rounded-full ${c.dot} shrink-0`} />
+                                <span className={`${c.text} font-bold`}>{idx === 0 ? "PRIMARY" : `W${idx + 1}`}</span>
+                                <span className="text-muted-foreground/60">·</span>
+                                <span className="text-foreground font-bold">{app.txCount} tx</span>
+                                {app.totalValueUsd > 0 && <span className="text-muted-foreground">${app.totalValueUsd.toFixed(0)}</span>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── § 2 Common Endpoints (depth-2 overlap) ── */}
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-orange-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-orange-300 font-bold tracking-widest uppercase">§ 2 — Common Endpoints</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">reached by 2+ wallets at depth-2</span>
+                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${multiResult.commonEndpoints.length > 0 ? "bg-orange-950/60 text-orange-200 border-orange-400/40" : "text-muted-foreground border-border/30"}`}>
+                    {multiResult.commonEndpoints.length} found
+                  </span>
+                </div>
+                {multiResult.commonEndpoints.length === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
+                    No depth-2 common endpoints found. The wallets may not share 2nd-degree connections.
+                  </p>
+                ) : (
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {multiResult.commonEndpoints.slice(0, 25).map((entry, i) => (
+                      <div key={entry.address} className="bg-orange-950/15 border border-orange-500/20 rounded-lg p-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-mono bg-orange-900/70 text-orange-200 px-1.5 py-0.5 rounded border border-orange-400/40 font-bold shrink-0">
+                            #{i + 1}
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: entry.address, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {entry.address.length > 20 ? `${entry.address.slice(0, 10)}…${entry.address.slice(-6)}` : entry.address}
+                          </button>
+                          {entry.knownInfo && getKnownBadge(entry.knownInfo)}
+                          {savedWallets.has(entry.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                          <div className="ml-auto flex gap-1.5 flex-wrap">
+                            {entry.appearances.map((app) => {
+                              const idx = multiResult.trackedWallets.indexOf(app.wallet);
+                              const c = WALLET_COLORS[idx % WALLET_COLORS.length];
+                              return (
+                                <div key={app.wallet} className={`flex items-center gap-1 ${c.bg} border ${c.border} rounded px-1.5 py-0.5 text-[10px] font-mono`}>
+                                  <div className={`w-1 h-1 rounded-full ${c.dot}`} />
+                                  <span className={`${c.text} font-bold`}>{idx === 0 ? "P" : `W${idx + 1}`}</span>
+                                  {app.via && <span className="text-muted-foreground/60">via {app.via.slice(0, 6)}…</span>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── § 3 Commingling Patterns ── */}
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-red-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-red-300 font-bold tracking-widest uppercase">§ 3 — Commingling Patterns</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">traced paths to shared nodes</span>
+                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${multiResult.patterns.length > 0 ? "bg-red-950/60 text-red-200 border-red-400/40" : "text-muted-foreground border-border/30"}`}>
+                    {multiResult.patterns.length} patterns
+                  </span>
+                </div>
+                {multiResult.patterns.length === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3">No commingling patterns detected.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {multiResult.patterns.map((pat) => (
+                      <div key={pat.sharedAddr} className="bg-red-950/10 border border-red-500/15 rounded-lg p-3">
+                        <div className="flex items-center gap-2 flex-wrap mb-2.5">
+                          <span className="text-[10px] font-mono bg-red-900/70 text-red-200 px-1.5 py-0.5 rounded border border-red-400/40 font-bold shrink-0">
+                            PATTERN #{pat.id}
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: pat.sharedAddr, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {pat.sharedAddr.length > 20 ? `${pat.sharedAddr.slice(0, 10)}…${pat.sharedAddr.slice(-6)}` : pat.sharedAddr}
+                          </button>
+                          {pat.knownInfo && getKnownBadge(pat.knownInfo, "md")}
+                          <div className="ml-auto flex items-center gap-3 text-[10px] font-mono shrink-0">
+                            {pat.totalTxCount > 0 && <span className="text-foreground font-bold">{pat.totalTxCount} tx</span>}
+                            {pat.totalValueUsd > 0 && <span className="text-muted-foreground">${pat.totalValueUsd.toFixed(0)}</span>}
+                            <span className="text-red-400 font-bold">{pat.paths.length} paths converge</span>
+                          </div>
+                        </div>
+                        <div className="space-y-1.5 pl-2 border-l-2 border-red-500/20">
+                          {pat.paths.map((p) => {
+                            const idx = multiResult.trackedWallets.indexOf(p.wallet);
+                            const c = WALLET_COLORS[idx % WALLET_COLORS.length];
+                            return (
+                              <div key={p.wallet} className="flex items-center gap-1 flex-wrap text-[10px] font-mono">
+                                <span className={`${c.text} font-bold shrink-0`}>{idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`}</span>
+                                {p.path.map((step, si) => (
+                                  <span key={si} className="flex items-center gap-1">
+                                    {si > 0 && <ChevronRight className="w-2.5 h-2.5 text-muted-foreground/50 shrink-0" />}
+                                    <span className={
+                                      si === 0 ? `${c.text}/70` :
+                                      si === p.path.length - 1 ? "text-red-300 font-bold" :
+                                      "text-muted-foreground"
+                                    }>
+                                      {step.length > 14 ? `${step.slice(0, 8)}…${step.slice(-4)}` : step}
+                                    </span>
+                                  </span>
+                                ))}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
+        </Card>
+      )}
+
     </div>
   );
 }

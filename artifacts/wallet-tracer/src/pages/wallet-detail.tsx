@@ -180,6 +180,9 @@ export default function WalletDetail() {
   const fetchingRef = useRef(new Set<string>());
   const trailPanelRef = useRef<HTMLDivElement>(null);
 
+  // ── Guards React Query background-refetches from wiping accumulated tx state ──
+  const txInitializedRef = useRef(false);
+
   // Close menu on outside click
   useEffect(() => {
     const handler = () => setActiveMenu(null);
@@ -189,9 +192,11 @@ export default function WalletDetail() {
 
   // ── Reset accumulated state on address/chain change ──
   useEffect(() => {
+    txInitializedRef.current = false;
     setAllTxs([]);
     setNextCursor(null);
     setHasMore(false);
+    setLoadError(null);
     setMinAmount(1.0);
     setMinAmountInput("1");
   }, [address, chain]);
@@ -207,8 +212,12 @@ export default function WalletDetail() {
   );
 
   // ── Sync initial React Query data into local accumulated state ──
+  // Only runs once per wallet/chain — the ref blocks RQ background-refetches
+  // from overwriting transactions the user has already accumulated via Load More.
   useEffect(() => {
     if (!transactionsData?.transactions) return;
+    if (txInitializedRef.current) return;
+    txInitializedRef.current = true;
     const seen = new Set<string>();
     const deduped = transactionsData.transactions.filter((tx) => {
       const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
@@ -234,7 +243,12 @@ export default function WalletDetail() {
     return resp.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
   }, [address, chain]);
 
-  // ── Load More Batch (+5,000 txs ≈ 10 pages of 500) ──
+  // DAG Constellation API is slow on cursor pages — cap at 1 page (500 txs) per click.
+  // All other chains can loop up to 10 pages (5,000 txs) per click.
+  const loadMorePageBatch = chain === "dag" ? 1 : 10;
+  const loadMoreLabel = chain === "dag" ? "LOAD +500" : "LOAD +5,000";
+
+  // ── Load More Batch ──
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore || loadingAll || !nextCursor) return;
     setLoadingMore(true);
@@ -242,7 +256,7 @@ export default function WalletDetail() {
     setLoadProgress({ page: 0, txCount: allTxs.length });
     let cursor: string | null = nextCursor;
     let accumulated = [...allTxs];
-    const TARGET = Math.min(accumulated.length + 5000, MAX_TOTAL);
+    const TARGET = Math.min(accumulated.length + (loadMorePageBatch * LOAD_LIMIT), MAX_TOTAL);
     let pageNum = 0;
     try {
       while (cursor && accumulated.length < TARGET) {
@@ -995,7 +1009,10 @@ export default function WalletDetail() {
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-xs font-mono text-primary flex items-center gap-1.5">
                     <Loader2 className="w-3 h-3 animate-spin" />
-                    {loadingAll ? "FETCHING FULL HISTORY" : "LOADING BATCH"} · PAGE {loadProgress.page}
+                    {loadingAll
+                      ? `FETCHING FULL HISTORY${chain === "dag" ? " (DAG — 1 PAGE AT A TIME)" : ""}`
+                      : `LOADING ${chain === "dag" ? "DAG BATCH" : "BATCH"}`
+                    } · PAGE {loadProgress.page}
                   </span>
                   <span className="text-xs font-mono text-muted-foreground">
                     {loadProgress.txCount.toLocaleString()} / {MAX_TOTAL.toLocaleString()} TXS LOADED
@@ -1030,7 +1047,7 @@ export default function WalletDetail() {
                   >
                     {loadingMore
                       ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</>
-                      : "LOAD +5,000"}
+                      : loadMoreLabel}
                   </Button>
                   <Button
                     variant="outline"

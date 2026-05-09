@@ -309,9 +309,9 @@ export default function WalletDetail() {
   type GroupSort = "most-txs" | "highest-value" | "recent" | "exchange-first";
   const [groupSort, setGroupSort] = useState<GroupSort>("most-txs");
 
-  // ── Minimum amount filter — default 0 (show all txs) ──
-  const [minAmount, setMinAmount] = useState(0);
-  const [minAmountInput, setMinAmountInput] = useState("0");
+  // ── Minimum amount filter — default 1 (hide dust/spam; user can lower to 0) ──
+  const [minAmount, setMinAmount] = useState(1);
+  const [minAmountInput, setMinAmountInput] = useState("1");
 
   // ── All pagination state in one ref — plain mutable object, zero stale-closure risk ──
   // Reading page.current in render always gives the latest value.
@@ -397,8 +397,8 @@ export default function WalletDetail() {
     txInitializedRef.current = false;
     page.current = { txs: [], cursor: null, hasMore: false, busy: false, error: null, status: null };
     setAllTxs([]);
-    setMinAmount(0);
-    setMinAmountInput("0");
+    setMinAmount(1);
+    setMinAmountInput("1");
   }, [address, chain, initLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(

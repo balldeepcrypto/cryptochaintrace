@@ -128,7 +128,7 @@ interface GroupedRow {
 }
 
 const LOAD_LIMIT = 500;
-const DAG_LOAD_LIMIT = 300; // DAG Constellation API is slow on cursor pages — use smaller batches
+const DAG_LOAD_LIMIT = 250; // DAG Constellation API is slow on cursor pages — small batches are reliable
 
 export default function WalletDetail() {
   const params = useParams();
@@ -152,7 +152,26 @@ export default function WalletDetail() {
   const [loadingAll, setLoadingAll] = useState(false);
   const [loadProgress, setLoadProgress] = useState<{ page: number; txCount: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadStatus, setLoadStatus] = useState<string | null>(null);
   const [showDonate, setShowDonate] = useState(false);
+
+  // ── Refs that always hold current pagination values — prevents stale closures ──
+  // loadMore/loadAll read from these so they never operate on stale state captured
+  // at useCallback memoization time.
+  const allTxsRef = useRef<Tx[]>([]);
+  const nextCursorRef = useRef<string | null>(null);
+  const hasMoreRef = useRef(false);
+  const isLoadingRef = useRef(false); // guards against concurrent load clicks
+
+  // Helper: update state AND refs together so they are always in sync
+  const applyTxUpdate = useCallback((txs: Tx[], cursor: string | null, more: boolean) => {
+    allTxsRef.current = txs;
+    nextCursorRef.current = cursor;
+    hasMoreRef.current = more;
+    setAllTxs(txs);
+    setNextCursor(cursor);
+    setHasMore(more);
+  }, []);
 
   // ── Saved wallets (localStorage) ──
   const [savedWallets, setSavedWallets] = useState<Set<string>>(() => {
@@ -191,13 +210,18 @@ export default function WalletDetail() {
     return () => window.removeEventListener("click", handler);
   }, []);
 
-  // ── Reset accumulated state on address/chain change ──
+  // ── Reset accumulated state AND refs on address/chain change ──
   useEffect(() => {
     txInitializedRef.current = false;
+    isLoadingRef.current = false;
+    allTxsRef.current = [];
+    nextCursorRef.current = null;
+    hasMoreRef.current = false;
     setAllTxs([]);
     setNextCursor(null);
     setHasMore(false);
     setLoadError(null);
+    setLoadStatus(null);
     setMinAmount(1.0);
     setMinAmountInput("1");
   }, [address, chain]);
@@ -228,10 +252,13 @@ export default function WalletDetail() {
       seen.add(key);
       return true;
     });
-    setAllTxs(deduped as Tx[]);
-    setNextCursor(transactionsData.nextCursor ?? null);
-    setHasMore(transactionsData.hasMore ?? false);
-  }, [transactionsData]);
+    // applyTxUpdate writes both state and refs simultaneously
+    applyTxUpdate(
+      deduped as Tx[],
+      transactionsData.nextCursor ?? null,
+      transactionsData.hasMore ?? false,
+    );
+  }, [transactionsData, applyTxUpdate]);
 
   const MAX_TOTAL = 25000;
 
@@ -247,76 +274,83 @@ export default function WalletDetail() {
     return resp.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
   }, [address, chain]);
 
-  // DAG: exactly 1 page of 300 txs per click (Constellation is slow on cursor pages).
-  // Others: loop up to 10 pages of 500 txs per click (5,000 txs total).
+  // DAG: exactly 1 page of 250 txs per click. Others: up to 10 pages (5,000 txs) per click.
   const loadMoreLabel = chain === "dag" ? `LOAD +${DAG_LOAD_LIMIT}` : "LOAD +5,000";
 
-  // ── Load More — fetch exactly ONE page for DAG, up to 10 pages for others ──
+  // ── Load More ──
+  // CRITICAL: reads cursor/txs from refs (not closure-captured state) so the callback
+  // always operates on the latest values regardless of React's memoization cycle.
   const loadMore = useCallback(async () => {
-    if (!hasMore || loadingMore || loadingAll || !nextCursor) return;
-    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
+    if (!hasMoreRef.current || isLoadingRef.current || !nextCursorRef.current) return;
+    isLoadingRef.current = true;
     setLoadingMore(true);
     setLoadError(null);
-    setLoadProgress({ page: 1, txCount: allTxs.length });
+    setLoadStatus(null);
+    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
+    // Snapshot from refs — these are always current
+    const cursor = nextCursorRef.current;
+    const currentTxs = allTxsRef.current;
+    setLoadProgress({ page: 1, txCount: currentTxs.length });
     try {
       if (chain === "dag") {
-        // DAG: single page fetch — one cursor request per click to avoid timeout stacking
-        const data = await fetchPage(nextCursor, limit);
-        const existingKeys = new Set(allTxs.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+        // DAG: exactly one page per click — never loop to avoid Constellation timeout stacking
+        const data = await fetchPage(cursor, limit);
+        const existingKeys = new Set(currentTxs.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
         const newTxs = (data.transactions ?? []).filter((tx) => {
           const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
           return !existingKeys.has(key);
         });
-        const next = [...allTxs, ...newTxs];
-        setAllTxs(next);
-        setNextCursor(data.nextCursor ?? null);
-        // Use data.hasMore directly — server is authoritative; don't re-derive from cursor presence
-        setHasMore(data.hasMore && next.length < MAX_TOTAL);
+        const next = [...currentTxs, ...newTxs];
+        const newCursor = data.nextCursor ?? null;
+        const newHasMore = data.hasMore && next.length < MAX_TOTAL;
+        applyTxUpdate(next, newCursor, newHasMore);
+        setLoadStatus(`Added ${newTxs.length} transactions · Total: ${next.length.toLocaleString()}`);
       } else {
-        // Non-DAG: batch up to 10 pages
-        let cursor: string | null = nextCursor;
-        let accumulated = [...allTxs];
+        // Non-DAG: batch up to 10 pages of 500
+        let cur: string | null = cursor;
+        let accumulated = [...currentTxs];
         const TARGET = Math.min(accumulated.length + (10 * LOAD_LIMIT), MAX_TOTAL);
         let pageNum = 0;
-        while (cursor && accumulated.length < TARGET) {
+        while (cur && accumulated.length < TARGET) {
           pageNum++;
           setLoadProgress({ page: pageNum, txCount: accumulated.length });
-          const data = await fetchPage(cursor, limit);
+          const data = await fetchPage(cur, limit);
           const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
           const newTxs = (data.transactions ?? []).filter((tx) => {
             const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
             return !existingKeys.has(key);
           });
           accumulated = [...accumulated, ...newTxs];
-          cursor = data.nextCursor ?? null;
-          if (!data.hasMore || !cursor) break;
+          cur = data.nextCursor ?? null;
+          if (!data.hasMore || !cur) break;
         }
-        setAllTxs(accumulated);
-        setNextCursor(cursor);
-        setHasMore(!!cursor && accumulated.length < MAX_TOTAL);
+        applyTxUpdate(accumulated, cur, !!cur && accumulated.length < MAX_TOTAL);
+        setLoadStatus(`Total: ${accumulated.length.toLocaleString()} transactions loaded`);
       }
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
     } finally {
+      isLoadingRef.current = false;
       setLoadingMore(false);
       setLoadProgress(null);
     }
-  }, [hasMore, loadingMore, loadingAll, nextCursor, allTxs, fetchPage, chain]);
+  }, [chain, fetchPage, applyTxUpdate]); // no allTxs/nextCursor/hasMore in deps — always read from refs
 
-  // ── Load All — loop one page at a time until hasMore=false, hard cap 25k ──
+  // ── Load All — loop until hasMore=false or 25k cap, commit after every page ──
   const loadAll = useCallback(async () => {
-    if (!hasMore || loadingAll || loadingMore || !nextCursor) return;
-    if (allTxs.length > 20000) {
+    if (!hasMoreRef.current || isLoadingRef.current || !nextCursorRef.current) return;
+    if (allTxsRef.current.length > 20000) {
       if (!window.confirm(
-        `You already have ${allTxs.length.toLocaleString()} transactions loaded.\n\nLoading more may slow or freeze your browser.\n\nContinue?`
+        `You already have ${allTxsRef.current.length.toLocaleString()} transactions loaded.\n\nLoading more may slow or freeze your browser.\n\nContinue?`
       )) return;
     }
-    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
+    isLoadingRef.current = true;
     setLoadingAll(true);
     setLoadError(null);
-    setLoadProgress({ page: 0, txCount: allTxs.length });
-    let cursor: string | null = nextCursor;
-    let accumulated = [...allTxs];
+    setLoadStatus(null);
+    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
+    let cursor: string | null = nextCursorRef.current;
+    let accumulated = [...allTxsRef.current];
     let pageNum = 0;
     try {
       while (cursor && accumulated.length < MAX_TOTAL) {
@@ -330,19 +364,20 @@ export default function WalletDetail() {
         });
         accumulated = [...accumulated, ...newTxs];
         cursor = data.nextCursor ?? null;
-        // Commit each page immediately so user sees progress
-        setAllTxs([...accumulated]);
-        setNextCursor(cursor);
-        setHasMore(data.hasMore && accumulated.length < MAX_TOTAL);
+        const more = data.hasMore && accumulated.length < MAX_TOTAL;
+        // Commit each page immediately so table updates while loading
+        applyTxUpdate([...accumulated], cursor, more);
         if (!data.hasMore || !cursor) break;
       }
+      setLoadStatus(`Full history loaded · ${accumulated.length.toLocaleString()} total`);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
     } finally {
+      isLoadingRef.current = false;
       setLoadingAll(false);
       setLoadProgress(null);
     }
-  }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, fetchPage, chain]);
+  }, [chain, fetchPage, applyTxUpdate]); // no allTxs/nextCursor/hasMore in deps — always read from refs
 
   // ── Apply minimum amount filter ──
   const filteredTxs = useMemo(() => {
@@ -1059,6 +1094,9 @@ export default function WalletDetail() {
                 <span className="text-xs font-mono text-muted-foreground">
                   {allTxs.length.toLocaleString()} loaded · more available
                 </span>
+                {loadStatus && !loadProgress && (
+                  <span className="text-[10px] font-mono text-primary/70">{loadStatus}</span>
+                )}
                 {nextCursor && (
                   <span className="text-[10px] font-mono text-muted-foreground/40 break-all">
                     CURSOR: {nextCursor.length > 20 ? `${nextCursor.slice(0, 20)}…${nextCursor.slice(-8)}` : nextCursor}

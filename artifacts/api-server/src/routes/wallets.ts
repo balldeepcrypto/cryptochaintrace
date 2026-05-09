@@ -85,20 +85,35 @@ async function etherscanFetch(params: Record<string, string>, chain: string): Pr
   return resp.json() as Promise<Record<string, unknown>>;
 }
 
-// ── Blockstream.info BTC API (cursor-based, 25 txs/page, no overlap) ─────────
-async function blockstreamAddress(address: string): Promise<Record<string, unknown>> {
-  const resp = await fetchWithTimeout(`https://blockstream.info/api/address/${address}`, {}, 10000);
-  if (!resp.ok) throw new Error(`Blockstream address API ${resp.status}`);
-  return resp.json() as Promise<Record<string, unknown>>;
+// ── BTC Explorer APIs: blockstream.info (primary) → mempool.space (fallback) ─
+// Both use identical response formats. mempool.space returns up to 50 txs/page.
+const BTC_BASES = ["https://blockstream.info", "https://mempool.space"];
+
+async function btcFetchAddress(address: string): Promise<Record<string, unknown>> {
+  let lastErr: Error = new Error("BTC explorer unavailable");
+  for (const base of BTC_BASES) {
+    try {
+      const resp = await fetchWithTimeout(`${base}/api/address/${address}`, {}, 10000);
+      if (!resp.ok) { lastErr = new Error(`BTC address ${resp.status} (${base})`); continue; }
+      return resp.json() as Promise<Record<string, unknown>>;
+    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+  }
+  throw lastErr;
 }
 
-async function blockstreamTxs(address: string, afterTxid?: string): Promise<Array<Record<string, unknown>>> {
+async function btcFetchTxs(address: string, afterTxid?: string): Promise<Array<Record<string, unknown>>> {
   const path = afterTxid
     ? `/api/address/${address}/txs/chain/${afterTxid}`
     : `/api/address/${address}/txs`;
-  const resp = await fetchWithTimeout(`https://blockstream.info${path}`, {}, 10000);
-  if (!resp.ok) throw new Error(`Blockstream txs API ${resp.status}`);
-  return resp.json() as Promise<Array<Record<string, unknown>>>;
+  let lastErr: Error = new Error("BTC txs API unavailable");
+  for (const base of BTC_BASES) {
+    try {
+      const resp = await fetchWithTimeout(`${base}${path}`, {}, 10000);
+      if (!resp.ok) { lastErr = new Error(`BTC txs ${resp.status} (${base})`); continue; }
+      return resp.json() as Promise<Array<Record<string, unknown>>>;
+    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+  }
+  throw lastErr;
 }
 
 function parseBtcTx(tx: Record<string, unknown>, address: string, priceUsd: number) {
@@ -151,11 +166,12 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8
   }
 }
 
-// XRPL cluster JSON-RPC — publicly accessible on port 443
+// XRPL cluster JSON-RPC — multiple public nodes, tried in order on failure
 const XRPL_ENDPOINTS = [
-  "https://s2.ripple.com:51234/",
-  "https://s1.ripple.com:51234/",
-  "https://xrplcluster.com/",
+  "https://xrplcluster.com/",      // community cluster (primary)
+  "https://s1.ripple.com:51234/",  // Ripple's own node
+  "https://s2.ripple.com:51234/",  // Ripple's own node (clio)
+  "https://xrpl.ws/",              // community WebSocket-compatible HTTP fallback
 ];
 
 async function xrplRpc(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -202,15 +218,26 @@ const XDC_RPC_ENDPOINTS = [
 ];
 const XDC_BLOCKSSCAN = "https://api.xdcscan.io/api";
 
-// ── Hedera (HBAR) Mirror Node ─────────────────────────────────────────────────
-const HBAR_MIRROR = "https://mainnet-public.mirrornode.hedera.com";
+// ── Hedera (HBAR) Mirror Node — primary + fallback ────────────────────────────
+// CRITICAL: order=desc is broken on the public mirror node for ALL accounts.
+// Only order=asc&timestamp=gte:{created_ts} works reliably.
+const HBAR_MIRROR_NODES = [
+  "https://mainnet-public.mirrornode.hedera.com",  // Hedera official (primary)
+  "https://mainnet.mirrornode.hedera.com",          // Hedera official alternate
+];
 
 async function hbarFetch(path: string): Promise<Record<string, unknown>> {
-  const resp = await fetchWithTimeout(`${HBAR_MIRROR}${path}`, {
-    headers: { Accept: "application/json" },
-  }, 8000);
-  if (!resp.ok) throw new Error(`HBAR mirror ${resp.status}: ${path}`);
-  return resp.json() as Promise<Record<string, unknown>>;
+  let lastErr: Error = new Error("HBAR mirror node unavailable");
+  for (const base of HBAR_MIRROR_NODES) {
+    try {
+      const resp = await fetchWithTimeout(`${base}${path}`, {
+        headers: { Accept: "application/json" },
+      }, 8000);
+      if (!resp.ok) { lastErr = new Error(`HBAR mirror ${resp.status} (${base}): ${path}`); continue; }
+      return resp.json() as Promise<Record<string, unknown>>;
+    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+  }
+  throw lastErr;
 }
 
 /** Extract net HBAR amount (tinybars) for a given account from a transfer list */
@@ -287,15 +314,27 @@ function datumToDag(datum: number | string): string {
   return (Number(datum) / 1e8).toFixed(8);
 }
 
-// ── Stellar Horizon API (cursor-based via paging_token) ───────────────────
+// ── Stellar Horizon API — primary + fallback nodes ────────────────────────────
+const STELLAR_BASES = [
+  "https://horizon.stellar.org",      // official SDF node (primary)
+  "https://horizon-eu.stellar.org",   // official EU node
+  "https://stellar.publicnode.org",   // community public node
+];
+
 async function stellarFetch(path: string): Promise<Record<string, unknown>> {
-  const resp = await fetchWithTimeout(`https://horizon.stellar.org${path}`, {
-    headers: { accept: "application/json" },
-  }, 12000);
-  // 400 = invalid address format, 404 = account not found — return empty gracefully
-  if (resp.status === 400 || resp.status === 404) return { _empty: true, _status: resp.status };
-  if (!resp.ok) throw new Error(`Stellar Horizon request failed: ${resp.status}`);
-  return resp.json() as Promise<Record<string, unknown>>;
+  let lastErr: Error = new Error("Stellar Horizon unavailable");
+  for (const base of STELLAR_BASES) {
+    try {
+      const resp = await fetchWithTimeout(`${base}${path}`, {
+        headers: { accept: "application/json" },
+      }, 12000);
+      // 400 = invalid address format, 404 = account not found — return empty gracefully
+      if (resp.status === 400 || resp.status === 404) return { _empty: true, _status: resp.status };
+      if (!resp.ok) { lastErr = new Error(`Stellar Horizon ${resp.status} (${base})`); continue; }
+      return resp.json() as Promise<Record<string, unknown>>;
+    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+  }
+  throw lastErr;
 }
 
 // Stellar op types that carry a value transfer (we skip change_trust, manage_offer, etc.)
@@ -430,8 +469,8 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
 
     if (chain === "bitcoin") {
       const [addrData, recentTxs] = await Promise.all([
-        blockstreamAddress(address),
-        blockstreamTxs(address),
+        btcFetchAddress(address),
+        btcFetchTxs(address),
       ]);
       const chainStats = (addrData["chain_stats"] as Record<string, unknown>) ?? {};
       const balanceSat = Math.max(0, Number(chainStats["funded_txo_sum"] ?? 0) - Number(chainStats["spent_txo_sum"] ?? 0));
@@ -519,8 +558,14 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
         xdcBlocksScanFetch({ module: "account", action: "balance", address: rpcAddr }),
         xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "100", sort: "desc" }),
       ]);
-      // Balance returned as decimal wei string (not hex)
-      const rawBal = balData.status === "fulfilled" ? String(balData.value["result"] ?? "0") : "0";
+      // Balance: api.xdcscan.io returns decimal wei string; RPC fallback returns hex (BigInt handles both)
+      let rawBal = balData.status === "fulfilled" ? String(balData.value["result"] ?? "") : "";
+      if (!rawBal || rawBal === "0") {
+        try {
+          const rpcBal = await xdcRpc("eth_getBalance", [rpcAddr, "latest"]);
+          if (rpcBal && String(rpcBal) !== "0x0") rawBal = String(rpcBal);
+        } catch { /* keep empty — weiToEth will default to "0" */ }
+      }
       const balance = weiToEth(rawBal === "" ? "0" : rawBal);
       const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
       // Tx list for first/last seen and count
@@ -790,15 +835,15 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     }
 
     if (chain === "bitcoin") {
-      // Blockstream cursor: pass last txid as cursor → /txs/chain/{txid} for next page of 25
+      // BTC cursor: pass last txid → /txs/chain/{txid} for next page (25 on blockstream, 50 on mempool.space)
       const [txs, addrData] = await Promise.all([
-        blockstreamTxs(address, cursorParam ?? undefined),
-        blockstreamAddress(address),
+        btcFetchTxs(address, cursorParam ?? undefined),
+        btcFetchAddress(address),
       ]);
       const chainStats = (addrData["chain_stats"] as Record<string, unknown>) ?? {};
       const total = Number(chainStats["tx_count"] ?? txs.length);
       const transactions = txs.map((tx) => parseBtcTx(tx, address, priceUsd));
-      const hasMore = txs.length === 25;
+      const hasMore = txs.length >= 25; // blockstream=25/page, mempool.space=50/page
       const nextCursor = hasMore ? String(txs[txs.length - 1]["txid"] ?? "") : null;
       res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit: 25, nextCursor, hasMore }));
       return;
@@ -1138,7 +1183,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     }
 
     if (chain === "bitcoin") {
-      const txs = await blockstreamTxs(address);
+      const txs = await btcFetchTxs(address);
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
       for (const tx of txs.slice(0, 20)) {

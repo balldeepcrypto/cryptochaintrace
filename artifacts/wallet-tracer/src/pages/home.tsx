@@ -68,40 +68,45 @@ export default function Home() {
       </div>
 
       {/* ── Donate / Support banner ── */}
-      <div className="rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-950/40 via-rose-900/20 to-pink-950/40 shadow-lg shadow-pink-500/10 overflow-hidden">
-        <div className="flex items-start gap-4 p-5">
-          <div className="flex-shrink-0 w-12 h-12 rounded-full bg-pink-500/20 border border-pink-500/40 flex items-center justify-center">
-            <Heart className="w-5 h-5 text-pink-400 fill-pink-400/30" />
+      <div className="rounded-xl border-2 border-pink-500/50 bg-gradient-to-r from-pink-950/60 via-rose-900/30 to-pink-950/60 shadow-xl shadow-pink-500/20 overflow-hidden relative">
+        <div className="absolute inset-0 bg-gradient-to-br from-pink-500/5 via-transparent to-rose-500/5 pointer-events-none" />
+        <div className="flex items-start gap-4 p-5 relative">
+          <div className="flex-shrink-0 w-14 h-14 rounded-full bg-pink-500/25 border-2 border-pink-500/50 flex items-center justify-center shadow-lg shadow-pink-500/30">
+            <Heart className="w-6 h-6 text-pink-400 fill-pink-400/60" />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center justify-between gap-4 flex-wrap">
               <div>
-                <h2 className="text-lg font-bold text-pink-400 font-mono tracking-wide">Support This Free Tool</h2>
-                <p className="text-sm text-muted-foreground mt-0.5">
-                  <span className="text-pink-300 font-semibold">100% free</span> — no fees, ads, or data selling.
-                  CryptoChainTrace is community-powered. Even a small donation keeps the servers running and new chains coming.
+                <h2 className="text-xl font-extrabold text-pink-300 font-mono tracking-widest uppercase">❤️ Support This Free Tool</h2>
+                <p className="text-sm text-muted-foreground mt-1">
+                  <span className="text-pink-200 font-bold">100% free</span> — no fees, ads, or data selling.
+                  If CryptoChainTrace helped your investigation, even a small donation keeps the servers running.
                 </p>
               </div>
               <button
                 onClick={() => setShowDonate(!showDonate)}
-                className="flex-shrink-0 px-4 py-1.5 rounded border border-pink-500/50 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 font-mono text-xs font-bold tracking-wider transition-colors"
+                className="flex-shrink-0 px-4 py-2 rounded-lg border-2 border-pink-500/60 bg-pink-500/15 hover:bg-pink-500/30 text-pink-200 font-mono text-xs font-extrabold tracking-widest transition-colors shadow-md"
               >
                 {showDonate ? "HIDE ↑" : "DONATE ↓"}
               </button>
             </div>
 
             {showDonate && (
-              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
                 {DONATE_ADDRESSES.map(({ chain: c, symbol, color, bg, border, address: addr }) => (
-                  <div key={c} className={`flex items-center gap-2.5 rounded-lg ${bg} border ${border} px-3 py-2.5 group`}>
-                    <span className={`text-xs font-mono font-bold ${color} w-10 flex-shrink-0`}>{symbol}</span>
+                  <div key={c} className={`flex items-center gap-2.5 rounded-lg ${bg} border-2 ${border} px-3 py-3 group hover:opacity-90 transition-opacity`}>
+                    <div className="flex-shrink-0 w-12 text-center">
+                      <span className={`text-sm font-mono font-extrabold ${color} block leading-none`}>{symbol}</span>
+                    </div>
                     <span className="text-[10px] font-mono text-muted-foreground truncate flex-1">{addr}</span>
                     <button
                       onClick={() => copyAddr(addr)}
-                      className={`flex-shrink-0 ${color} opacity-60 hover:opacity-100 transition-opacity`}
+                      className={`flex-shrink-0 ${color} opacity-70 hover:opacity-100 transition-opacity`}
                       title={`Copy ${symbol} address`}
                     >
-                      <Copy className={`w-3.5 h-3.5 ${copiedAddr === addr ? "text-green-400" : ""}`} />
+                      {copiedAddr === addr
+                        ? <span className="text-[9px] font-mono text-green-400 font-bold">COPIED!</span>
+                        : <Copy className="w-3.5 h-3.5" />}
                     </button>
                   </div>
                 ))}

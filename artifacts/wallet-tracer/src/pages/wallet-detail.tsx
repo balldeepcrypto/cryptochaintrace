@@ -24,22 +24,31 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis", type: "genesis" },
   r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.", type: "genesis" },
   r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59: { label: "Ripple Cold 1", type: "genesis" },
-  rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: { label: "Bitstamp XRP",   type: "exchange" },
-  rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: { label: "Bitfinex XRP",   type: "exchange" },
-  rBndiPPKs9k5rjBb7HsEiqXKVZ9MMhGmhM: { label: "Kraken XRP",     type: "exchange" },
-  rKmBGxocj9Abgy25J51Mk1iqFzW9aVF9Tc: { label: "Kraken XRP 2",   type: "exchange" },
-  rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: { label: "Binance XRP",    type: "exchange" },
-  rrpNnNLKrartuEqfJGpqyDwPj1BBN1ybNn: { label: "Binance XRP 2",  type: "exchange" },
-  rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: { label: "Coinbase XRP",   type: "exchange" },
-  rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy: { label: "OKX XRP",        type: "exchange" },
-  rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy: { label: "Huobi XRP",      type: "exchange" },
-  r4FuDeXifHAZork5KcEQKKBqmBWPGiFmJC: { label: "Uphold XRP",     type: "exchange" },
-  rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1: { label: "Bitstamp XRP 2", type: "exchange" },
-  rGFuMiw48HdbnrUbkRToR1yMBZkjbqvUhQ: { label: "MEXC XRP",       type: "exchange" },
-  rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: { label: "Bybit XRP",      type: "exchange" },
-  rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV: { label: "KuCoin XRP",     type: "exchange" },
-  rGsxGQNdaDyFhZQ5JqDGPkT3VGFFexCaM3: { label: "Gate.io XRP",    type: "exchange" },
-  rBx5RkPh2KR3JqBtZWoU25ZxGHaJzYMD84: { label: "KrakenXRP 3",    type: "exchange" },
+  rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: { label: "Bitstamp XRP",    type: "exchange" },
+  rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: { label: "Bitfinex XRP",    type: "exchange" },
+  rBndiPPKs9k5rjBb7HsEiqXKVZ9MMhGmhM: { label: "Kraken XRP",      type: "exchange" },
+  rKmBGxocj9Abgy25J51Mk1iqFzW9aVF9Tc: { label: "Kraken XRP 2",    type: "exchange" },
+  rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: { label: "Kraken XRP 3",    type: "exchange" },
+  rBx5RkPh2KR3JqBtZWoU25ZxGHaJzYMD84: { label: "Kraken XRP 4",    type: "exchange" },
+  rrpNnNLKrartuEqfJGpqyDwPj1BBN1ybNn: { label: "Binance XRP",      type: "exchange" },
+  rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: { label: "Coinbase XRP",     type: "exchange" },
+  rw2ciyaNshpHe7bCHo4bRWq6pqqynnWKQg: { label: "Coinbase XRP 2",   type: "exchange" },
+  rwnYLUsoBQX3ECa1A5bSKLdbPoHKnqf63J: { label: "Coinbase XRP 3",   type: "exchange" },
+  r4sRyacXpbh4HbagmgfoQq8Q3j8ZJzbZ1J: { label: "Coinbase XRP 4",   type: "exchange" },
+  rwpTh9DDa52XkM9nTKp2QrJuCGV5d1mQVP: { label: "Coinbase XRP 5",   type: "exchange" },
+  rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy: { label: "OKX XRP",          type: "exchange" },
+  rUzWJkXyEtT8ekSSxkBYPqCvHpngcy6Fks: { label: "OKX XRP 2",        type: "exchange" },
+  rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy: { label: "Huobi XRP",        type: "exchange" },
+  r4FuDeXifHAZork5KcEQKKBqmBWPGiFmJC: { label: "Uphold XRP",       type: "exchange" },
+  rMdG3ju8pgyVh29ELPWaDuA74CpWW6Fxns: { label: "Uphold XRP 2",     type: "exchange" },
+  rsXT3AQqhHDusFs3nQQuwcA1yXRLZJAXKw: { label: "Uphold XRP 3",     type: "exchange" },
+  raBQUYdAhnnojJQ6Xi3eXztZ74ot24RDq1: { label: "Gemini XRP",       type: "exchange" },
+  rKNwXQh9GMjaU8uTqKLECsqyib47g5dMvo: { label: "Crypto.com XRP",   type: "exchange" },
+  rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1: { label: "Bitstamp XRP 2",   type: "exchange" },
+  rGFuMiw48HdbnrUbkRToR1yMBZkjbqvUhQ: { label: "MEXC XRP",         type: "exchange" },
+  rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: { label: "Bybit XRP",        type: "exchange" },
+  rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV: { label: "KuCoin XRP",       type: "exchange" },
+  rGsxGQNdaDyFhZQ5JqDGPkT3VGFFexCaM3: { label: "Gate.io XRP",      type: "exchange" },
   // ── XLM (Stellar) ──────────────────────────────────────────────────────────
   GDDEAH46MNFO6JD7NTQ5FWJBC4ZSA47YEK3RKFHQWADYTS6NDVD5NZN: { label: "Binance XLM",     type: "exchange" },
   GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN: { label: "Coinbase XLM",    type: "exchange" },
@@ -885,20 +894,44 @@ export default function WalletDetail() {
 
   const getKnownBadge = (info?: { label: string; type: string }, size: "sm" | "md" | "lg" = "sm") => {
     if (!info) return null;
-    const config: Record<string, { bg: string; text: string; border: string; glow: string; emoji: string; ring: string }> = {
-      exchange: { bg: "bg-blue-600/95",   text: "text-white",        border: "border-blue-300/80",   glow: "shadow-blue-400/40",   ring: "ring-1 ring-blue-400/30",   emoji: "🏦" },
-      genesis:  { bg: "bg-purple-700/95", text: "text-white",        border: "border-purple-300/80", glow: "shadow-purple-400/40", ring: "ring-1 ring-purple-400/30", emoji: "⚡" },
-      defi:     { bg: "bg-teal-700/95",   text: "text-white",        border: "border-teal-300/80",   glow: "shadow-teal-400/40",   ring: "ring-1 ring-teal-400/30",   emoji: "🔄" },
-      flagged:  { bg: "bg-red-600/95",    text: "text-white",        border: "border-red-300/80",    glow: "shadow-red-400/40",    ring: "ring-1 ring-red-400/30",    emoji: "🚨" },
+    const lbl = info.label.toLowerCase();
+    const typeDefaults: Record<string, { bg: string; border: string; glow: string; ring: string; emoji: string }> = {
+      exchange: { bg: "bg-blue-600/95",    border: "border-blue-300/70",    glow: "shadow-blue-500/50",    ring: "ring-1 ring-blue-400/40",    emoji: "🏦" },
+      genesis:  { bg: "bg-purple-700/95",  border: "border-purple-300/80",  glow: "shadow-purple-400/40",  ring: "ring-1 ring-purple-400/30",  emoji: "⚡" },
+      defi:     { bg: "bg-teal-700/95",    border: "border-teal-300/80",    glow: "shadow-teal-400/40",    ring: "ring-1 ring-teal-400/30",    emoji: "🔄" },
+      flagged:  { bg: "bg-red-600/95",     border: "border-red-300/80",     glow: "shadow-red-400/40",     ring: "ring-1 ring-red-400/30",     emoji: "🚨" },
     };
-    const c = config[info.type] ?? config.exchange;
+    const exchangeThemes: Array<[RegExp, { bg: string; border: string; glow: string; ring: string; emoji: string }]> = [
+      [/uphold/,     { bg: "bg-red-600/95",      border: "border-red-300/70",      glow: "shadow-red-500/60",      ring: "ring-1 ring-red-400/50",      emoji: "🔴" }],
+      [/kraken/,     { bg: "bg-orange-600/95",    border: "border-orange-300/70",   glow: "shadow-orange-500/60",   ring: "ring-1 ring-orange-400/50",   emoji: "🟠" }],
+      [/coinbase/,   { bg: "bg-blue-600/95",      border: "border-blue-300/70",     glow: "shadow-blue-500/60",     ring: "ring-1 ring-blue-400/50",     emoji: "🔵" }],
+      [/okx/,        { bg: "bg-purple-600/95",    border: "border-purple-300/70",   glow: "shadow-purple-500/60",   ring: "ring-1 ring-purple-400/50",   emoji: "🟣" }],
+      [/binance/,    { bg: "bg-yellow-500/95",    border: "border-yellow-300/70",   glow: "shadow-yellow-500/60",   ring: "ring-1 ring-yellow-400/50",   emoji: "🟡" }],
+      [/gemini/,     { bg: "bg-emerald-600/95",   border: "border-emerald-300/70",  glow: "shadow-emerald-500/60",  ring: "ring-1 ring-emerald-400/50",  emoji: "💎" }],
+      [/crypto\.com|crypto_com/,
+                     { bg: "bg-sky-600/95",        border: "border-sky-300/70",      glow: "shadow-sky-500/60",      ring: "ring-1 ring-sky-400/50",      emoji: "🔷" }],
+      [/bitstamp/,   { bg: "bg-cyan-600/95",      border: "border-cyan-300/70",     glow: "shadow-cyan-500/60",     ring: "ring-1 ring-cyan-400/50",     emoji: "🏦" }],
+      [/bitfinex/,   { bg: "bg-teal-600/95",      border: "border-teal-300/70",     glow: "shadow-teal-500/60",     ring: "ring-1 ring-teal-400/50",     emoji: "🏦" }],
+      [/huobi/,      { bg: "bg-amber-600/95",     border: "border-amber-300/70",    glow: "shadow-amber-500/60",    ring: "ring-1 ring-amber-400/50",    emoji: "🏦" }],
+      [/bybit/,      { bg: "bg-violet-600/95",    border: "border-violet-300/70",   glow: "shadow-violet-500/60",   ring: "ring-1 ring-violet-400/50",   emoji: "🏦" }],
+      [/kucoin/,     { bg: "bg-green-600/95",     border: "border-green-300/70",    glow: "shadow-green-500/60",    ring: "ring-1 ring-green-400/50",    emoji: "🟢" }],
+      [/mexc/,       { bg: "bg-lime-600/95",      border: "border-lime-300/70",     glow: "shadow-lime-500/60",     ring: "ring-1 ring-lime-400/50",     emoji: "🟢" }],
+      [/gate/,       { bg: "bg-rose-600/95",      border: "border-rose-300/70",     glow: "shadow-rose-500/60",     ring: "ring-1 ring-rose-400/50",     emoji: "🏛️" }],
+      [/bitmex/,     { bg: "bg-red-700/95",       border: "border-red-300/70",      glow: "shadow-red-500/60",      ring: "ring-1 ring-red-400/50",      emoji: "🏦" }],
+      [/robinhood/,  { bg: "bg-green-600/95",     border: "border-green-300/70",    glow: "shadow-green-500/60",    ring: "ring-1 ring-green-400/50",    emoji: "🏦" }],
+    ];
+    const base = typeDefaults[info.type] ?? typeDefaults.exchange;
+    const exchangeOverride = info.type === "exchange"
+      ? (exchangeThemes.find(([rx]) => rx.test(lbl))?.[1] ?? null)
+      : null;
+    const c = { text: "text-white", ...base, ...(exchangeOverride ?? {}) };
     const sz = size === "lg"
       ? "text-sm px-3.5 py-1.5 gap-2 rounded-lg font-extrabold tracking-wide shadow-lg"
       : size === "md"
       ? "text-xs px-2.5 py-1 gap-1.5 rounded-md font-bold shadow-md"
       : "text-[11px] px-2 py-0.5 gap-1 rounded font-bold shadow-sm";
     return (
-      <span className={`inline-flex items-center shrink-0 font-mono border ${sz} ${c.bg} ${c.text} ${c.border} ${c.glow} ${c.ring}`}>
+      <span className={`inline-flex items-center shrink-0 font-mono border ${sz} ${c.bg} ${c.text} ${c.border} ${c.ring} shadow-sm ${c.glow}`}>
         <span>{c.emoji}</span>
         <span>{info.label}</span>
       </span>

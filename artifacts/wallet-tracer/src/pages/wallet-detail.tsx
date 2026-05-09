@@ -127,8 +127,9 @@ interface GroupedRow {
   asset: string;
 }
 
-const LOAD_LIMIT = 500;
-const DAG_LOAD_LIMIT = 250; // DAG Constellation API is slow on cursor pages — small batches are reliable
+const DAG_BATCH = 100;
+const OTHER_BATCH = 500;
+const MAX_TOTAL = 25000;
 
 export default function WalletDetail() {
   const params = useParams();
@@ -145,33 +146,31 @@ export default function WalletDetail() {
   const [minAmountInput, setMinAmountInput] = useState("1");
 
   // ── Accumulated transaction state ──
+  // allTxs is ONLY ever appended to — never replaced. Reset happens only on address/chain change.
   const [allTxs, setAllTxs] = useState<Tx[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [loadingAll, setLoadingAll] = useState(false);
-  const [loadProgress, setLoadProgress] = useState<{ page: number; txCount: number } | null>(null);
+  const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loadStatus, setLoadStatus] = useState<string | null>(null);
   const [showDonate, setShowDonate] = useState(false);
 
-  // ── Refs that always hold current pagination values — prevents stale closures ──
-  // loadMore/loadAll read from these so they never operate on stale state captured
-  // at useCallback memoization time.
-  const allTxsRef = useRef<Tx[]>([]);
-  const nextCursorRef = useRef<string | null>(null);
+  // Refs mirror state so that loadMore/loadAll always read the latest values
+  // without stale-closure issues — callbacks read refs, writes go to both.
+  const txsRef = useRef<Tx[]>([]);
+  const cursorRef = useRef<string | null>(null);
   const hasMoreRef = useRef(false);
-  const isLoadingRef = useRef(false); // guards against concurrent load clicks
+  const busyRef = useRef(false); // prevents concurrent loads
 
-  // Helper: update state AND refs together so they are always in sync
-  const applyTxUpdate = useCallback((txs: Tx[], cursor: string | null, more: boolean) => {
-    allTxsRef.current = txs;
-    nextCursorRef.current = cursor;
+  // Write state + refs together — single source of truth
+  function commit(txs: Tx[], cursor: string | null, more: boolean) {
+    txsRef.current = txs;
+    cursorRef.current = cursor;
     hasMoreRef.current = more;
     setAllTxs(txs);
     setNextCursor(cursor);
     setHasMore(more);
-  }, []);
+  }
 
   // ── Saved wallets (localStorage) ──
   const [savedWallets, setSavedWallets] = useState<Set<string>>(() => {
@@ -200,7 +199,7 @@ export default function WalletDetail() {
   const fetchingRef = useRef(new Set<string>());
   const trailPanelRef = useRef<HTMLDivElement>(null);
 
-  // ── Guards React Query background-refetches from wiping accumulated tx state ──
+  // ── Blocks React Query background-refetches from overwriting accumulated txs ──
   const txInitializedRef = useRef(false);
 
   // Close menu on outside click
@@ -210,174 +209,118 @@ export default function WalletDetail() {
     return () => window.removeEventListener("click", handler);
   }, []);
 
-  // ── Reset accumulated state AND refs on address/chain change ──
+  // ── Reset everything when the wallet address or chain changes ──
   useEffect(() => {
     txInitializedRef.current = false;
-    isLoadingRef.current = false;
-    allTxsRef.current = [];
-    nextCursorRef.current = null;
-    hasMoreRef.current = false;
-    setAllTxs([]);
-    setNextCursor(null);
-    setHasMore(false);
+    busyRef.current = false;
+    commit([], null, false);
     setLoadError(null);
     setLoadStatus(null);
     setMinAmount(1.0);
     setMinAmountInput("1");
-  }, [address, chain]);
+  }, [address, chain]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(
     address, { chain },
     { query: { enabled: !!address, queryKey: getGetWalletQueryKey(address, { chain }) } }
   );
 
-  // DAG uses a smaller initial page to avoid Constellation API timeouts
-  const initLimit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
+  // Initial page — DAG uses 100 to stay well within Constellation API limits
+  const initLimit = chain === "dag" ? DAG_BATCH : OTHER_BATCH;
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
     address, { chain, page: 1, limit: initLimit },
     { query: { enabled: !!address, queryKey: getGetWalletTransactionsQueryKey(address, { chain, page: 1, limit: initLimit }) } }
   );
 
-  // ── Sync initial React Query data into local accumulated state ──
-  // Only runs once per wallet/chain — the ref blocks RQ background-refetches
-  // from overwriting transactions the user has already accumulated via Load More.
+  // ── Sync initial React Query page into local state (once per wallet/chain) ──
+  // txInitializedRef blocks subsequent RQ background-refetches from overwriting
+  // transactions already accumulated by Load More clicks.
   useEffect(() => {
-    if (!transactionsData?.transactions) return;
-    if (txInitializedRef.current) return;
+    if (!transactionsData?.transactions || txInitializedRef.current) return;
     txInitializedRef.current = true;
-    const seen = new Set<string>();
-    const deduped = transactionsData.transactions.filter((tx) => {
-      const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-    // applyTxUpdate writes both state and refs simultaneously
-    applyTxUpdate(
-      deduped as Tx[],
+    commit(
+      transactionsData.transactions as Tx[],
       transactionsData.nextCursor ?? null,
       transactionsData.hasMore ?? false,
     );
-  }, [transactionsData, applyTxUpdate]);
+  }, [transactionsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const MAX_TOTAL = 25000;
-
-  // ── Shared typed page fetcher — throws on any non-OK response ──
-  // `limit` is caller-supplied so DAG can use DAG_LOAD_LIMIT (300) instead of 500.
-  const fetchPage = useCallback(async (cursor: string, limit: number): Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }> => {
+  // ── Fetch one page from the backend ──
+  async function fetchPage(cursor: string, limit: number): Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }> {
     const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${limit}&cursor=${encodeURIComponent(cursor)}`;
-    const resp = await fetch(url);
-    if (!resp.ok) {
-      const body = await resp.text().catch(() => "");
-      throw new Error(`Server ${resp.status}${body ? `: ${body.slice(0, 120)}` : ""}`);
+    const res = await fetch(url);
+    if (!res.ok) {
+      const body = await res.text().catch(() => "");
+      throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 100)}` : ""}`);
     }
-    return resp.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
-  }, [address, chain]);
+    return res.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
+  }
 
-  // DAG: exactly 1 page of 250 txs per click. Others: up to 10 pages (5,000 txs) per click.
-  const loadMoreLabel = chain === "dag" ? `LOAD +${DAG_LOAD_LIMIT}` : "LOAD +5,000";
+  const loadMoreLabel = chain === "dag" ? "LOAD MORE (+100)" : "LOAD +5,000";
 
-  // ── Load More ──
-  // CRITICAL: reads cursor/txs from refs (not closure-captured state) so the callback
-  // always operates on the latest values regardless of React's memoization cycle.
-  const loadMore = useCallback(async () => {
-    if (!hasMoreRef.current || isLoadingRef.current || !nextCursorRef.current) return;
-    isLoadingRef.current = true;
-    setLoadingMore(true);
+  // ── Load More: fetch exactly one batch and append ──
+  // Reads from refs so it never operates on stale closure values.
+  async function loadMore() {
+    if (busyRef.current || !hasMoreRef.current || !cursorRef.current) return;
+    busyRef.current = true;
+    setIsLoadingMore(true);
     setLoadError(null);
     setLoadStatus(null);
-    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
-    // Snapshot from refs — these are always current
-    const cursor = nextCursorRef.current;
-    const currentTxs = allTxsRef.current;
-    setLoadProgress({ page: 1, txCount: currentTxs.length });
+    const limit = chain === "dag" ? DAG_BATCH : OTHER_BATCH;
+    const cursor = cursorRef.current;
+    const existing = txsRef.current;
     try {
-      if (chain === "dag") {
-        // DAG: exactly one page per click — never loop to avoid Constellation timeout stacking
-        const data = await fetchPage(cursor, limit);
-        const existingKeys = new Set(currentTxs.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
-        const newTxs = (data.transactions ?? []).filter((tx) => {
-          const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
-          return !existingKeys.has(key);
-        });
-        const next = [...currentTxs, ...newTxs];
-        const newCursor = data.nextCursor ?? null;
-        const newHasMore = data.hasMore && next.length < MAX_TOTAL;
-        applyTxUpdate(next, newCursor, newHasMore);
-        setLoadStatus(`Added ${newTxs.length} transactions · Total: ${next.length.toLocaleString()}`);
-      } else {
-        // Non-DAG: batch up to 10 pages of 500
-        let cur: string | null = cursor;
-        let accumulated = [...currentTxs];
-        const TARGET = Math.min(accumulated.length + (10 * LOAD_LIMIT), MAX_TOTAL);
-        let pageNum = 0;
-        while (cur && accumulated.length < TARGET) {
-          pageNum++;
-          setLoadProgress({ page: pageNum, txCount: accumulated.length });
-          const data = await fetchPage(cur, limit);
-          const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
-          const newTxs = (data.transactions ?? []).filter((tx) => {
-            const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
-            return !existingKeys.has(key);
-          });
-          accumulated = [...accumulated, ...newTxs];
-          cur = data.nextCursor ?? null;
-          if (!data.hasMore || !cur) break;
-        }
-        applyTxUpdate(accumulated, cur, !!cur && accumulated.length < MAX_TOTAL);
-        setLoadStatus(`Total: ${accumulated.length.toLocaleString()} transactions loaded`);
-      }
+      const data = await fetchPage(cursor, limit);
+      const seen = new Set(existing.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+      const newTxs = (data.transactions ?? []).filter((t) => !seen.has(t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+      const merged = [...existing, ...newTxs];
+      commit(merged, data.nextCursor ?? null, data.hasMore && merged.length < MAX_TOTAL);
+      setLoadStatus(`Added ${newTxs.length} transactions · Total: ${merged.length.toLocaleString()}`);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
     } finally {
-      isLoadingRef.current = false;
-      setLoadingMore(false);
-      setLoadProgress(null);
+      busyRef.current = false;
+      setIsLoadingMore(false);
     }
-  }, [chain, fetchPage, applyTxUpdate]); // no allTxs/nextCursor/hasMore in deps — always read from refs
+  }
 
-  // ── Load All — loop until hasMore=false or 25k cap, commit after every page ──
-  const loadAll = useCallback(async () => {
-    if (!hasMoreRef.current || isLoadingRef.current || !nextCursorRef.current) return;
-    if (allTxsRef.current.length > 20000) {
+  // ── Load All: loop one batch at a time until hasMore=false or 25k cap ──
+  // Commits after every page so the table updates live during loading.
+  async function loadAll() {
+    if (busyRef.current || !hasMoreRef.current || !cursorRef.current) return;
+    if (txsRef.current.length > 20000) {
       if (!window.confirm(
-        `You already have ${allTxsRef.current.length.toLocaleString()} transactions loaded.\n\nLoading more may slow or freeze your browser.\n\nContinue?`
+        `You already have ${txsRef.current.length.toLocaleString()} transactions.\nLoading more may slow your browser.\n\nContinue?`
       )) return;
     }
-    isLoadingRef.current = true;
-    setLoadingAll(true);
+    busyRef.current = true;
+    setIsLoadingMore(true);
     setLoadError(null);
-    setLoadStatus(null);
-    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
-    let cursor: string | null = nextCursorRef.current;
-    let accumulated = [...allTxsRef.current];
-    let pageNum = 0;
+    const limit = chain === "dag" ? DAG_BATCH : OTHER_BATCH;
+    let cursor: string | null = cursorRef.current;
+    let accumulated = [...txsRef.current];
+    let page = 0;
     try {
       while (cursor && accumulated.length < MAX_TOTAL) {
-        pageNum++;
-        setLoadProgress({ page: pageNum, txCount: accumulated.length });
+        page++;
+        setLoadStatus(`Loading page ${page} · ${accumulated.length.toLocaleString()} loaded so far…`);
         const data = await fetchPage(cursor, limit);
-        const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
-        const newTxs = (data.transactions ?? []).filter((tx) => {
-          const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
-          return !existingKeys.has(key);
-        });
+        const seen = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+        const newTxs = (data.transactions ?? []).filter((t) => !seen.has(t.hash || `${t.from}:${t.to}:${t.timestamp}`));
         accumulated = [...accumulated, ...newTxs];
         cursor = data.nextCursor ?? null;
-        const more = data.hasMore && accumulated.length < MAX_TOTAL;
-        // Commit each page immediately so table updates while loading
-        applyTxUpdate([...accumulated], cursor, more);
+        // Commit immediately so table updates between pages
+        commit([...accumulated], cursor, data.hasMore && accumulated.length < MAX_TOTAL);
         if (!data.hasMore || !cursor) break;
       }
       setLoadStatus(`Full history loaded · ${accumulated.length.toLocaleString()} total`);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
     } finally {
-      isLoadingRef.current = false;
-      setLoadingAll(false);
-      setLoadProgress(null);
+      busyRef.current = false;
+      setIsLoadingMore(false);
     }
-  }, [chain, fetchPage, applyTxUpdate]); // no allTxs/nextCursor/hasMore in deps — always read from refs
+  }
 
   // ── Apply minimum amount filter ──
   const filteredTxs = useMemo(() => {
@@ -1061,29 +1004,7 @@ export default function WalletDetail() {
         )}
         {hasMore && !txLoading && (
           <div className="px-5 py-4 border-t border-border/40 bg-muted/5">
-            {loadProgress && (
-              <div className="mb-3">
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-xs font-mono text-primary flex items-center gap-1.5">
-                    <Loader2 className="w-3 h-3 animate-spin" />
-                    {loadingAll
-                      ? `FETCHING FULL HISTORY${chain === "dag" ? " (DAG — 1 PAGE AT A TIME)" : ""}`
-                      : `LOADING ${chain === "dag" ? "DAG BATCH" : "BATCH"}`
-                    } · PAGE {loadProgress.page}
-                  </span>
-                  <span className="text-xs font-mono text-muted-foreground">
-                    {loadProgress.txCount.toLocaleString()} / {MAX_TOTAL.toLocaleString()} TXS LOADED
-                  </span>
-                </div>
-                <div className="h-1 w-full bg-muted/40 rounded-full overflow-hidden">
-                  <div
-                    className="h-full bg-primary/60 rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min((loadProgress.txCount / MAX_TOTAL) * 100, 99)}%` }}
-                  />
-                </div>
-              </div>
-            )}
-            {allTxs.length >= 20000 && hasMore && !loadProgress && (
+            {allTxs.length >= 20000 && (
               <div className="mb-2.5 flex items-center gap-1.5 text-xs font-mono text-yellow-400">
                 <AlertTriangle className="w-3 h-3" />
                 {allTxs.length.toLocaleString()} transactions loaded — loading more may slow your browser.
@@ -1094,45 +1015,43 @@ export default function WalletDetail() {
                 <span className="text-xs font-mono text-muted-foreground">
                   {allTxs.length.toLocaleString()} loaded · more available
                 </span>
-                {loadStatus && !loadProgress && (
+                {loadStatus && (
                   <span className="text-[10px] font-mono text-primary/70">{loadStatus}</span>
                 )}
-                {nextCursor && (
+                {nextCursor && !isLoadingMore && (
                   <span className="text-[10px] font-mono text-muted-foreground/40 break-all">
                     CURSOR: {nextCursor.length > 20 ? `${nextCursor.slice(0, 20)}…${nextCursor.slice(-8)}` : nextCursor}
                   </span>
                 )}
               </div>
-              {!loadProgress && (
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="font-mono text-xs"
-                    disabled={loadingMore || loadingAll}
-                    onClick={loadMore}
-                  >
-                    {loadingMore
-                      ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</>
-                      : loadMoreLabel}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="font-mono text-xs border-primary/30 text-primary hover:bg-primary/10"
-                    disabled={loadingMore || loadingAll}
-                    onClick={loadAll}
-                  >
-                    {loadingAll
-                      ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING ALL…</>
-                      : "LOAD ALL (UP TO 25K)"}
-                  </Button>
-                </div>
-              )}
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="font-mono text-xs"
+                  disabled={isLoadingMore}
+                  onClick={loadMore}
+                >
+                  {isLoadingMore
+                    ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</>
+                    : loadMoreLabel}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="font-mono text-xs border-primary/30 text-primary hover:bg-primary/10"
+                  disabled={isLoadingMore}
+                  onClick={loadAll}
+                >
+                  {isLoadingMore
+                    ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</>
+                    : "LOAD ALL (UP TO 25K)"}
+                </Button>
+              </div>
             </div>
           </div>
         )}
-        {!hasMore && allTxs.length > 0 && !txLoading && !loadProgress && (
+        {!hasMore && allTxs.length > 0 && !txLoading && (
           <div className="px-5 py-3 border-t border-border/40 text-center text-xs font-mono text-muted-foreground/60">
             FULL HISTORY LOADED · {allTxs.length.toLocaleString()} TRANSACTIONS
           </div>

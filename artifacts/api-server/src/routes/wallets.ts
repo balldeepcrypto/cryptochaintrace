@@ -603,23 +603,23 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
         const balance = (tinybars / 1e8).toFixed(6);
         const balanceUsd = parseFloat((tinybars / 1e8 * priceUsd).toFixed(2));
         const createdTs = String(acctData["created_timestamp"] ?? "0").split(".")[0];
-        let firstSeen: string | null = null;
+        // firstSeen from account creation timestamp (reliable)
+        const firstSeen: string | null = createdTs !== "0"
+          ? new Date(Number(createdTs) * 1000).toISOString() : null;
         let lastSeen: string | null = null;
         let txCount = 0;
-        if (createdTs !== "0") {
-          try {
-            const txData = await hbarFetch(
-              `/api/v1/transactions?account.id=${address}&order=asc&timestamp=gte:${createdTs}&limit=100`
-            );
-            const txsArr = (txData["transactions"] as Record<string, unknown>[]) ?? [];
-            txCount = txsArr.length;
-            if (txCount >= 100) txCount = 101;
-            if (txsArr.length > 0) {
-              firstSeen = new Date(Number(String(txsArr[0]["consensus_timestamp"]).split(".")[0]) * 1000).toISOString();
-              lastSeen = new Date(Number(String(txsArr[txsArr.length - 1]["consensus_timestamp"]).split(".")[0]) * 1000).toISOString();
-            }
-          } catch { /* no tx data available */ }
-        }
+        try {
+          // Use desc to get most-recent-first — gives correct lastSeen and count estimate
+          const txData = await hbarFetch(
+            `/api/v1/transactions?account.id=${address}&order=desc&limit=100`
+          );
+          const txsArr = (txData["transactions"] as Record<string, unknown>[]) ?? [];
+          txCount = txsArr.length;
+          if (txCount >= 100) txCount = 101;
+          if (txsArr.length > 0) {
+            lastSeen = new Date(Number(String(txsArr[0]["consensus_timestamp"]).split(".")[0]) * 1000).toISOString();
+          }
+        } catch { /* no tx data available */ }
         const tags = guessTags(false, txCount);
         res.json(GetWalletResponse.parse({
           address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -989,68 +989,116 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
 
     if (chain === "hbar") {
       try {
-        // Get account created_ts as the earliest anchor for asc queries
-        // (Mirror Node order=desc is broken for all accounts; only asc+gte works)
-        let createdTs = "0";
-        try {
-          const acctData = await hbarFetch(`/api/v1/accounts/${address}`);
-          createdTs = String(acctData["created_timestamp"] ?? "0").split(".")[0];
-        } catch { createdTs = "0"; }
-
-        // cursorParam = base64url of mirror node's links.next path (for subsequent pages)
-        // page 1 uses account created_ts anchor; page 2+ follows mirror cursor
-        let mirrorPath: string;
+        // Use order=desc — newest transactions first, no reversal needed.
+        // Cursor = consensus_timestamp of the last tx on the current page.
+        // Load More appends timestamp=lt:{cursor} to get the next older batch.
+        // hasMore is driven by Mirror Node's links.next (authoritative), not rawTxs.length.
+        let mirrorUrl: string;
         if (cursorParam) {
-          mirrorPath = Buffer.from(cursorParam, "base64url").toString("utf8");
+          const tsVal = Buffer.from(cursorParam, "base64url").toString("utf8");
+          mirrorUrl = `/api/v1/transactions?account.id=${address}&order=desc&limit=${limit}&timestamp=lt:${tsVal}`;
         } else {
-          const anchor = createdTs !== "0" ? createdTs : "0";
-          mirrorPath = `/api/v1/transactions?account.id=${address}&order=asc&timestamp=gte:${anchor}&limit=${limit}`;
+          mirrorUrl = `/api/v1/transactions?account.id=${address}&order=desc&limit=${limit}`;
         }
 
-        const txData = await hbarFetch(mirrorPath);
-        const rawTxs = (txData["transactions"] as Record<string, unknown>[]) ?? [];
-        const mirrorLinks = txData["links"] as Record<string, unknown> | undefined;
-        const mirrorNext = mirrorLinks?.["next"] as string | null | undefined;
+        // On the first page, some accounts have all their transactions in older time windows.
+        // Follow links.next up to 10 times until we find actual transactions or exhaust pages.
+        let rawTxs: Record<string, unknown>[] = [];
+        let mirrorNext: string | null | undefined = null;
+        let followAttempts = 0;
+        const maxFollowAttempts = cursorParam ? 0 : 10;
+        while (followAttempts <= maxFollowAttempts) {
+          const txData = await hbarFetch(mirrorUrl);
+          rawTxs = (txData["transactions"] as Record<string, unknown>[]) ?? [];
+          mirrorNext = (txData["links"] as Record<string, unknown>)?.["next"] as string | null | undefined;
+          if (rawTxs.length > 0 || !mirrorNext) break;
+          // Empty page but Mirror Node says there are more — follow the cursor
+          mirrorUrl = mirrorNext;
+          followAttempts++;
+        }
 
-        // Reverse so newest (last in asc sequence) is shown first
-        const reversed = [...rawTxs].reverse();
-
-        const transactions = reversed.map((tx) => {
+        const transactions = rawTxs.map((tx) => {
           const ts = Number(String(tx["consensus_timestamp"] ?? "0").split(".")[0]);
           const transfers = (tx["transfers"] as Record<string, unknown>[]) ?? [];
-          const net = hbarNetAmount(transfers, address);
-          const isOutgoing = net < 0;
-          const isSelf = net === 0;
-          const direction = (isSelf ? "self" : isOutgoing ? "out" : "in") as "in" | "out" | "self";
-          const counterparty = hbarCounterparty(transfers, address, isOutgoing);
-          const from = isOutgoing ? address : counterparty || address;
-          const to = isOutgoing ? counterparty || "" : address;
-          const absNetHbar = Math.abs(net) / 1e8;
+          const tokenTransfers = (tx["token_transfers"] as Record<string, unknown>[]) ?? [];
           const feeTinybars = Number(tx["charged_tx_fee"] ?? 0);
-          const value = absNetHbar.toFixed(6);
-          const valueUsd = parseFloat((absNetHbar * priceUsd).toFixed(2));
-          const fee = (feeTinybars / 1e8).toFixed(6);
-          const feeUsd = parseFloat(((feeTinybars / 1e8) * priceUsd).toFixed(2));
           const txId = String(tx["transaction_id"] ?? tx["consensus_timestamp"] ?? "");
           const result = String(tx["result"] ?? "SUCCESS");
+
+          // Try HBAR net first; fall back to HTS token transfers
+          const netHbar = hbarNetAmount(transfers, address);
+          let value: string;
+          let valueUsd: number;
+          let direction: "in" | "out" | "self";
+          let from: string;
+          let to: string;
+          let tokenSymbol: string | null = null;
+
+          if (netHbar !== 0) {
+            const isOutgoing = netHbar < 0;
+            direction = isOutgoing ? "out" : "in";
+            const counterparty = hbarCounterparty(transfers, address, isOutgoing);
+            from = isOutgoing ? address : (counterparty || address);
+            to = isOutgoing ? (counterparty || "") : address;
+            const absHbar = Math.abs(netHbar) / 1e8;
+            value = absHbar.toFixed(6);
+            valueUsd = parseFloat((absHbar * priceUsd).toFixed(2));
+          } else {
+            // Check HTS token_transfers for this account
+            const acctTokenTxs = tokenTransfers.filter(t => t["account"] === address);
+            const mainTokenId = acctTokenTxs.length > 0 ? String(acctTokenTxs[0]["token_id"] ?? "") : "";
+            const netToken = mainTokenId
+              ? acctTokenTxs
+                  .filter(t => t["token_id"] === mainTokenId)
+                  .reduce((s, t) => s + BigInt(String(t["amount"] ?? "0")), 0n)
+              : 0n;
+            if (netToken !== 0n) {
+              const isOutgoing = netToken < 0n;
+              direction = isOutgoing ? "out" : "in";
+              const others = tokenTransfers.filter(
+                t => t["token_id"] === mainTokenId && t["account"] !== address
+              );
+              const counterparty = isOutgoing
+                ? String(others.find(t => BigInt(String(t["amount"] ?? "0")) > 0n)?.["account"] ?? "")
+                : String(others.find(t => BigInt(String(t["amount"] ?? "0")) < 0n)?.["account"] ?? "");
+              from = isOutgoing ? address : (counterparty || address);
+              to = isOutgoing ? (counterparty || "") : address;
+              // Display token amount (assume 8 decimals — standard for HTS tokens)
+              const absToken = netToken < 0n ? -netToken : netToken;
+              value = (Number(absToken) / 1e8).toFixed(6);
+              valueUsd = 0;
+              tokenSymbol = mainTokenId;
+            } else {
+              direction = "self";
+              from = address; to = address;
+              value = "0.000000"; valueUsd = 0;
+            }
+          }
+
           return {
-            hash: txId,
-            from, to: to || null, value, valueUsd, fee, feeUsd,
+            hash: txId, from, to: to || null, value, valueUsd,
+            fee: (feeTinybars / 1e8).toFixed(6),
+            feeUsd: parseFloat(((feeTinybars / 1e8) * priceUsd).toFixed(2)),
             timestamp: new Date(ts * 1000).toISOString(),
             blockNumber: 0,
             status: result === "SUCCESS" ? ("success" as const) : ("failed" as const),
-            direction, tokenSymbol: null, tokenName: null,
+            direction, tokenSymbol, tokenName: null,
           };
         });
 
-        const hasMore = rawTxs.length >= limit && !!mirrorNext;
-        const nextCursorVal = hasMore && mirrorNext
-          ? Buffer.from(mirrorNext, "utf8").toString("base64url")
-          : null;
+        // Mirror Node explicitly signals hasMore via links.next.
+        // Guard: never report hasMore=true when we got 0 transactions (stale/empty cursor).
+        const hasMore = rawTxs.length > 0 && !!mirrorNext;
+        let nextCursorVal: string | null = null;
+        if (hasMore) {
+          // Cursor = consensus_timestamp of last tx in this batch
+          const lastTs = String(rawTxs[rawTxs.length - 1]["consensus_timestamp"] ?? "");
+          nextCursorVal = Buffer.from(lastTs, "utf8").toString("base64url");
+        }
 
         res.json(GetWalletTransactionsResponse.parse({
           transactions,
-          total: (page - 1) * limit + transactions.length + (hasMore ? 1 : 0),
+          total: transactions.length + (hasMore ? 1 : 0),
           page, limit, nextCursor: nextCursorVal, hasMore,
         }));
       } catch {

@@ -368,12 +368,13 @@ export default function WalletDetail() {
   // ── Group by (address + direction) ──
   const groupedRows = useMemo((): GroupedRow[] => {
     const map = new Map<string, GroupedRow>();
-    for (const tx of filteredTxs) {
+    for (const tx of allTxs) {
       if (tx.direction === "self") continue;
       const cp = tx.direction === "in" ? tx.from : tx.to;
       if (!cp) continue;
-      const key = `${cp}:${tx.direction}`;
       const val = parseFloat(tx.value) || 0;
+      if (val < minAmount) continue;
+      const key = `${cp}:${tx.direction}`;
       const existing = map.get(key);
       if (existing) {
         existing.txCount++;
@@ -390,10 +391,17 @@ export default function WalletDetail() {
         });
       }
     }
-    return Array.from(map.values()).sort(
-      (a, b) => new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime()
-    );
-  }, [allTxs, chain]);
+    const rows = Array.from(map.values());
+    // Apply viewMode-aware sort: direction grouping first, then newest-last-interaction within group
+    rows.sort((a, b) => {
+      if (viewMode === "in-first" && a.direction !== b.direction)
+        return a.direction === "in" ? -1 : 1;
+      if (viewMode === "out-first" && a.direction !== b.direction)
+        return a.direction === "out" ? -1 : 1;
+      return new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime();
+    });
+    return rows;
+  }, [allTxs, minAmount, viewMode, chain]);
 
   // ── Commingling detection ──
   const comminglingAddresses = useMemo(() => {
@@ -790,43 +798,54 @@ export default function WalletDetail() {
         </div>
       </div>
 
-      {/* ── Support Banner (collapsible) ── */}
-      <div className="rounded border border-pink-500/20 bg-pink-950/10 overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <Heart className="w-3.5 h-3.5 text-pink-400 shrink-0" />
-          <p className="text-xs font-mono text-muted-foreground flex-1 min-w-0">
-            <span className="text-pink-400 font-semibold">Free to use</span> — no fees, ads, or data selling.
-            If CryptoChainTrace helped your investigation, a small donation keeps it running.
-          </p>
-          <button
-            onClick={() => setShowDonate((v) => !v)}
-            className="shrink-0 text-[10px] font-mono text-pink-400/70 hover:text-pink-400 border border-pink-500/20 hover:border-pink-500/50 px-2.5 py-1 rounded transition-colors ml-2 font-semibold"
-          >
-            {showDonate ? "HIDE ↑" : "DONATE ↓"}
-          </button>
-        </div>
-        {showDonate && (
-          <div className="px-4 pb-4 pt-2.5 border-t border-pink-500/10 grid grid-cols-2 gap-2">
-            {([
-              { symbol: "ETH", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-400", border: "border-blue-500/20" },
-              { symbol: "BTC", address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-400", border: "border-orange-500/20" },
-              { symbol: "XRP", address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-400", border: "border-cyan-500/20" },
-              { symbol: "DAG", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-400", border: "border-purple-500/20" },
-            ] as { symbol: string; address: string; color: string; border: string }[]).map((d) => (
-              <div key={d.symbol} className={`flex items-center gap-2 bg-muted/10 border ${d.border} px-3 py-2 rounded`}>
-                <span className={`text-[10px] font-mono font-bold ${d.color} w-8 shrink-0`}>{d.symbol}</span>
-                <code className="text-[10px] font-mono text-muted-foreground/70 truncate flex-1 min-w-0">{d.address}</code>
-                <button
-                  onClick={() => void navigator.clipboard.writeText(d.address)}
-                  className="text-muted-foreground/60 hover:text-pink-400 transition-colors shrink-0 ml-1"
-                  title={`Copy ${d.symbol} address`}
-                >
-                  <Copy className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
+      {/* ── Support Banner ── */}
+      <div className="rounded-lg border border-pink-500/30 bg-gradient-to-r from-pink-950/30 via-pink-950/20 to-transparent overflow-hidden">
+        <div className="px-5 py-4">
+          <div className="flex items-start gap-4">
+            <div className="shrink-0 w-9 h-9 rounded-full bg-pink-500/15 border border-pink-500/30 flex items-center justify-center mt-0.5">
+              <Heart className="w-4 h-4 text-pink-400" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-mono font-bold text-pink-300 tracking-wide mb-0.5">
+                Support This Free Tool
+              </p>
+              <p className="text-xs font-mono text-muted-foreground leading-relaxed">
+                <span className="text-pink-400">100% free</span> — no fees, ads, or data selling. If CryptoChainTrace helped your investigation, even a small donation keeps the servers running.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowDonate((v) => !v)}
+              className="shrink-0 text-[10px] font-mono text-pink-400 hover:text-pink-300 border border-pink-500/30 hover:border-pink-400/60 bg-pink-950/40 hover:bg-pink-950/60 px-3 py-1.5 rounded transition-colors font-semibold tracking-wider"
+            >
+              {showDonate ? "HIDE ↑" : "DONATE ↓"}
+            </button>
           </div>
-        )}
+          {showDonate && (
+            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {([
+                { symbol: "ETH", label: "Ethereum", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-300", bg: "bg-blue-950/30", border: "border-blue-500/25" },
+                { symbol: "BTC", label: "Bitcoin",  address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-300", bg: "bg-orange-950/30", border: "border-orange-500/25" },
+                { symbol: "XRP", label: "Ripple",   address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-300",   bg: "bg-cyan-950/30",   border: "border-cyan-500/25" },
+                { symbol: "DAG", label: "Constellation", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-300", bg: "bg-purple-950/30", border: "border-purple-500/25" },
+              ] as { symbol: string; label: string; address: string; color: string; bg: string; border: string }[]).map((d) => (
+                <div key={d.symbol} className={`flex items-center gap-3 ${d.bg} border ${d.border} px-3 py-2.5 rounded-lg`}>
+                  <div className="shrink-0 text-center">
+                    <span className={`text-xs font-mono font-bold ${d.color} block leading-none`}>{d.symbol}</span>
+                    <span className="text-[9px] font-mono text-muted-foreground/50 block mt-0.5">{d.label}</span>
+                  </div>
+                  <code className="text-[10px] font-mono text-muted-foreground/70 truncate flex-1 min-w-0">{d.address}</code>
+                  <button
+                    onClick={() => void navigator.clipboard.writeText(d.address)}
+                    className={`${d.color} opacity-60 hover:opacity-100 transition-opacity shrink-0`}
+                    title={`Copy ${d.symbol} address`}
+                  >
+                    <Copy className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* ── Stats ── */}
@@ -889,7 +908,7 @@ export default function WalletDetail() {
               </div>
 
               {/* ── View Mode Segmented Control — always visible ── */}
-              <div className={`flex items-center rounded border overflow-hidden text-[10px] font-mono transition-opacity ${groupByCounterparty ? "opacity-40 pointer-events-none border-border/20" : "border-border/40"}`}>
+              <div className="flex items-center rounded border border-border/40 overflow-hidden text-[10px] font-mono">
                 {(["in-first", "out-first", "mixed"] as const).map((m) => {
                   const labels: Record<string, string> = { "in-first": "IN FIRST", "out-first": "OUT FIRST", mixed: "MIXED" };
                   const colors: Record<string, string> = {

@@ -335,6 +335,10 @@ export default function WalletDetail() {
   type GroupSort = "most-txs" | "highest-value" | "recent" | "exchange-first";
   const [groupSort, setGroupSort] = useState<GroupSort>("most-txs");
 
+  // ── Direction filter (only active when groupByCounterparty is ON) ──
+  type DirFilter = "all" | "only-in" | "only-out";
+  const [dirFilter, setDirFilter] = useState<DirFilter>("all");
+
   // ── Minimum amount filter — default 1 (hide dust/spam; user can lower to 0) ──
   const [minAmount, setMinAmount] = useState(1);
   const [minAmountInput, setMinAmountInput] = useState("1");
@@ -587,7 +591,12 @@ export default function WalletDetail() {
         });
       }
     }
-    const rows = Array.from(map.values());
+    const allRows = Array.from(map.values());
+    const rows = dirFilter === "only-in"
+      ? allRows.filter((r) => r.direction === "in")
+      : dirFilter === "only-out"
+        ? allRows.filter((r) => r.direction === "out")
+        : allRows;
     // Direction grouping (viewMode) as primary, groupSort as secondary within each group
     rows.sort((a, b) => {
       if (viewMode !== "mixed" && a.direction !== b.direction) {
@@ -607,7 +616,7 @@ export default function WalletDetail() {
       return new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime();
     });
     return rows;
-  }, [allTxs, minAmount, viewMode, groupSort, chain]);
+  }, [allTxs, minAmount, viewMode, groupSort, chain, dirFilter]);
 
   // ── Commingling detection ──
   const comminglingAddresses = useMemo(() => {
@@ -1277,6 +1286,29 @@ export default function WalletDetail() {
                   );
                 })}
               </div>
+
+              {/* ── Only IN / Only OUT filter — only when Group By Counterparty is ON ── */}
+              {groupByCounterparty && (
+                <div className="flex items-center rounded border border-border/40 overflow-hidden text-[10px] font-mono">
+                  {(["all", "only-in", "only-out"] as const).map((f) => {
+                    const labels: Record<string, string> = { all: "ALL", "only-in": "↓ ONLY IN", "only-out": "↑ ONLY OUT" };
+                    const colors: Record<string, string> = {
+                      all: dirFilter === f ? "bg-primary/20 text-primary" : "bg-muted/10 text-muted-foreground hover:text-primary",
+                      "only-in": dirFilter === f ? "bg-green-950/60 text-green-400 font-semibold" : "bg-muted/10 text-muted-foreground hover:text-green-400",
+                      "only-out": dirFilter === f ? "bg-red-950/60 text-red-400 font-semibold" : "bg-muted/10 text-muted-foreground hover:text-red-400",
+                    };
+                    return (
+                      <button
+                        key={f}
+                        onClick={() => setDirFilter(f)}
+                        className={`px-2.5 py-1.5 transition-colors border-r last:border-r-0 border-border/40 ${colors[f]}`}
+                      >
+                        {labels[f]}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
 
               <button
                 onClick={() => setGroupByCounterparty((v) => !v)}

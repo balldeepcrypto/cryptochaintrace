@@ -128,6 +128,7 @@ interface GroupedRow {
 }
 
 const LOAD_LIMIT = 500;
+const DAG_LOAD_LIMIT = 300; // DAG Constellation API is slow on cursor pages — use smaller batches
 
 export default function WalletDetail() {
   const params = useParams();
@@ -206,9 +207,11 @@ export default function WalletDetail() {
     { query: { enabled: !!address, queryKey: getGetWalletQueryKey(address, { chain }) } }
   );
 
+  // DAG uses a smaller initial page to avoid Constellation API timeouts
+  const initLimit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
-    address, { chain, page: 1, limit: LOAD_LIMIT },
-    { query: { enabled: !!address, queryKey: getGetWalletTransactionsQueryKey(address, { chain, page: 1, limit: LOAD_LIMIT }) } }
+    address, { chain, page: 1, limit: initLimit },
+    { query: { enabled: !!address, queryKey: getGetWalletTransactionsQueryKey(address, { chain, page: 1, limit: initLimit }) } }
   );
 
   // ── Sync initial React Query data into local accumulated state ──
@@ -233,8 +236,9 @@ export default function WalletDetail() {
   const MAX_TOTAL = 25000;
 
   // ── Shared typed page fetcher — throws on any non-OK response ──
-  const fetchPage = useCallback(async (cursor: string): Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }> => {
-    const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(cursor)}`;
+  // `limit` is caller-supplied so DAG can use DAG_LOAD_LIMIT (300) instead of 500.
+  const fetchPage = useCallback(async (cursor: string, limit: number): Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }> => {
+    const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${limit}&cursor=${encodeURIComponent(cursor)}`;
     const resp = await fetch(url);
     if (!resp.ok) {
       const body = await resp.text().catch(() => "");
@@ -243,47 +247,63 @@ export default function WalletDetail() {
     return resp.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
   }, [address, chain]);
 
-  // DAG Constellation API is slow on cursor pages — cap at 1 page (500 txs) per click.
-  // All other chains can loop up to 10 pages (5,000 txs) per click.
-  const loadMorePageBatch = chain === "dag" ? 1 : 10;
-  const loadMoreLabel = chain === "dag" ? "LOAD +500" : "LOAD +5,000";
+  // DAG: exactly 1 page of 300 txs per click (Constellation is slow on cursor pages).
+  // Others: loop up to 10 pages of 500 txs per click (5,000 txs total).
+  const loadMoreLabel = chain === "dag" ? `LOAD +${DAG_LOAD_LIMIT}` : "LOAD +5,000";
 
-  // ── Load More Batch ──
+  // ── Load More — fetch exactly ONE page for DAG, up to 10 pages for others ──
   const loadMore = useCallback(async () => {
     if (!hasMore || loadingMore || loadingAll || !nextCursor) return;
+    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
     setLoadingMore(true);
     setLoadError(null);
-    setLoadProgress({ page: 0, txCount: allTxs.length });
-    let cursor: string | null = nextCursor;
-    let accumulated = [...allTxs];
-    const TARGET = Math.min(accumulated.length + (loadMorePageBatch * LOAD_LIMIT), MAX_TOTAL);
-    let pageNum = 0;
+    setLoadProgress({ page: 1, txCount: allTxs.length });
     try {
-      while (cursor && accumulated.length < TARGET) {
-        pageNum++;
-        setLoadProgress({ page: pageNum, txCount: accumulated.length });
-        const data = await fetchPage(cursor);
-        const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+      if (chain === "dag") {
+        // DAG: single page fetch — one cursor request per click to avoid timeout stacking
+        const data = await fetchPage(nextCursor, limit);
+        const existingKeys = new Set(allTxs.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
         const newTxs = (data.transactions ?? []).filter((tx) => {
           const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
           return !existingKeys.has(key);
         });
-        accumulated = [...accumulated, ...newTxs];
-        cursor = data.nextCursor ?? null;
-        if (!data.hasMore || !cursor) break;
+        const next = [...allTxs, ...newTxs];
+        setAllTxs(next);
+        setNextCursor(data.nextCursor ?? null);
+        // Use data.hasMore directly — server is authoritative; don't re-derive from cursor presence
+        setHasMore(data.hasMore && next.length < MAX_TOTAL);
+      } else {
+        // Non-DAG: batch up to 10 pages
+        let cursor: string | null = nextCursor;
+        let accumulated = [...allTxs];
+        const TARGET = Math.min(accumulated.length + (10 * LOAD_LIMIT), MAX_TOTAL);
+        let pageNum = 0;
+        while (cursor && accumulated.length < TARGET) {
+          pageNum++;
+          setLoadProgress({ page: pageNum, txCount: accumulated.length });
+          const data = await fetchPage(cursor, limit);
+          const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+          const newTxs = (data.transactions ?? []).filter((tx) => {
+            const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
+            return !existingKeys.has(key);
+          });
+          accumulated = [...accumulated, ...newTxs];
+          cursor = data.nextCursor ?? null;
+          if (!data.hasMore || !cursor) break;
+        }
+        setAllTxs(accumulated);
+        setNextCursor(cursor);
+        setHasMore(!!cursor && accumulated.length < MAX_TOTAL);
       }
-      setAllTxs(accumulated);
-      setNextCursor(cursor);
-      setHasMore(cursor !== null && accumulated.length < MAX_TOTAL);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
     } finally {
       setLoadingMore(false);
       setLoadProgress(null);
     }
-  }, [hasMore, loadingMore, loadingAll, nextCursor, allTxs, fetchPage]);
+  }, [hasMore, loadingMore, loadingAll, nextCursor, allTxs, fetchPage, chain]);
 
-  // ── Load All (loop until no more pages, hard cap 25k) ──
+  // ── Load All — loop one page at a time until hasMore=false, hard cap 25k ──
   const loadAll = useCallback(async () => {
     if (!hasMore || loadingAll || loadingMore || !nextCursor) return;
     if (allTxs.length > 20000) {
@@ -291,6 +311,7 @@ export default function WalletDetail() {
         `You already have ${allTxs.length.toLocaleString()} transactions loaded.\n\nLoading more may slow or freeze your browser.\n\nContinue?`
       )) return;
     }
+    const limit = chain === "dag" ? DAG_LOAD_LIMIT : LOAD_LIMIT;
     setLoadingAll(true);
     setLoadError(null);
     setLoadProgress({ page: 0, txCount: allTxs.length });
@@ -301,7 +322,7 @@ export default function WalletDetail() {
       while (cursor && accumulated.length < MAX_TOTAL) {
         pageNum++;
         setLoadProgress({ page: pageNum, txCount: accumulated.length });
-        const data = await fetchPage(cursor);
+        const data = await fetchPage(cursor, limit);
         const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
         const newTxs = (data.transactions ?? []).filter((tx) => {
           const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
@@ -309,18 +330,19 @@ export default function WalletDetail() {
         });
         accumulated = [...accumulated, ...newTxs];
         cursor = data.nextCursor ?? null;
+        // Commit each page immediately so user sees progress
+        setAllTxs([...accumulated]);
+        setNextCursor(cursor);
+        setHasMore(data.hasMore && accumulated.length < MAX_TOTAL);
         if (!data.hasMore || !cursor) break;
       }
-      setAllTxs(accumulated);
-      setNextCursor(cursor);
-      setHasMore(cursor !== null && accumulated.length < MAX_TOTAL);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
     } finally {
       setLoadingAll(false);
       setLoadProgress(null);
     }
-  }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, fetchPage]);
+  }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, fetchPage, chain]);
 
   // ── Apply minimum amount filter ──
   const filteredTxs = useMemo(() => {
@@ -1033,9 +1055,16 @@ export default function WalletDetail() {
               </div>
             )}
             <div className="flex items-center justify-between gap-4">
-              <span className="text-xs font-mono text-muted-foreground">
-                {allTxs.length.toLocaleString()} loaded · more available
-              </span>
+              <div className="flex flex-col gap-0.5">
+                <span className="text-xs font-mono text-muted-foreground">
+                  {allTxs.length.toLocaleString()} loaded · more available
+                </span>
+                {nextCursor && (
+                  <span className="text-[10px] font-mono text-muted-foreground/40 break-all">
+                    CURSOR: {nextCursor.length > 20 ? `${nextCursor.slice(0, 20)}…${nextCursor.slice(-8)}` : nextCursor}
+                  </span>
+                )}
+              </div>
               {!loadProgress && (
                 <div className="flex items-center gap-2">
                   <Button

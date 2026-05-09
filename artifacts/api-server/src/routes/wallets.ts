@@ -401,8 +401,12 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         return true;
       });
 
-      // Cursor = last transaction hash for next page
-      const nextCursor = unique.length >= limit ? String(unique[unique.length - 1]?.["hash"] ?? "") || null : null;
+      // Use rawTxs.length (pre-dedup) to decide if a full page was returned.
+      // Using unique.length would incorrectly set hasMore=false when deduplication
+      // drops the count just below `limit` even though more pages exist.
+      const nextCursor = (rawTxs.length >= limit && unique.length > 0)
+        ? String(unique[unique.length - 1]?.["hash"] ?? "") || null
+        : null;
       const hasMore = nextCursor !== null;
 
       const transactions = unique.map((tx) => {

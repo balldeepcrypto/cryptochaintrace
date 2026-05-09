@@ -1,0 +1,22 @@
+Expand Known Wallet Labels + Make Them Extremely Prominent + Add Donation to Main Page:
+
+1. Expand the knownLabels / knownExchanges object with ALL the following DAG wallets and their exact labels:
+
+   - DOR METAGRAPH: DAG0o6WSyvc7XfzujwJB1e25mfyzgXoLYDD6wqnk, DAG4nBD5J3Pr2uHgtS1sa16PqemHrwCcvjdR31Xe, DAG4YD6rkExLwYyAZzwjYJMxe36PAptKuUKq9uc7, DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM, DAG5fqiGq9L5iLH5R5eV7gBjkucewrcaQ1jVnKYD, DAG5uDuGhPuh4mQZGNLFCEcdy69txSF4iSfFbdWJ, DAG6B5mBMoEu3Habtb2ts3QGUD2UquywrQSLSubU
+   - DTM ENTERPRISE: DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE, DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA
+   - DOR VALIDATOR TAX POOL: DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT
+   - DOR VALIDATOR TAX: DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW
+   - DTM REWARD POOL: DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1, DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK
+   - Team Foundation: DAG8UsoSR14peffVJKAsf3mqJFnkKSoQEUQDAQKN, DAG07znCvSyM2xhxPZECrGhVF6WVPMvFWe6Z6EWW, DAG38whfr5CWzMoQg8PajuiukNNojySqyXtZdBhK, DAG7teqwiZjuBivJi7Mx8AkhwnF6w3Q1poUTCViK, DAG7uFTujXArFTuTqELGYGcthacpfQykBX7wsgFv, DAG8MWCDLPxjufRE2tkg3qpWSd7iJKFfsg9H5nCE, DAG3yzY9252n8Fkxix7pZo5TH6F9paxSVLsDARK4, DAG2eFDjZ2CMA3M4KMfLw6Vnn7kaJPJqcSCpHU25, DAG2ttEXvYHsMP5qu7ejoBTbuCPmHoDhU5fZi3YL, DAG1ZieMRm7ALEbSjmvwztvtZYu7srPaXwxbC14U
+   - Treasury: DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR, DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD
+   - Uphold Hot Wallet example: DAG1pLpkyX...f4BT (and any other known Uphold addresses)
+
+2. Make labels EXTREMELY prominent:
+   - Show a large colored badge next to every matching counterparty (e.g. "🔴 DOR Metagraph", "🟠 DTM Enterprise", "🔵 Uphold Hot Wallet", "Team Foundation", "Treasury").
+   - In Group by Counterparty view, add an extra "Label" column or row so it's impossible to miss.
+
+3. Keep Memos / Destination Tags very visible.
+
+4. Ensure the Donation/Support section is also on the MAIN search page (big and prominent near the top).
+
+Hot-reload and confirm that when these known wallets appear, they show clear colored labels like "DOR Metagraph", "Uphold Hot Wallet", etc.

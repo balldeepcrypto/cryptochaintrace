@@ -87,6 +87,38 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "385cR5DM96n1HvBDMDc1XnYedsFZa8zT4T": { label: "Bitfinex BTC", type: "exchange" },
   "1LdRcdxfbSnmCYYNdeYpUnztiYzVfBEQeC": { label: "Huobi BTC 2", type: "exchange" },
   "bc1qa5wkgaew2dkv56kfvj49j0av5nml45x9ek9hz6": { label: "Robinhood BTC", type: "exchange" },
+  // ── DAG (Constellation Network) ────────────────────────────────────────────
+  // DOR Metagraph
+  DAG0o6WSyvc7XfzujwJB1e25mfyzgXoLYDD6wqnk: { label: "DOR Metagraph",   type: "defi" },
+  DAG4nBD5J3Pr2uHgtS1sa16PqemHrwCcvjdR31Xe: { label: "DOR Metagraph 2", type: "defi" },
+  DAG4YD6rkExLwYyAZzwjYJMxe36PAptKuUKq9uc7: { label: "DOR Metagraph 3", type: "defi" },
+  DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM: { label: "DOR Metagraph 4", type: "defi" },
+  DAG5fqiGq9L5iLH5R5eV7gBjkucewrcaQ1jVnKYD: { label: "DOR Metagraph 5", type: "defi" },
+  DAG5uDuGhPuh4mQZGNLFCEcdy69txSF4iSfFbdWJ: { label: "DOR Metagraph 6", type: "defi" },
+  DAG6B5mBMoEu3Habtb2ts3QGUD2UquywrQSLSubU: { label: "DOR Metagraph 7", type: "defi" },
+  // DTM Enterprise
+  DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE: { label: "DTM Enterprise",   type: "defi" },
+  DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA: { label: "DTM Enterprise 2", type: "defi" },
+  // DOR Validator
+  DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT: { label: "DOR Validator Tax Pool", type: "defi" },
+  DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW: { label: "DOR Validator Tax",      type: "defi" },
+  // DTM Reward Pool
+  DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "DTM Reward Pool",   type: "defi" },
+  DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK: { label: "DTM Reward Pool 2", type: "defi" },
+  // Team Foundation
+  DAG8UsoSR14peffVJKAsf3mqJFnkKSoQEUQDAQKN: { label: "Team Foundation",    type: "genesis" },
+  DAG07znCvSyM2xhxPZECrGhVF6WVPMvFWe6Z6EWW: { label: "Team Foundation 2",  type: "genesis" },
+  DAG38whfr5CWzMoQg8PajuiukNNojySqyXtZdBhK: { label: "Team Foundation 3",  type: "genesis" },
+  DAG7teqwiZjuBivJi7Mx8AkhwnF6w3Q1poUTCViK: { label: "Team Foundation 4",  type: "genesis" },
+  DAG7uFTujXArFTuTqELGYGcthacpfQykBX7wsgFv: { label: "Team Foundation 5",  type: "genesis" },
+  DAG8MWCDLPxjufRE2tkg3qpWSd7iJKFfsg9H5nCE: { label: "Team Foundation 6",  type: "genesis" },
+  DAG3yzY9252n8Fkxix7pZo5TH6F9paxSVLsDARK4: { label: "Team Foundation 7",  type: "genesis" },
+  DAG2eFDjZ2CMA3M4KMfLw6Vnn7kaJPJqcSCpHU25: { label: "Team Foundation 8",  type: "genesis" },
+  DAG2ttEXvYHsMP5qu7ejoBTbuCPmHoDhU5fZi3YL: { label: "Team Foundation 9",  type: "genesis" },
+  DAG1ZieMRm7ALEbSjmvwztvtZYu7srPaXwxbC14U: { label: "Team Foundation 10", type: "genesis" },
+  // Treasury
+  DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "DAG Treasury",   type: "genesis" },
+  DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "DAG Treasury 2", type: "genesis" },
 };
 
 const EXPLORER_MAP: Record<string, (h: string) => string> = {
@@ -802,20 +834,22 @@ export default function WalletDetail() {
     return <span className="flex items-center gap-1 text-xs px-2 py-0.5 rounded bg-red-950/60 text-red-400 font-mono"><ShieldAlert className="w-3 h-3" /> HIGH RISK ({score})</span>;
   };
 
-  const getKnownBadge = (info?: { label: string; type: string }, size: "sm" | "md" = "sm") => {
+  const getKnownBadge = (info?: { label: string; type: string }, size: "sm" | "md" | "lg" = "sm") => {
     if (!info) return null;
-    const config: Record<string, { bg: string; text: string; border: string; emoji: string }> = {
-      exchange: { bg: "bg-blue-900/80",   text: "text-blue-200",   border: "border-blue-400/50",   emoji: "🏦" },
-      genesis:  { bg: "bg-purple-900/80", text: "text-purple-200", border: "border-purple-400/50", emoji: "⚡" },
-      defi:     { bg: "bg-teal-900/80",   text: "text-teal-200",   border: "border-teal-400/50",   emoji: "🔄" },
-      flagged:  { bg: "bg-red-900/80",    text: "text-red-200",    border: "border-red-400/50",    emoji: "🚨" },
+    const config: Record<string, { bg: string; text: string; border: string; glow: string; emoji: string }> = {
+      exchange: { bg: "bg-blue-900/90",   text: "text-blue-100",   border: "border-blue-400/60",   glow: "shadow-blue-500/20",   emoji: "🏦" },
+      genesis:  { bg: "bg-purple-900/90", text: "text-purple-100", border: "border-purple-400/60", glow: "shadow-purple-500/20", emoji: "⚡" },
+      defi:     { bg: "bg-teal-900/90",   text: "text-teal-100",   border: "border-teal-400/60",   glow: "shadow-teal-500/20",   emoji: "🔄" },
+      flagged:  { bg: "bg-red-900/90",    text: "text-red-100",    border: "border-red-400/60",    glow: "shadow-red-500/20",    emoji: "🚨" },
     };
     const c = config[info.type] ?? config.exchange;
-    const sz = size === "md"
-      ? "text-xs px-2.5 py-1 gap-1.5 rounded-md"
-      : "text-[11px] px-2 py-0.5 gap-1 rounded";
+    const sz = size === "lg"
+      ? "text-xs px-3 py-1.5 gap-2 rounded-lg font-bold tracking-wide"
+      : size === "md"
+      ? "text-xs px-2.5 py-1 gap-1.5 rounded-md font-semibold"
+      : "text-[11px] px-2 py-0.5 gap-1 rounded font-semibold";
     return (
-      <span className={`inline-flex items-center shrink-0 font-mono font-semibold border shadow-sm ${sz} ${c.bg} ${c.text} ${c.border}`}>
+      <span className={`inline-flex items-center shrink-0 font-mono border shadow-md ${sz} ${c.bg} ${c.text} ${c.border} ${c.glow}`}>
         <span>{c.emoji}</span>
         <span>{info.label}</span>
       </span>
@@ -1189,6 +1223,7 @@ export default function WalletDetail() {
                 <tr className="border-b border-border/40 text-xs font-mono text-muted-foreground bg-muted/10">
                   <th className="px-5 py-3 font-normal w-20">DIR</th>
                   <th className="px-5 py-3 font-normal">COUNTERPARTY</th>
+                  <th className="px-5 py-3 font-normal">LABEL</th>
                   <th className="px-5 py-3 font-normal text-center">TXS</th>
                   <th className="px-5 py-3 font-normal text-right">TOTAL AMOUNT</th>
                   <th className="px-5 py-3 font-normal text-right">ASSET</th>
@@ -1199,10 +1234,10 @@ export default function WalletDetail() {
               <tbody className="divide-y divide-border/30">
                 {txLoading ? (
                   Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i}><td colSpan={7} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
+                    <tr key={i}><td colSpan={8} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
                   ))
                 ) : groupedRows.length === 0 ? (
-                  <tr><td colSpan={7} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">
+                  <tr><td colSpan={8} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">
                     {allTxs.length > 0 ? `ALL ${allTxs.length} TXS BELOW MIN AMOUNT (${minAmount} ${chain.toUpperCase()})` : "NO TRANSACTIONS FOUND"}
                   </td></tr>
                 ) : (
@@ -1210,7 +1245,7 @@ export default function WalletDetail() {
                     const known = KNOWN_LABELS[row.address];
                     const saved = savedWallets.has(row.address);
                     return (
-                      <tr key={`${row.address}:${row.direction}:${idx}`} className="hover:bg-muted/10 transition-colors text-sm font-mono">
+                      <tr key={`${row.address}:${row.direction}:${idx}`} className={`hover:bg-muted/10 transition-colors text-sm font-mono ${known ? "bg-muted/5" : ""}`}>
                         <td className="px-5 py-3">
                           {row.direction === "in" ? (
                             <span className="inline-flex items-center gap-1 text-green-400 bg-green-950/40 border border-green-500/20 px-2 py-0.5 rounded text-xs"><ArrowDownLeft className="w-3 h-3" /> IN</span>
@@ -1230,7 +1265,6 @@ export default function WalletDetail() {
                             >
                               {row.address.length > 16 ? `${row.address.slice(0, 10)}…${row.address.slice(-4)}` : row.address}
                             </button>
-                            {known && getKnownBadge(known)}
                             {saved && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
                             <a
                               href={WALLET_EXPLORER_MAP[chain]?.(row.address) ?? "#"}
@@ -1242,6 +1276,9 @@ export default function WalletDetail() {
                               <ExternalLink className="w-2.5 h-2.5" />
                             </a>
                           </div>
+                        </td>
+                        <td className="px-5 py-3">
+                          {known ? getKnownBadge(known, "lg") : <span className="text-muted-foreground/30 text-xs font-mono">—</span>}
                         </td>
                         <td className="px-5 py-3 text-center text-muted-foreground">{row.txCount}</td>
                         <td className={`px-5 py-3 text-right text-xs ${row.direction === "in" ? "text-green-400" : "text-red-400"}`}>

@@ -127,8 +127,8 @@ interface GroupedRow {
   asset: string;
 }
 
-const DAG_BATCH = 100;
-const OTHER_BATCH = 500;
+const DAG_BATCH = 250;
+const OTHER_BATCH = 800;
 const MAX_TOTAL = 25000;
 
 export default function WalletDetail() {
@@ -162,12 +162,15 @@ export default function WalletDetail() {
   const [allTxs, setAllTxs] = useState<Tx[]>([]);
   const [showDonate, setShowDonate] = useState(false);
 
-  // Commit new pagination data: mutate the ref then update allTxs state to trigger a re-render.
+  // Commit new pagination data: sort newest-first, mutate the ref, trigger re-render.
   function commit(txs: Tx[], cursor: string | null, more: boolean) {
-    page.current.txs = txs;
+    const sorted = [...txs].sort(
+      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
+    );
+    page.current.txs = sorted;
     page.current.cursor = cursor;
     page.current.hasMore = more;
-    setAllTxs(txs); // single state update → one React re-render
+    setAllTxs(sorted); // single state update → one React re-render
   }
 
   // ── Saved wallets (localStorage) ──
@@ -263,7 +266,7 @@ export default function WalletDetail() {
     return res.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
   }
 
-  const loadMoreLabel = chain === "dag" ? "LOAD MORE (+100)" : "LOAD +5,000";
+  const loadMoreLabel = chain === "dag" ? "LOAD MORE (+250)" : "LOAD MORE (+800)";
 
   // ── Load More: fetch one batch, append, re-render ──
   // page.current is always current — no stale closure possible.

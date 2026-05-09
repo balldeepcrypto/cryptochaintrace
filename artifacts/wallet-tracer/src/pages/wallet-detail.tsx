@@ -119,6 +119,16 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   // Treasury
   DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "DAG Treasury",   type: "genesis" },
   DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "DAG Treasury 2", type: "genesis" },
+  // DAG Exchanges
+  DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf: { label: "MEXC DAG",       type: "exchange" },
+  DAG4TETUwraLYX1mYdC8ymUxxWsoNZPffUpDf4Ar: { label: "Gate.io DAG",     type: "exchange" },
+  DAG3Lcv4GEhPH34VHVgbEAf21Y3L2rtjLpXh7QD4: { label: "CoinEX DAG",      type: "exchange" },
+  DAG6cStT1VYZdUhpoME23U5zbTveYq78tj7EihFV: { label: "KuCoin DAG",      type: "exchange" },
+  DAG5yqn4JRkW5oAMthhBayBtkZzfAvRQnkH1dCG4: { label: "KuCoin DAG 2",    type: "exchange" },
+  DAG2rMPHX4w1cMMjowmewRMjD1in53yRURt6Eijh: { label: "KuCoin DAG 3",    type: "exchange" },
+  DAG2Evedeb9cS7d28bxF4wwgeryiEqfDo8diZMZg: { label: "KuCoin DAG 4",    type: "exchange" },
+  DAG6LvxLSdWoC9uJZPgXtcmkcWBaGYypF6smaPyH: { label: "BitForex DAG",    type: "exchange" },
+  DAG1pLpkyX7aTtFZtbF98kgA9QTZRzrsGaFmf4BT: { label: "Uphold DAG",      type: "exchange" },
 };
 
 const EXPLORER_MAP: Record<string, (h: string) => string> = {

@@ -41,18 +41,30 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rGsxGQNdaDyFhZQ5JqDGPkT3VGFFexCaM3: { label: "Gate.io XRP",    type: "exchange" },
   rBx5RkPh2KR3JqBtZWoU25ZxGHaJzYMD84: { label: "KrakenXRP 3",    type: "exchange" },
   // ── XLM (Stellar) ──────────────────────────────────────────────────────────
-  GDDEAH46MNFO6JD7NTQ5FWJBC4ZSA47YEK3RKFHQWADYTS6NDVD5NZN: { label: "Binance XLM",   type: "exchange" },
-  GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN: { label: "Coinbase XLM",  type: "exchange" },
-  GA5XIGA5C7QTPTWXQHY6T19HSGZDQXPKFBM7NZQND4KHZFVU5HY6KKK: { label: "Kraken XLM",   type: "exchange" },
-  GAP5LETOV6YIE62YAM56STDANPRDO7ZFDBGSNHJQIYGGKSMOZAHOOS2S: { label: "Bitstamp XLM",  type: "exchange" },
-  GBVOL67TMUQBGL4TZYNMY3ZQ5WGQYFPFD5VJRWXR72VA33VFNL225PL: { label: "Huobi XLM",     type: "exchange" },
-  GBZ35ZJRIKJGYH5PBKLKOZ5L5GQXCDIARHV3LIJEV7MIRUCQIRLVVB6: { label: "Bitfinex XLM",  type: "exchange" },
-  GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66MEMGHMN: { label: "OKX XLM",       type: "exchange" },
-  GDKIJJIKXLOM2NRMPNQZUUYK24ZPVFC6426GZAEP3KUK6KEJLACCWNMX: { label: "MEXC XLM",      type: "exchange" },
-  GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4: { label: "Uphold XLM",    type: "exchange" },
-  GCNSGHUCG5VMGLT5RIYYZSO7VQULQKAJ62QA7EC7KH6X7HJR3BXCRRY: { label: "KuCoin XLM",    type: "exchange" },
-  GBUQWP3BOUZX34TOND2QV7QQ7K7VJTM6DBYRD3UI1FAB6B5OKKWKFKP: { label: "Bybit XLM",     type: "exchange" },
-  GBEZDAOKKUDLLNR4EGZFGLCDBQBQLQCQS72LKRNKRUAWPDBPXJVBJV74: { label: "KuCoin XLM 2",  type: "exchange" },
+  GDDEAH46MNFO6JD7NTQ5FWJBC4ZSA47YEK3RKFHQWADYTS6NDVD5NZN: { label: "Binance XLM",     type: "exchange" },
+  GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN: { label: "Coinbase XLM",    type: "exchange" },
+  GA5XIGA5C7QTPTWXQHY6T19HSGZDQXPKFBM7NZQND4KHZFVU5HY6KKK: { label: "Kraken XLM",     type: "exchange" },
+  GAP5LETOV6YIE62YAM56STDANPRDO7ZFDBGSNHJQIYGGKSMOZAHOOS2S: { label: "Bitstamp XLM",    type: "exchange" },
+  GBVOL67TMUQBGL4TZYNMY3ZQ5WGQYFPFD5VJRWXR72VA33VFNL225PL: { label: "Huobi XLM",       type: "exchange" },
+  GBZ35ZJRIKJGYH5PBKLKOZ5L5GQXCDIARHV3LIJEV7MIRUCQIRLVVB6: { label: "Bitfinex XLM",    type: "exchange" },
+  GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66MEMGHMN: { label: "OKX XLM",         type: "exchange" },
+  GDKIJJIKXLOM2NRMPNQZUUYK24ZPVFC6426GZAEP3KUK6KEJLACCWNMX: { label: "MEXC XLM",        type: "exchange" },
+  GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4: { label: "Uphold XLM",      type: "exchange" },
+  GCNSGHUCG5VMGLT5RIYYZSO7VQULQKAJ62QA7EC7KH6X7HJR3BXCRRY: { label: "KuCoin XLM",      type: "exchange" },
+  GBUQWP3BOUZX34TOND2QV7QQ7K7VJTM6DBYRD3UI1FAB6B5OKKWKFKP: { label: "Bybit XLM",       type: "exchange" },
+  GBEZDAOKKUDLLNR4EGZFGLCDBQBQLQCQS72LKRNKRUAWPDBPXJVBJV74: { label: "KuCoin XLM 2",    type: "exchange" },
+  // Coinbase XLM (additional hot wallets)
+  GA3CINHTGMUMRVPJPVHYJWQJ2EF7EX2PCRAFN4H4ZPO77WB6RHXEHMJT: { label: "Coinbase XLM 2",  type: "exchange" },
+  GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37: { label: "Coinbase XLM 3",  type: "exchange" },
+  GDT7ARDYZRBXXYOCSQ3MUMISTITSSRWZI6KR2A5L5Q3KB4QIZHGYMTIH: { label: "Coinbase XLM 4",  type: "exchange" },
+  GCGMJ63NTBSQKW7OEQ3J2RZH6PYXSTEUK4TVE35IPXLB7XWNI2PUDCY6: { label: "Coinbase XLM 5",  type: "exchange" },
+  GDUQXQAR4ECNAYCTGZAS4TH4KJJIZDLXPR5V2YYRFRGGQ3LTXBFTBVW6: { label: "Coinbase XLM 6",  type: "exchange" },
+  GDF4UGQSY6VHWN7T4XJEZ6WYJEREMZYLNYZ5CCKYVS3V3MNYIBMTB354: { label: "Coinbase XLM 7",  type: "exchange" },
+  // Bybit XLM (additional)
+  GBDUXW4E5WRM5EM6UXBLE7Y5XGSXJX472BSSBPKFPQ3PJCJHRIA6SH4C: { label: "Bybit XLM 2",     type: "exchange" },
+  // Uphold XLM (additional hot wallets)
+  GBJDVTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O: { label: "Uphold XLM 2",    type: "exchange" },
+  GBW5AENWI5PFJRYEIAIRYDB62MVEHDYHEBXKFN3TI64RSL2L6GYOYFG4: { label: "Uphold XLM 3",     type: "exchange" },
   // ── HBAR (Hedera) ──────────────────────────────────────────────────────────
   "0.0.23576":   { label: "Binance HBAR",   type: "exchange" },
   "0.0.726513":  { label: "OKX HBAR",       type: "exchange" },
@@ -870,20 +882,20 @@ export default function WalletDetail() {
 
   const getKnownBadge = (info?: { label: string; type: string }, size: "sm" | "md" | "lg" = "sm") => {
     if (!info) return null;
-    const config: Record<string, { bg: string; text: string; border: string; glow: string; emoji: string }> = {
-      exchange: { bg: "bg-blue-900/90",   text: "text-blue-100",   border: "border-blue-400/60",   glow: "shadow-blue-500/20",   emoji: "🏦" },
-      genesis:  { bg: "bg-purple-900/90", text: "text-purple-100", border: "border-purple-400/60", glow: "shadow-purple-500/20", emoji: "⚡" },
-      defi:     { bg: "bg-teal-900/90",   text: "text-teal-100",   border: "border-teal-400/60",   glow: "shadow-teal-500/20",   emoji: "🔄" },
-      flagged:  { bg: "bg-red-900/90",    text: "text-red-100",    border: "border-red-400/60",    glow: "shadow-red-500/20",    emoji: "🚨" },
+    const config: Record<string, { bg: string; text: string; border: string; glow: string; emoji: string; ring: string }> = {
+      exchange: { bg: "bg-blue-600/95",   text: "text-white",        border: "border-blue-300/80",   glow: "shadow-blue-400/40",   ring: "ring-1 ring-blue-400/30",   emoji: "🏦" },
+      genesis:  { bg: "bg-purple-700/95", text: "text-white",        border: "border-purple-300/80", glow: "shadow-purple-400/40", ring: "ring-1 ring-purple-400/30", emoji: "⚡" },
+      defi:     { bg: "bg-teal-700/95",   text: "text-white",        border: "border-teal-300/80",   glow: "shadow-teal-400/40",   ring: "ring-1 ring-teal-400/30",   emoji: "🔄" },
+      flagged:  { bg: "bg-red-600/95",    text: "text-white",        border: "border-red-300/80",    glow: "shadow-red-400/40",    ring: "ring-1 ring-red-400/30",    emoji: "🚨" },
     };
     const c = config[info.type] ?? config.exchange;
     const sz = size === "lg"
-      ? "text-xs px-3 py-1.5 gap-2 rounded-lg font-bold tracking-wide"
+      ? "text-sm px-3.5 py-1.5 gap-2 rounded-lg font-extrabold tracking-wide shadow-lg"
       : size === "md"
-      ? "text-xs px-2.5 py-1 gap-1.5 rounded-md font-semibold"
-      : "text-[11px] px-2 py-0.5 gap-1 rounded font-semibold";
+      ? "text-xs px-2.5 py-1 gap-1.5 rounded-md font-bold shadow-md"
+      : "text-[11px] px-2 py-0.5 gap-1 rounded font-bold shadow-sm";
     return (
-      <span className={`inline-flex items-center shrink-0 font-mono border shadow-md ${sz} ${c.bg} ${c.text} ${c.border} ${c.glow}`}>
+      <span className={`inline-flex items-center shrink-0 font-mono border ${sz} ${c.bg} ${c.text} ${c.border} ${c.glow} ${c.ring}`}>
         <span>{c.emoji}</span>
         <span>{info.label}</span>
       </span>
@@ -912,7 +924,7 @@ export default function WalletDetail() {
         >
           {addr.length > 14 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr}
         </button>
-        {known && getKnownBadge(known)}
+        {known && getKnownBadge(known, "md")}
         {saved && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
         {explorerAddrUrl && (
           <a

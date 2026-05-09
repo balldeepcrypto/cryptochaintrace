@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>CryptoChainTrace</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #0a0a0a; color: #fff; margin: 0; padding: 20px; }
+    h1 { color: #00ff9d; text-align: center; }
+    select, input, button { padding: 15px; margin: 10px 0; width: 100%; max-width: 600px; font-size: 17px; border-radius: 10px; }
+    button { background: #00ff9d; color: black; font-weight: bold; cursor: pointer; }
+    .result { background: #1a1a1a; padding: 20px; border-radius: 12px; margin-top: 20px; max-height: 75vh; overflow-y: auto; }
+    .tx { background: #222; padding: 14px; margin: 10px 0; border-radius: 8px; }
+    .status { color: #00ff9d; font-weight: bold; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <h1>CryptoChainTrace</h1>
+  <p>Full History Wallet Tracer (Reliable Pagination)</p>
+
+  <select id="chain">
+    <option value="dag">Constellation DAG</option>
+    <!-- We can add other chains later -->
+  </select>
+
+  <input type="text" id="address" placeholder="Paste DAG wallet address here" style="width:80%">
+
+  <button onclick="loadWallet()">LOAD WALLET</button>
+
+  <div id="status" class="status"></div>
+  <div id="result" class="result"></div>
+
+  <script>
+    let allTxs = [];
+    let nextCursor = null;
+
+    async function loadWallet(isMore = false) {
+      const address = document.getElementById("address").value.trim();
+      const status = document.getElementById("status");
+      const result = document.getElementById("result");
+
+      if (!address) {
+        status.innerHTML = "Please enter a wallet address";
+        return;
+      }
+
+      status.innerHTML = isMore ? "Loading more (+100)..." : "Fetching transactions...";
+
+      try {
+        let url = `https://be-mainnet.constellationnetwork.io/addresses/${address}/transactions?limit=100`;
+        if (nextCursor) url += `&search_after=${nextCursor}`;
+
+        const res = await fetch(url);
+        if (!res.ok) throw new Error("API error");
+
+        const data = await res.json();
+        const newTxs = data.data || data.transactions || [];
+
+        allTxs = allTxs.concat(newTxs);   // Append only
+        nextCursor = data.meta?.next || data.nextCursor || null;
+
+        let html = `<h2>DAG Wallet: ${address}</h2>`;
+        html += `<p class="status">${allTxs.length} transactions loaded ${nextCursor ? '• More available' : '• Full History'}</p>`;
+
+        allTxs.forEach(tx => {
+          const dir = (tx.source === address || tx.from === address) ? "OUT" : "IN";
+          html += `
+            <div class="tx">
+              <strong>${dir}</strong> — ${tx.amount || '—'} DAG<br>
+              Counterparty: ${tx.destination || tx.to || tx.source || '—'}<br>
+              Date: ${tx.timestamp ? new Date(tx.timestamp).toLocaleString() : '—'}
+            </div>`;
+        });
+
+        if (nextCursor) {
+          html += `<button onclick="loadWallet(true)" style="margin-top:20px; padding:15px;">LOAD MORE (+100)</button>`;
+        }
+
+        result.innerHTML = html;
+        status.innerHTML = "";
+
+      } catch (err) {
+        status.innerHTML = `Error: ${err.message}. Try again.`;
+      }
+    }
+  </script>
+</body>
+</html>

@@ -372,6 +372,9 @@ export default function WalletDetail() {
   // ── Blocks React Query background-refetches from overwriting accumulated txs ──
   const txInitializedRef = useRef(false);
 
+  // Initial batch size — derived from chain only, stable per session
+  const initLimit = chain === "dag" ? DAG_BATCH : chain === "xrp" ? XRP_INIT : OTHER_BATCH;
+
   // Close menu on outside click
   useEffect(() => {
     const handler = () => setActiveMenu(null);
@@ -379,24 +382,22 @@ export default function WalletDetail() {
     return () => window.removeEventListener("click", handler);
   }, []);
 
-  // ── Reset everything when the wallet address or chain changes ──
+  // ── Reset everything when the wallet address, chain, or initLimit changes ──
   useEffect(() => {
     txInitializedRef.current = false;
     page.current = { txs: [], cursor: null, hasMore: false, busy: false, error: null, status: null };
     setAllTxs([]);
     setMinAmount(0);
     setMinAmountInput("0");
-  }, [address, chain]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [address, chain, initLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(
     address, { chain },
     { query: { enabled: !!address, queryKey: getGetWalletQueryKey(address, { chain }) } }
   );
 
-  // Initial page — DAG uses 100 to stay well within Constellation API limits.
-  // staleTime: Infinity + refetchOnWindowFocus: false prevent background refetches from
-  // racing with accumulated Load More state.
-  const initLimit = chain === "dag" ? DAG_BATCH : chain === "xrp" ? XRP_INIT : OTHER_BATCH;
+  // Initial page — staleTime: Infinity + refetchOnWindowFocus: false prevent background
+  // refetches from racing with accumulated Load More state.
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
     address, { chain, page: 1, limit: initLimit },
     {
@@ -1135,7 +1136,13 @@ export default function WalletDetail() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         {[
           { label: "BALANCE", value: wallet?.balance ?? "0", sub: `$${(wallet?.balanceUsd ?? 0).toLocaleString()}`, subClass: "text-green-400" },
-          { label: "TRANSACTIONS", value: (wallet?.transactionCount ?? 0).toLocaleString(), sub: null },
+          {
+            label: "TRANSACTIONS",
+            value: allTxs.length > 0
+              ? `${allTxs.length.toLocaleString()}${page.current.hasMore ? "+" : ""}`
+              : (wallet?.transactionCount ?? 0).toLocaleString(),
+            sub: null,
+          },
           { label: "FIRST SEEN", value: wallet?.firstSeen ? new Date(wallet.firstSeen).toLocaleDateString() : "UNKNOWN", sub: null },
           { label: "LAST ACTIVE", value: wallet?.lastSeen ? new Date(wallet.lastSeen).toLocaleDateString() : "UNKNOWN", sub: null },
         ].map((stat) => (

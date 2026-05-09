@@ -319,7 +319,8 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
     if (chain === "xrp") {
       const [acctResult, txResult] = await Promise.allSettled([
         xrplRpc("account_info", { account: address, ledger_index: "validated" }),
-        xrplRpc("account_tx", { account: address, limit: 5, forward: false }),
+        // limit=200 gives exact count for small wallets; for large wallets we know it's ≥200
+        xrplRpc("account_tx", { account: address, limit: 200, forward: false }),
       ]);
       const acct = acctResult.status === "fulfilled"
         ? ((acctResult.value["account_data"] ?? {}) as Record<string, unknown>)
@@ -330,15 +331,15 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       const txsArr = txResult.status === "fulfilled"
         ? ((txResult.value["transactions"] as Array<Record<string, unknown>>) ?? [])
         : [];
+      const hasMoreTxs = txResult.status === "fulfilled" && !!txResult.value["marker"];
       const toIso = (dateVal: unknown) =>
         dateVal ? new Date((Number(dateVal) + 946684800) * 1000).toISOString() : null;
       const firstTx = txsArr[txsArr.length - 1];
       const lastTx = txsArr[0];
       const firstSeen = toIso(firstTx ? (firstTx["tx"] as Record<string, unknown> | undefined)?.["date"] ?? firstTx["date"] : null);
       const lastSeen = toIso(lastTx ? (lastTx["tx"] as Record<string, unknown> | undefined)?.["date"] ?? lastTx["date"] : null);
-      const txCount = acctResult.status === "fulfilled"
-        ? Number(acctResult.value["ledger_index"] ?? 0)
-        : txsArr.length;
+      // txsArr.length is exact when hasMoreTxs=false; a known minimum when hasMoreTxs=true
+      const txCount = txsArr.length;
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -545,7 +546,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         return true;
       });
 
-      const total = Number(result["ledger_index_max"] ?? unique.length);
+      const total = unique.length;
 
       const transactions = unique.map((entry) => {
         const tx = (entry["tx"] ?? entry["transaction"] ?? entry) as Record<string, unknown>;

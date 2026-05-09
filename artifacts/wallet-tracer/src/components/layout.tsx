@@ -11,7 +11,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <div className="h-16 flex items-center px-6 border-b border-border">
           <div className="flex items-center gap-2 text-primary font-mono font-bold tracking-tight text-lg">
             <Box className="w-5 h-5" />
-            <span>ChainTrace</span>
+            <span>CryptoChainTrace</span>
           </div>
         </div>
         <nav className="flex-1 py-4 flex flex-col gap-1 px-3">

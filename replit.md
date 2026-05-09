@@ -1,4 +1,4 @@
-# ChainTrace
+# CryptoChainTrace
 
 A crypto blockchain wallet tracing tool with a dark intelligence-dashboard UI. Users search wallet addresses across 9 chains, view transaction history, trace wallet connections graphically, and save searches to a database.
 

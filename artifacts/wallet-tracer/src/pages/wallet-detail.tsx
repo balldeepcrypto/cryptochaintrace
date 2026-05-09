@@ -642,37 +642,37 @@ export default function WalletDetail() {
       </div>
 
       {/* ── Support Banner (collapsible) ── */}
-      <div className="rounded border border-pink-500/10 bg-pink-950/5 overflow-hidden">
-        <div className="flex items-center gap-3 px-4 py-2.5">
+      <div className="rounded border border-pink-500/20 bg-pink-950/10 overflow-hidden">
+        <div className="flex items-center gap-3 px-4 py-3">
           <Heart className="w-3.5 h-3.5 text-pink-400 shrink-0" />
           <p className="text-xs font-mono text-muted-foreground flex-1 min-w-0">
             <span className="text-pink-400 font-semibold">Free to use</span> — no fees, ads, or data selling.
-            If ChainTrace helped your investigation, a small donation keeps it running.
+            If CryptoChainTrace helped your investigation, a small donation keeps it running.
           </p>
           <button
             onClick={() => setShowDonate((v) => !v)}
-            className="shrink-0 text-[10px] font-mono text-muted-foreground/50 hover:text-muted-foreground border border-border/20 hover:border-border/40 px-2 py-0.5 rounded transition-colors ml-2"
+            className="shrink-0 text-[10px] font-mono text-pink-400/70 hover:text-pink-400 border border-pink-500/20 hover:border-pink-500/50 px-2.5 py-1 rounded transition-colors ml-2 font-semibold"
           >
             {showDonate ? "HIDE ↑" : "DONATE ↓"}
           </button>
         </div>
         {showDonate && (
-          <div className="px-4 pb-3 pt-2 border-t border-pink-500/10 grid grid-cols-2 gap-1.5">
+          <div className="px-4 pb-4 pt-2.5 border-t border-pink-500/10 grid grid-cols-2 gap-2">
             {([
-              { symbol: "ETH", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-400" },
-              { symbol: "BTC", address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-400" },
-              { symbol: "XRP", address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-400" },
-              { symbol: "DAG", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-400" },
-            ] as { symbol: string; address: string; color: string }[]).map((d) => (
-              <div key={d.symbol} className="flex items-center gap-2 bg-muted/10 px-2.5 py-1.5 rounded group">
+              { symbol: "ETH", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-400", border: "border-blue-500/20" },
+              { symbol: "BTC", address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-400", border: "border-orange-500/20" },
+              { symbol: "XRP", address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-400", border: "border-cyan-500/20" },
+              { symbol: "DAG", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-400", border: "border-purple-500/20" },
+            ] as { symbol: string; address: string; color: string; border: string }[]).map((d) => (
+              <div key={d.symbol} className={`flex items-center gap-2 bg-muted/10 border ${d.border} px-3 py-2 rounded`}>
                 <span className={`text-[10px] font-mono font-bold ${d.color} w-8 shrink-0`}>{d.symbol}</span>
                 <code className="text-[10px] font-mono text-muted-foreground/70 truncate flex-1 min-w-0">{d.address}</code>
                 <button
                   onClick={() => void navigator.clipboard.writeText(d.address)}
-                  className="opacity-0 group-hover:opacity-100 text-muted-foreground/40 hover:text-muted-foreground transition-all shrink-0"
+                  className="text-muted-foreground/60 hover:text-pink-400 transition-colors shrink-0 ml-1"
                   title={`Copy ${d.symbol} address`}
                 >
-                  <Copy className="w-2.5 h-2.5" />
+                  <Copy className="w-3 h-3" />
                 </button>
               </div>
             ))}
@@ -712,6 +712,7 @@ export default function WalletDetail() {
               <CardTitle className="text-sm font-mono uppercase tracking-widest text-foreground">Transaction Ledger</CardTitle>
               <p className="text-xs text-muted-foreground font-mono mt-1">
                 {allTxs.length} loaded{hasMore ? ` · more available` : " · complete"}
+                <span className="ml-2 text-muted-foreground/40">· max 25,000 for performance — Load More available</span>
               </p>
             </div>
             <div className="flex items-center gap-3 flex-wrap">

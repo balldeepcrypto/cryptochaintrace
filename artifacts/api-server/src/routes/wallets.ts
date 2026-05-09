@@ -132,7 +132,7 @@ async function coinstatsFetch(path: string): Promise<Record<string, unknown>> {
 async function dagFetch(path: string): Promise<Record<string, unknown>> {
   const resp = await fetchWithTimeout(`${DAG_API}${path}`, {
     headers: { accept: "application/json" },
-  }, 8000);
+  }, 25000);
   if (!resp.ok) throw new Error(`DAG API request failed: ${resp.status}`);
   return resp.json() as Promise<Record<string, unknown>>;
 }

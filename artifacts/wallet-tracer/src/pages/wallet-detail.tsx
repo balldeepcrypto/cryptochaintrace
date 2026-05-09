@@ -150,6 +150,7 @@ export default function WalletDetail() {
   const [loadingMore, setLoadingMore] = useState(false);
   const [loadingAll, setLoadingAll] = useState(false);
   const [loadProgress, setLoadProgress] = useState<{ page: number; txCount: number } | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [showDonate, setShowDonate] = useState(false);
 
   // ── Saved wallets (localStorage) ──
@@ -222,12 +223,24 @@ export default function WalletDetail() {
 
   const MAX_TOTAL = 25000;
 
+  // ── Shared typed page fetcher — throws on any non-OK response ──
+  const fetchPage = useCallback(async (cursor: string): Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }> => {
+    const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(cursor)}`;
+    const resp = await fetch(url);
+    if (!resp.ok) {
+      const body = await resp.text().catch(() => "");
+      throw new Error(`Server ${resp.status}${body ? `: ${body.slice(0, 120)}` : ""}`);
+    }
+    return resp.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
+  }, [address, chain]);
+
   // ── Load More Batch (+5,000 txs ≈ 10 pages of 500) ──
   const loadMore = useCallback(async () => {
-    if (!hasMore || loadingMore || loadingAll) return;
+    if (!hasMore || loadingMore || loadingAll || !nextCursor) return;
     setLoadingMore(true);
+    setLoadError(null);
     setLoadProgress({ page: 0, txCount: allTxs.length });
-    let cursor = nextCursor;
+    let cursor: string | null = nextCursor;
     let accumulated = [...allTxs];
     const TARGET = Math.min(accumulated.length + 5000, MAX_TOTAL);
     let pageNum = 0;
@@ -235,64 +248,65 @@ export default function WalletDetail() {
       while (cursor && accumulated.length < TARGET) {
         pageNum++;
         setLoadProgress({ page: pageNum, txCount: accumulated.length });
-        const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(cursor)}`;
-        const resp = await fetch(url);
-        const data = await resp.json() as { transactions: Tx[]; nextCursor: string | null; hasMore: boolean };
+        const data = await fetchPage(cursor);
         const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
-        const newTxs = (data.transactions || []).filter((tx) => {
+        const newTxs = (data.transactions ?? []).filter((tx) => {
           const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
           return !existingKeys.has(key);
         });
         accumulated = [...accumulated, ...newTxs];
         cursor = data.nextCursor ?? null;
-        if (!cursor || !data.hasMore) break;
+        if (!data.hasMore || !cursor) break;
       }
       setAllTxs(accumulated);
       setNextCursor(cursor);
       setHasMore(cursor !== null && accumulated.length < MAX_TOTAL);
-    } catch { /* silently fail */ } finally {
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
+    } finally {
       setLoadingMore(false);
       setLoadProgress(null);
     }
-  }, [hasMore, loadingMore, loadingAll, nextCursor, allTxs, address, chain]);
+  }, [hasMore, loadingMore, loadingAll, nextCursor, allTxs, fetchPage]);
 
   // ── Load All (loop until no more pages, hard cap 25k) ──
   const loadAll = useCallback(async () => {
-    if (!hasMore || loadingAll || loadingMore) return;
+    if (!hasMore || loadingAll || loadingMore || !nextCursor) return;
     if (allTxs.length > 20000) {
       if (!window.confirm(
         `You already have ${allTxs.length.toLocaleString()} transactions loaded.\n\nLoading more may slow or freeze your browser.\n\nContinue?`
       )) return;
     }
     setLoadingAll(true);
+    setLoadError(null);
     setLoadProgress({ page: 0, txCount: allTxs.length });
-    let cursor = nextCursor;
+    let cursor: string | null = nextCursor;
     let accumulated = [...allTxs];
     let pageNum = 0;
     try {
       while (cursor && accumulated.length < MAX_TOTAL) {
         pageNum++;
         setLoadProgress({ page: pageNum, txCount: accumulated.length });
-        const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(cursor)}`;
-        const resp = await fetch(url);
-        const data = await resp.json() as { transactions: Tx[]; nextCursor: string | null; hasMore: boolean };
+        const data = await fetchPage(cursor);
         const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
-        const newTxs = (data.transactions || []).filter((tx) => {
+        const newTxs = (data.transactions ?? []).filter((tx) => {
           const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
           return !existingKeys.has(key);
         });
         accumulated = [...accumulated, ...newTxs];
         cursor = data.nextCursor ?? null;
-        if (!cursor || !data.hasMore) break;
+        if (!data.hasMore || !cursor) break;
       }
       setAllTxs(accumulated);
       setNextCursor(cursor);
       setHasMore(cursor !== null && accumulated.length < MAX_TOTAL);
-    } catch { /* silently fail */ } finally {
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : "Unknown error — try again");
+    } finally {
       setLoadingAll(false);
       setLoadProgress(null);
     }
-  }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, address, chain]);
+  }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, fetchPage]);
 
   // ── Apply minimum amount filter ──
   const filteredTxs = useMemo(() => {
@@ -962,6 +976,18 @@ export default function WalletDetail() {
         </div>
 
         {/* ── Load More / Load All ── */}
+        {loadError && !txLoading && (
+          <div className="px-5 py-3 border-t border-border/40 bg-red-950/10 flex items-start gap-2">
+            <AlertTriangle className="w-3.5 h-3.5 text-red-400 mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <span className="text-xs font-mono text-red-400">{loadError}</span>
+              <span className="text-xs font-mono text-muted-foreground ml-2">— cursor preserved, click to retry</span>
+            </div>
+            <button onClick={() => setLoadError(null)} className="text-muted-foreground/40 hover:text-muted-foreground shrink-0">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
         {hasMore && !txLoading && (
           <div className="px-5 py-4 border-t border-border/40 bg-muted/5">
             {loadProgress && (

@@ -66,6 +66,10 @@ export interface TransactionList {
   total: number;
   page: number;
   limit: number;
+  /** Cursor token for next page; null when no more pages exist */
+  nextCursor: string | null;
+  /** True if additional pages of results are available */
+  hasMore: boolean;
 }
 
 export interface WalletNode {
@@ -148,6 +152,10 @@ export type GetWalletTransactionsParams = {
   chain?: GetWalletTransactionsChain;
   page?: number;
   limit?: number;
+  /**
+   * Pagination cursor from previous response (XRP marker JSON or page number)
+   */
+  cursor?: string;
 };
 
 export type GetWalletTransactionsChain =

@@ -36,8 +36,9 @@ const COIN_ID_MAP: Record<string, string> = {
   dag: "constellation-labs",
 };
 
-// XRP uses public XRPL cluster JSON-RPC; others use CoinStats
-const COINSTATS_CHAINS = ["xlm", "hbar", "xdc", "dag"];
+// XRP uses XRPL JSON-RPC; DAG uses Constellation Network API; others use CoinStats
+const COINSTATS_CHAINS = ["xlm", "hbar", "xdc"];
+const DAG_API = "https://be-mainnet.constellationnetwork.io";
 
 function weiToEth(wei: string): string {
   const val = BigInt(wei);
@@ -120,11 +121,24 @@ async function xrplRpc(method: string, params: Record<string, unknown>): Promise
 }
 
 async function coinstatsFetch(path: string): Promise<Record<string, unknown>> {
-  const resp = await fetch(`https://openapiv1.coinstats.app${path}`, {
+  const resp = await fetchWithTimeout(`https://openapiv1.coinstats.app${path}`, {
     headers: { "X-API-KEY": COINSTATS_KEY, accept: "application/json" },
-  });
+  }, 8000);
   if (!resp.ok) throw new Error(`CoinStats request failed: ${resp.status}`);
   return resp.json() as Promise<Record<string, unknown>>;
+}
+
+// Constellation Network DAG public explorer API
+async function dagFetch(path: string): Promise<Record<string, unknown>> {
+  const resp = await fetchWithTimeout(`${DAG_API}${path}`, {
+    headers: { accept: "application/json" },
+  }, 8000);
+  if (!resp.ok) throw new Error(`DAG API request failed: ${resp.status}`);
+  return resp.json() as Promise<Record<string, unknown>>;
+}
+
+function datumToDag(datum: number | string): string {
+  return (Number(datum) / 1e8).toFixed(8);
 }
 
 // ─── GET /wallets/:address ─────────────────────────────────────────────────
@@ -185,6 +199,29 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: n_tx,
         firstSeen, lastSeen, tags, riskScore: computeRiskScore(n_tx, tags), isContract: false,
+      }));
+      return;
+    }
+
+    if (chain === "dag") {
+      const [balData, txData] = await Promise.allSettled([
+        dagFetch(`/addresses/${address}/balance`),
+        dagFetch(`/addresses/${address}/transactions?limit=10`),
+      ]);
+      const dagBalData = (balData.status === "fulfilled" ? balData.value["data"] : null) as Record<string, unknown> | null;
+      const dagBalDatum = Number(dagBalData?.["balance"] ?? 0);
+      const balance = datumToDag(dagBalDatum);
+      const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
+      const dagTxArr = txData.status === "fulfilled"
+        ? ((txData.value["data"] as Array<Record<string, unknown>>) ?? [])
+        : [];
+      const firstSeen = dagTxArr.length > 0 ? String(dagTxArr[dagTxArr.length - 1]["timestamp"] ?? "") || null : null;
+      const lastSeen = dagTxArr.length > 0 ? String(dagTxArr[0]["timestamp"] ?? "") || null : null;
+      const txCount = dagTxArr.length;
+      const tags = guessTags(false, txCount);
+      res.json(GetWalletResponse.parse({
+        address, chain, balance, balanceUsd, transactionCount: txCount,
+        firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
       }));
       return;
     }
@@ -270,8 +307,9 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
   const query = GetWalletTransactionsQueryParams.safeParse(req.query);
   const chain = query.success ? query.data.chain : "ethereum";
   const page = query.success ? query.data.page : 1;
-  const limit = query.success ? query.data.limit : 20;
-  // XRP, XLM, HBAR, XDC addresses are case-sensitive — never lowercase them
+  const limit = Math.min(query.success ? (query.data.limit ?? 100) : 100, 200);
+  const cursorParam = query.success ? query.data.cursor : undefined;
+  // XRP, XLM, HBAR, XDC, DAG addresses are case-sensitive — never lowercase them
   const evmChains = ["ethereum", "polygon", "bsc"];
   const rawAddress = params.data.address;
   const address = evmChains.includes(chain) ? rawAddress.toLowerCase() : rawAddress;
@@ -279,33 +317,39 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
 
   try {
     if (chain === "xrp") {
+      // Cursor is a JSON-encoded XRPL marker object
+      const xrpMarker = cursorParam ? (() => { try { return JSON.parse(cursorParam); } catch { return undefined; } })() : undefined;
       const result = await xrplRpc("account_tx", {
-        account: address, limit: limit + 10, forward: false,
-        ...(page > 1 ? { offset: (page - 1) * limit } : {}),
+        account: address,
+        limit: Math.min(limit, 200),
+        forward: false,
+        ...(xrpMarker ? { marker: xrpMarker } : {}),
       });
       const rawTxs = (result["transactions"] as Array<Record<string, unknown>>) ?? [];
+      const xrpNextMarker = result["marker"];
+      const nextCursor = xrpNextMarker ? JSON.stringify(xrpNextMarker) : null;
+      const hasMore = nextCursor !== null;
 
       // Deduplicate by hash
       const seen = new Set<string>();
       const unique = rawTxs.filter((entry) => {
-        const tx = (entry["tx"] ?? entry) as Record<string, unknown>;
+        const tx = (entry["tx"] ?? entry["transaction"] ?? entry) as Record<string, unknown>;
         const hash = String(tx["hash"] ?? "");
         if (!hash || seen.has(hash)) return false;
         seen.add(hash);
         return true;
-      }).slice(0, limit);
+      });
 
-      const total = result["ledger_index_max"] ? rawTxs.length : unique.length;
+      const total = Number(result["ledger_index_max"] ?? unique.length);
 
       const transactions = unique.map((entry) => {
-        const tx = (entry["tx"] ?? entry) as Record<string, unknown>;
-        const meta = entry["meta"] as Record<string, unknown> | undefined;
+        const tx = (entry["tx"] ?? entry["transaction"] ?? entry) as Record<string, unknown>;
+        const meta = (entry["meta"] ?? entry["metadata"]) as Record<string, unknown> | undefined;
         const deliveredAmt = String(meta?.["delivered_amount"] ?? tx["Amount"] ?? "0");
         const value = /^\d+$/.test(deliveredAmt) ? dropToXrp(deliveredAmt) : "0.000000";
         const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
         const from = String(tx["Account"] ?? "");
         const to = String(tx["Destination"] ?? "");
-        // Case-sensitive comparison — XRP addresses must not be lowercased
         const isOut = from === address;
         const isSelf = from === address && to === address;
         const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
@@ -328,7 +372,55 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         };
       });
 
-      res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit }));
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit, nextCursor, hasMore }));
+      return;
+    }
+
+    if (chain === "dag") {
+      const searchAfter = cursorParam ?? "";
+      const url = `/addresses/${address}/transactions?limit=${limit}${searchAfter ? `&search_after=${encodeURIComponent(searchAfter)}` : ""}`;
+      const data = await dagFetch(url);
+      const rawTxs = (data["data"] as Array<Record<string, unknown>>) ?? [];
+
+      // Deduplicate by hash
+      const seen = new Set<string>();
+      const unique = rawTxs.filter((tx) => {
+        const hash = String(tx["hash"] ?? "");
+        if (!hash || seen.has(hash)) return false;
+        seen.add(hash);
+        return true;
+      });
+
+      // Cursor = last transaction hash for next page
+      const nextCursor = unique.length >= limit ? String(unique[unique.length - 1]?.["hash"] ?? "") || null : null;
+      const hasMore = nextCursor !== null;
+
+      const transactions = unique.map((tx) => {
+        const amountDatum = Number(tx["amount"] ?? 0);
+        const feeDatum = Number(tx["fee"] ?? 0);
+        const value = datumToDag(amountDatum);
+        const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
+        const fee = datumToDag(feeDatum);
+        const from = String(tx["source"] ?? "");
+        const to = String(tx["destination"] ?? "");
+        const isOut = from === address;
+        const isSelf = from === address && to === address;
+        const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
+        const rawTs = tx["timestamp"];
+        const timestamp = rawTs ? new Date(String(rawTs)).toISOString() : new Date().toISOString();
+        return {
+          hash: String(tx["hash"] ?? ""),
+          from, to: to || null, value, valueUsd, fee,
+          feeUsd: parseFloat((parseFloat(fee) * priceUsd).toFixed(4)),
+          timestamp,
+          blockNumber: Number(tx["snapshotOrdinal"] ?? 0),
+          status: "success" as const,
+          direction,
+          tokenSymbol: "DAG", tokenName: null,
+        };
+      });
+
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total: transactions.length, page, limit, nextCursor, hasMore }));
       return;
     }
 
@@ -365,7 +457,9 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         };
       });
 
-      res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit }));
+      const btcHasMore = paginated.length === limit;
+      const nextCursor = btcHasMore ? String(page + 1) : null;
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit, nextCursor, hasMore: btcHasMore }));
       return;
     }
 
@@ -408,7 +502,9 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         };
       });
 
-      res.json(GetWalletTransactionsResponse.parse({ transactions, total: totalFromApi, page, limit }));
+      const csHasMore = transactions.length >= limit;
+      const csNextCursor = csHasMore ? String(page + 1) : null;
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total: totalFromApi, page, limit, nextCursor: csNextCursor, hasMore: csHasMore }));
       return;
     }
 
@@ -439,8 +535,10 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       };
     });
 
-    const total = transactions.length < limit ? (page - 1) * limit + transactions.length : page * limit + 1;
-    res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit }));
+    const evmHasMore = rawTxs.length >= limit;
+    const evmNextCursor = evmHasMore ? String(page + 1) : null;
+    const total = evmHasMore ? page * limit + 1 : (page - 1) * limit + transactions.length;
+    res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit, nextCursor: evmNextCursor, hasMore: evmHasMore }));
   } catch (err) {
     req.log.error({ err }, "Failed to fetch transactions");
     res.status(500).json({ error: "fetch_error", message: "Could not retrieve transactions" });
@@ -537,6 +635,30 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
       const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, txs.length)));
+      return;
+    }
+
+    if (chain === "dag") {
+      const data = await dagFetch(`/addresses/${address}/transactions?limit=30`);
+      const rawTxs = (data["data"] as Array<Record<string, unknown>>) ?? [];
+      const peerSet = new Set<string>();
+      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+
+      for (const tx of rawTxs) {
+        const fromAddr = String(tx["source"] ?? "");
+        const toAddr = String(tx["destination"] ?? "");
+        if (!fromAddr || !toAddr) continue;
+        peerSet.add(fromAddr); peerSet.add(toAddr);
+        const val = Number(tx["amount"] ?? 0) / 1e8;
+        const ts = tx["timestamp"] ? new Date(String(tx["timestamp"])).toISOString() : new Date().toISOString();
+        const key = `${fromAddr}:${toAddr}`;
+        const ex = edgeMap.get(key);
+        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = ts; }
+        else edgeMap.set(key, { totalValue: val.toFixed(8), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
+      }
+
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
       return;
     }
 

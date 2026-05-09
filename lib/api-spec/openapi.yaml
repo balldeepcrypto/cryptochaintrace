@@ -89,7 +89,13 @@ paths:
           required: false
           schema:
             type: integer
-            default: 20
+            default: 100
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+            description: Pagination cursor from previous response (XRP marker JSON or page number)
       responses:
         "200":
           description: Transaction list
@@ -300,11 +306,20 @@ components:
           type: integer
         limit:
           type: integer
+        nextCursor:
+          type: string
+          nullable: true
+          description: Cursor token for next page; null when no more pages exist
+        hasMore:
+          type: boolean
+          description: True if additional pages of results are available
       required:
         - transactions
         - total
         - page
         - limit
+        - nextCursor
+        - hasMore
 
     WalletNode:
       type: object

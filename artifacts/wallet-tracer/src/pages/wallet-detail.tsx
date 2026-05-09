@@ -13,7 +13,7 @@ import {
   ArrowLeftRight, ArrowDownLeft, ArrowUpRight,
   Network, GitFork, FileCode, Tag, ShieldAlert, ShieldCheck, Shield,
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
-  AlertTriangle, X, Zap,
+  AlertTriangle, X, Zap, Bookmark, BookmarkCheck,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -73,32 +73,74 @@ interface TrailEntry {
   childAddresses: string[];
 }
 
-// ─── Grouped counterparty row type ───────────────────────────────────────────
-interface GroupedCounterparty {
-  address: string;
-  inCount: number;
-  outCount: number;
-  inValue: number;
-  outValue: number;
-  latestTs: string;
-  txCount: number;
+// ─── Transaction type (from API) ──────────────────────────────────────────────
+interface Tx {
+  hash: string;
+  from: string;
+  to: string | null;
+  value: string;
+  valueUsd: number;
+  fee: string;
+  feeUsd: number;
+  timestamp: string;
+  blockNumber: number;
+  status: "success" | "failed" | "pending";
+  direction: "in" | "out" | "self";
+  tokenSymbol: string | null;
+  tokenName: string | null;
 }
+
+// ─── Grouped by (address + direction) ─────────────────────────────────────────
+interface GroupedRow {
+  address: string;
+  direction: "in" | "out";
+  totalValue: number;
+  txCount: number;
+  latestTs: string;
+  asset: string;
+}
+
+const LOAD_LIMIT = 100;
 
 export default function WalletDetail() {
   const params = useParams();
   const [, setLocation] = useLocation();
   const address = params.address || "";
-  const chain = new URLSearchParams(window.location.search).get("chain") || "ethereum";
-  const [page, setPage] = useState(1);
-  const limit = 50;
+  type ChainId = "ethereum" | "bitcoin" | "polygon" | "bsc" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
+  const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
 
-  // Ledger view toggles
+  // ── Ledger view toggle ──
   const [groupByCounterparty, setGroupByCounterparty] = useState(false);
 
-  // Counterparty context menu
+  // ── Accumulated transaction state ──
+  const [allTxs, setAllTxs] = useState<Tx[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [loadingAll, setLoadingAll] = useState(false);
+
+  // ── Saved wallets (localStorage) ──
+  const [savedWallets, setSavedWallets] = useState<Set<string>>(() => {
+    try {
+      const raw = localStorage.getItem("chaintrace-saved-wallets");
+      return raw ? new Set<string>(JSON.parse(raw) as string[]) : new Set<string>();
+    } catch { return new Set<string>(); }
+  });
+
+  const toggleSavedWallet = useCallback((addr: string) => {
+    setSavedWallets((prev) => {
+      const next = new Set(prev);
+      if (next.has(addr)) next.delete(addr);
+      else next.add(addr);
+      try { localStorage.setItem("chaintrace-saved-wallets", JSON.stringify([...next])); } catch { /* noop */ }
+      return next;
+    });
+  }, []);
+
+  // ── Counterparty context menu ──
   const [activeMenu, setActiveMenu] = useState<{ addr: string; x: number; y: number } | null>(null);
 
-  // Trail trace
+  // ── Trail trace ──
   const [showTrailPanel, setShowTrailPanel] = useState(false);
   const [trailEntries, setTrailEntries] = useState<TrailEntry[]>([]);
   const fetchingRef = useRef(new Set<string>());
@@ -111,55 +153,115 @@ export default function WalletDetail() {
     return () => window.removeEventListener("click", handler);
   }, []);
 
+  // ── Reset accumulated state on address/chain change ──
+  useEffect(() => {
+    setAllTxs([]);
+    setNextCursor(null);
+    setHasMore(false);
+  }, [address, chain]);
+
   const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(
     address, { chain },
     { query: { enabled: !!address, queryKey: getGetWalletQueryKey(address, { chain }) } }
   );
 
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
-    address, { chain, page, limit },
-    { query: { enabled: !!address, queryKey: getGetWalletTransactionsQueryKey(address, { chain, page, limit }) } }
+    address, { chain, page: 1, limit: LOAD_LIMIT },
+    { query: { enabled: !!address, queryKey: getGetWalletTransactionsQueryKey(address, { chain, page: 1, limit: LOAD_LIMIT }) } }
   );
 
-  // ── Dedup by hash ──
-  const deduplicatedTxs = useMemo(() => {
-    if (!transactionsData?.transactions) return [];
+  // ── Sync initial React Query data into local accumulated state ──
+  useEffect(() => {
+    if (!transactionsData?.transactions) return;
     const seen = new Set<string>();
-    return transactionsData.transactions.filter((tx) => {
+    const deduped = transactionsData.transactions.filter((tx) => {
       const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
     });
+    setAllTxs(deduped as Tx[]);
+    setNextCursor(transactionsData.nextCursor ?? null);
+    setHasMore(transactionsData.hasMore ?? false);
   }, [transactionsData]);
 
-  // ── Group by counterparty ──
-  const groupedRows = useMemo((): GroupedCounterparty[] => {
-    const map = new Map<string, GroupedCounterparty>();
-    for (const tx of deduplicatedTxs) {
+  // ── Load More (one page) ──
+  const loadMore = useCallback(async () => {
+    if (!nextCursor || loadingMore || loadingAll) return;
+    setLoadingMore(true);
+    try {
+      const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(nextCursor)}`;
+      const resp = await fetch(url);
+      const data = await resp.json() as { transactions: Tx[]; nextCursor: string | null; hasMore: boolean };
+      const existingKeys = new Set(allTxs.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+      const newTxs = (data.transactions || []).filter((tx) => {
+        const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
+        return !existingKeys.has(key);
+      });
+      setAllTxs((prev) => [...prev, ...newTxs]);
+      setNextCursor(data.nextCursor ?? null);
+      setHasMore(data.hasMore ?? false);
+    } catch { /* silently fail */ } finally {
+      setLoadingMore(false);
+    }
+  }, [nextCursor, loadingMore, loadingAll, allTxs, address, chain]);
+
+  // ── Load All (loop until no more pages, cap at 2000) ──
+  const loadAll = useCallback(async () => {
+    if (!hasMore || loadingAll || loadingMore) return;
+    setLoadingAll(true);
+    let cursor = nextCursor;
+    let accumulated = [...allTxs];
+    const MAX_TXS = 2000;
+    try {
+      while (cursor && accumulated.length < MAX_TXS) {
+        const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${LOAD_LIMIT}&cursor=${encodeURIComponent(cursor)}`;
+        const resp = await fetch(url);
+        const data = await resp.json() as { transactions: Tx[]; nextCursor: string | null; hasMore: boolean };
+        const existingKeys = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
+        const newTxs = (data.transactions || []).filter((tx) => {
+          const key = tx.hash || `${tx.from}:${tx.to}:${tx.timestamp}`;
+          return !existingKeys.has(key);
+        });
+        accumulated = [...accumulated, ...newTxs];
+        cursor = data.nextCursor ?? null;
+        if (!cursor || !data.hasMore) break;
+      }
+      setAllTxs(accumulated);
+      setNextCursor(cursor);
+      setHasMore(cursor !== null && accumulated.length < MAX_TXS);
+    } catch { /* silently fail */ } finally {
+      setLoadingAll(false);
+    }
+  }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, address, chain]);
+
+  // ── Group by (address + direction) ──
+  const groupedRows = useMemo((): GroupedRow[] => {
+    const map = new Map<string, GroupedRow>();
+    for (const tx of allTxs) {
+      if (tx.direction === "self") continue;
       const cp = tx.direction === "in" ? tx.from : tx.to;
       if (!cp) continue;
+      const key = `${cp}:${tx.direction}`;
       const val = parseFloat(tx.value) || 0;
-      const existing = map.get(cp);
+      const existing = map.get(key);
       if (existing) {
         existing.txCount++;
-        if (tx.direction === "in") { existing.inCount++; existing.inValue += val; }
-        else { existing.outCount++; existing.outValue += val; }
+        existing.totalValue += val;
         if (tx.timestamp && tx.timestamp > existing.latestTs) existing.latestTs = tx.timestamp;
       } else {
-        map.set(cp, {
+        map.set(key, {
           address: cp,
-          inCount: tx.direction === "in" ? 1 : 0,
-          outCount: tx.direction === "out" ? 1 : 0,
-          inValue: tx.direction === "in" ? val : 0,
-          outValue: tx.direction === "out" ? val : 0,
-          latestTs: tx.timestamp || "",
+          direction: tx.direction as "in" | "out",
+          totalValue: val,
           txCount: 1,
+          latestTs: tx.timestamp || "",
+          asset: tx.tokenSymbol || chain.toUpperCase(),
         });
       }
     }
     return Array.from(map.values()).sort((a, b) => b.txCount - a.txCount);
-  }, [deduplicatedTxs]);
+  }, [allTxs, chain]);
 
   // ── Commingling detection ──
   const comminglingAddresses = useMemo(() => {
@@ -176,15 +278,13 @@ export default function WalletDetail() {
     );
   }, [trailEntries]);
 
-  // ── Trail trace fetch ──
+  // ── Trail trace ──
   const expandTrailNode = useCallback(async (entry: TrailEntry) => {
     if (fetchingRef.current.has(entry.address) || entry.depth >= 5) return;
     fetchingRef.current.add(entry.address);
-
     setTrailEntries((prev) =>
       prev.map((e) => e.address === entry.address ? { ...e, isLoading: true } : e)
     );
-
     try {
       const resp = await fetch(`/api/wallets/${encodeURIComponent(entry.address)}/connections?chain=${chain}`);
       if (!resp.ok) throw new Error("fetch failed");
@@ -195,7 +295,6 @@ export default function WalletDetail() {
       };
       const peers = (data.nodes || []).filter((n) => n.address !== entry.address).slice(0, 12);
       const edges = data.edges || [];
-
       setTrailEntries((prev) => {
         const existingAddrs = new Set(prev.map((e) => e.address));
         const updated = prev.map((e) =>
@@ -212,14 +311,10 @@ export default function WalletDetail() {
                 (ed.to === entry.address && ed.from === peer.address)
             );
             newEntries.push({
-              address: peer.address,
-              depth: entry.depth + 1,
-              parentAddress: entry.address,
+              address: peer.address, depth: entry.depth + 1, parentAddress: entry.address,
               knownInfo: KNOWN_LABELS[peer.address],
-              isExpanded: false,
-              isLoading: false,
-              totalValueUsd: edge?.totalValueUsd ?? 0,
-              txCount: edge?.transactionCount ?? 0,
+              isExpanded: false, isLoading: false,
+              totalValueUsd: edge?.totalValueUsd ?? 0, txCount: edge?.transactionCount ?? 0,
               childAddresses: [],
             });
           }
@@ -245,7 +340,6 @@ export default function WalletDetail() {
       totalValueUsd: 0, txCount: 0, childAddresses: [],
     };
     setTrailEntries([rootEntry]);
-
     try {
       const resp = await fetch(`/api/wallets/${encodeURIComponent(targetAddr)}/connections?chain=${chain}`);
       if (!resp.ok) throw new Error("fetch failed");
@@ -270,8 +364,7 @@ export default function WalletDetail() {
           address: peer.address, depth: 1, parentAddress: targetAddr,
           knownInfo: KNOWN_LABELS[peer.address],
           isExpanded: false, isLoading: false,
-          totalValueUsd: edge?.totalValueUsd ?? 0,
-          txCount: edge?.transactionCount ?? 0,
+          totalValueUsd: edge?.totalValueUsd ?? 0, txCount: edge?.transactionCount ?? 0,
           childAddresses: [],
         };
       });
@@ -279,7 +372,6 @@ export default function WalletDetail() {
     } catch {
       setTrailEntries([{ ...rootEntry, isLoading: false, error: true }]);
     }
-
     setTimeout(() => {
       trailPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     }, 300);
@@ -323,6 +415,7 @@ export default function WalletDetail() {
         : <span className="text-muted-foreground text-xs">—</span>;
     }
     const known = KNOWN_LABELS[addr];
+    const saved = savedWallets.has(addr);
     const explorerAddrUrl = WALLET_EXPLORER_MAP[chain];
     return (
       <div className="flex items-center gap-1.5 flex-wrap">
@@ -338,6 +431,7 @@ export default function WalletDetail() {
           {addr.length > 14 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr}
         </button>
         {known && getKnownBadge(known)}
+        {saved && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
         {explorerAddrUrl && (
           <a
             href={explorerAddrUrl(addr)}
@@ -370,19 +464,22 @@ export default function WalletDetail() {
     );
   }
 
+  const inCount = allTxs.filter((t) => t.direction === "in").length;
+  const outCount = allTxs.filter((t) => t.direction === "out").length;
+
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6" onClick={() => setActiveMenu(null)}>
 
       {/* ── Counterparty context menu ── */}
       {activeMenu && (
         <div
-          className="fixed z-50 bg-card border border-border/60 rounded-lg shadow-xl shadow-black/40 overflow-hidden min-w-[200px]"
-          style={{ top: Math.min(activeMenu.y, window.innerHeight - 120), left: Math.min(activeMenu.x, window.innerWidth - 220) }}
+          className="fixed z-50 bg-card border border-border/60 rounded-lg shadow-xl shadow-black/40 overflow-hidden min-w-[220px]"
+          style={{ top: Math.min(activeMenu.y, window.innerHeight - 160), left: Math.min(activeMenu.x, window.innerWidth - 240) }}
           onClick={(e) => e.stopPropagation()}
         >
           <div className="px-3 py-2 border-b border-border/40 bg-muted/20">
             <p className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Counterparty</p>
-            <p className="text-xs font-mono text-primary truncate max-w-[180px]">{activeMenu.addr}</p>
+            <p className="text-xs font-mono text-primary truncate max-w-[200px]">{activeMenu.addr}</p>
           </div>
           <div className="p-1">
             <button
@@ -397,12 +494,25 @@ export default function WalletDetail() {
             >
               <GitFork className="w-3 h-3" /> Continue Trail on this Wallet
             </button>
+            <button
+              onClick={() => { toggleSavedWallet(activeMenu.addr); setActiveMenu(null); }}
+              className={`w-full text-left px-3 py-2 text-xs font-mono rounded-md transition-colors flex items-center gap-2 ${
+                savedWallets.has(activeMenu.addr)
+                  ? "text-yellow-400 hover:bg-yellow-950/30"
+                  : "text-muted-foreground hover:bg-muted/40"
+              }`}
+            >
+              {savedWallets.has(activeMenu.addr)
+                ? <><BookmarkCheck className="w-3 h-3" /> Remove from Saved</>
+                : <><Bookmark className="w-3 h-3" /> Save / Add to Trail Wallet</>
+              }
+            </button>
             <a
               href={WALLET_EXPLORER_MAP[chain]?.(activeMenu.addr) ?? "#"}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => setActiveMenu(null)}
-              className="w-full text-left px-3 py-2 text-xs font-mono text-muted-foreground hover:bg-muted/40 rounded-md transition-colors flex items-center gap-2"
+              className="w-full text-left px-3 py-2 text-xs font-mono text-muted-foreground hover:bg-muted/40 rounded-md transition-colors flex items-center gap-2 block"
             >
               <ExternalLink className="w-3 h-3" /> Open in Explorer
             </a>
@@ -427,6 +537,11 @@ export default function WalletDetail() {
               </span>
             ))}
             {KNOWN_LABELS[address] && getKnownBadge(KNOWN_LABELS[address])}
+            {savedWallets.has(address) && (
+              <span className="flex items-center gap-1 px-2 py-0.5 bg-yellow-950/50 text-yellow-400 text-xs font-mono rounded border border-yellow-500/20">
+                <Bookmark className="w-3 h-3 fill-yellow-400" /> SAVED
+              </span>
+            )}
           </div>
           <div className="font-mono text-sm text-foreground break-all bg-muted/20 px-3 py-2 rounded border border-border/40">
             <AddressDisplay address={address} truncate={false} showIcon />
@@ -477,10 +592,11 @@ export default function WalletDetail() {
           <div className="flex items-center justify-between flex-wrap gap-3">
             <div>
               <CardTitle className="text-sm font-mono uppercase tracking-widest text-foreground">Transaction Ledger</CardTitle>
-              <p className="text-xs text-muted-foreground font-mono mt-1">Deduplicated by tx hash</p>
+              <p className="text-xs text-muted-foreground font-mono mt-1">
+                {allTxs.length} loaded{hasMore ? ` · more available` : " · complete"}
+              </p>
             </div>
             <div className="flex items-center gap-3">
-              {/* Group by Counterparty toggle */}
               <button
                 onClick={() => setGroupByCounterparty((v) => !v)}
                 className={`flex items-center gap-1.5 text-xs font-mono px-3 py-1.5 rounded border transition-colors ${
@@ -495,12 +611,12 @@ export default function WalletDetail() {
               <div className="text-right">
                 <div className="text-xs font-mono text-muted-foreground">
                   {txLoading ? "LOADING..." : groupByCounterparty
-                    ? `${groupedRows.length} COUNTERPARTIES`
-                    : `${deduplicatedTxs.length} TXS${transactionsData?.total && transactionsData.total > deduplicatedTxs.length ? ` / ${transactionsData.total} TOTAL` : ""}`}
+                    ? `${groupedRows.length} COUNTERPARTY ROWS`
+                    : `${allTxs.length} TXS`}
                 </div>
                 <div className="flex gap-3 mt-0.5 text-xs font-mono justify-end">
-                  <span className="text-green-400">↓ {deduplicatedTxs.filter((t) => t.direction === "in").length} IN</span>
-                  <span className="text-red-400">↑ {deduplicatedTxs.filter((t) => t.direction === "out").length} OUT</span>
+                  <span className="text-green-400">↓ {inCount} IN</span>
+                  <span className="text-red-400">↑ {outCount} OUT</span>
                 </div>
               </div>
             </div>
@@ -509,15 +625,15 @@ export default function WalletDetail() {
 
         <div className="overflow-x-auto">
           {groupByCounterparty ? (
-            /* ── GROUPED VIEW ── */
+            /* ── GROUPED BY (address + direction) VIEW ── */
             <table className="w-full text-left border-collapse">
               <thead>
                 <tr className="border-b border-border/40 text-xs font-mono text-muted-foreground bg-muted/10">
+                  <th className="px-5 py-3 font-normal w-20">DIR</th>
                   <th className="px-5 py-3 font-normal">COUNTERPARTY</th>
                   <th className="px-5 py-3 font-normal text-center">TXS</th>
-                  <th className="px-5 py-3 font-normal text-center">DIR</th>
-                  <th className="px-5 py-3 font-normal text-right">TOTAL IN</th>
-                  <th className="px-5 py-3 font-normal text-right">TOTAL OUT</th>
+                  <th className="px-5 py-3 font-normal text-right">TOTAL AMOUNT</th>
+                  <th className="px-5 py-3 font-normal text-right">ASSET</th>
                   <th className="px-5 py-3 font-normal text-right">LAST SEEN</th>
                   <th className="px-5 py-3 font-normal"></th>
                 </tr>
@@ -530,11 +646,18 @@ export default function WalletDetail() {
                 ) : groupedRows.length === 0 ? (
                   <tr><td colSpan={7} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">NO TRANSACTIONS FOUND</td></tr>
                 ) : (
-                  groupedRows.map((row) => {
+                  groupedRows.map((row, idx) => {
                     const known = KNOWN_LABELS[row.address];
-                    const dir = row.inCount > 0 && row.outCount > 0 ? "mixed" : row.inCount > 0 ? "in" : "out";
+                    const saved = savedWallets.has(row.address);
                     return (
-                      <tr key={row.address} className="hover:bg-muted/10 transition-colors text-sm font-mono">
+                      <tr key={`${row.address}:${row.direction}:${idx}`} className="hover:bg-muted/10 transition-colors text-sm font-mono">
+                        <td className="px-5 py-3">
+                          {row.direction === "in" ? (
+                            <span className="inline-flex items-center gap-1 text-green-400 bg-green-950/40 border border-green-500/20 px-2 py-0.5 rounded text-xs"><ArrowDownLeft className="w-3 h-3" /> IN</span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-red-400 bg-red-950/40 border border-red-500/20 px-2 py-0.5 rounded text-xs"><ArrowUpRight className="w-3 h-3" /> OUT</span>
+                          )}
+                        </td>
                         <td className="px-5 py-3">
                           <div className="flex items-center gap-2 flex-wrap">
                             <button
@@ -548,24 +671,23 @@ export default function WalletDetail() {
                               {row.address.length > 16 ? `${row.address.slice(0, 10)}…${row.address.slice(-4)}` : row.address}
                             </button>
                             {known && getKnownBadge(known)}
+                            {saved && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                            <a
+                              href={WALLET_EXPLORER_MAP[chain]?.(row.address) ?? "#"}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              onClick={(e) => e.stopPropagation()}
+                              className="text-muted-foreground hover:text-primary transition-colors"
+                            >
+                              <ExternalLink className="w-2.5 h-2.5" />
+                            </a>
                           </div>
                         </td>
                         <td className="px-5 py-3 text-center text-muted-foreground">{row.txCount}</td>
-                        <td className="px-5 py-3 text-center">
-                          {dir === "in" ? (
-                            <span className="inline-flex items-center gap-1 text-green-400 bg-green-950/40 border border-green-500/20 px-2 py-0.5 rounded text-xs"><ArrowDownLeft className="w-3 h-3" /> IN</span>
-                          ) : dir === "out" ? (
-                            <span className="inline-flex items-center gap-1 text-red-400 bg-red-950/40 border border-red-500/20 px-2 py-0.5 rounded text-xs"><ArrowUpRight className="w-3 h-3" /> OUT</span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 text-yellow-400 bg-yellow-950/40 border border-yellow-500/20 px-2 py-0.5 rounded text-xs"><ArrowLeftRight className="w-3 h-3" /> BOTH</span>
-                          )}
+                        <td className={`px-5 py-3 text-right text-xs ${row.direction === "in" ? "text-green-400" : "text-red-400"}`}>
+                          {row.direction === "in" ? "+" : "−"}{row.totalValue.toFixed(4)}
                         </td>
-                        <td className="px-5 py-3 text-right text-green-400 text-xs">
-                          {row.inCount > 0 ? `+${row.inValue.toFixed(4)} (${row.inCount}×)` : "—"}
-                        </td>
-                        <td className="px-5 py-3 text-right text-red-400 text-xs">
-                          {row.outCount > 0 ? `−${row.outValue.toFixed(4)} (${row.outCount}×)` : "—"}
-                        </td>
+                        <td className="px-5 py-3 text-right text-muted-foreground text-xs uppercase">{row.asset}</td>
                         <td className="px-5 py-3 text-right text-muted-foreground text-xs">
                           {row.latestTs ? new Date(row.latestTs).toLocaleDateString() : "—"}
                         </td>
@@ -601,10 +723,10 @@ export default function WalletDetail() {
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i}><td colSpan={6} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
                   ))
-                ) : deduplicatedTxs.length === 0 ? (
+                ) : allTxs.length === 0 ? (
                   <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground font-mono text-sm">NO TRANSACTIONS FOUND</td></tr>
                 ) : (
-                  deduplicatedTxs.map((tx, idx) => {
+                  allTxs.map((tx, idx) => {
                     const counterparty = tx.direction === "in" ? tx.from : tx.to;
                     const isIn = tx.direction === "in";
                     const isOut = tx.direction === "out";
@@ -665,14 +787,37 @@ export default function WalletDetail() {
           )}
         </div>
 
-        {/* Pagination (only in individual view) */}
-        {!groupByCounterparty && transactionsData && transactionsData.total > limit && (
-          <div className="px-5 py-3 border-t border-border/40 flex items-center justify-between bg-muted/5">
-            <Button variant="outline" size="sm" className="font-mono text-xs" disabled={page === 1}
-              onClick={() => setPage((p) => Math.max(1, p - 1))}>PREV</Button>
-            <span className="text-xs font-mono text-muted-foreground">PAGE {page} · {deduplicatedTxs.length} RECORDS</span>
-            <Button variant="outline" size="sm" className="font-mono text-xs" disabled={page * limit >= transactionsData.total}
-              onClick={() => setPage((p) => p + 1)}>NEXT</Button>
+        {/* ── Load More / Load All ── */}
+        {hasMore && !txLoading && (
+          <div className="px-5 py-4 border-t border-border/40 bg-muted/5 flex items-center justify-between gap-4">
+            <span className="text-xs font-mono text-muted-foreground">
+              {allTxs.length} transactions loaded · more available
+            </span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                className="font-mono text-xs"
+                disabled={loadingMore || loadingAll}
+                onClick={loadMore}
+              >
+                {loadingMore ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</> : "LOAD MORE"}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="font-mono text-xs border-primary/30 text-primary hover:bg-primary/10"
+                disabled={loadingMore || loadingAll}
+                onClick={loadAll}
+              >
+                {loadingAll ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING ALL…</> : "LOAD ALL HISTORY"}
+              </Button>
+            </div>
+          </div>
+        )}
+        {!hasMore && allTxs.length > 0 && !txLoading && (
+          <div className="px-5 py-3 border-t border-border/40 text-center text-xs font-mono text-muted-foreground/60">
+            FULL HISTORY LOADED · {allTxs.length} TRANSACTIONS
           </div>
         )}
       </Card>
@@ -701,7 +846,6 @@ export default function WalletDetail() {
                 <X className="w-4 h-4" />
               </button>
             </div>
-            {/* Legend */}
             <div className="flex items-center gap-4 mt-3 text-[10px] font-mono text-muted-foreground">
               <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-primary inline-block" /> Target</span>
               <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block" /> Exchange</span>
@@ -734,15 +878,10 @@ export default function WalletDetail() {
                   className={`flex items-center gap-2 px-3 py-2 rounded text-xs font-mono transition-colors ${rowBg}`}
                   style={{ paddingLeft: `${12 + entry.depth * 20}px` }}
                 >
-                  {/* Tree connector */}
                   {entry.depth > 0 && (
                     <span className="text-border/60 shrink-0">{"└─"}</span>
                   )}
-
-                  {/* Status dot */}
                   <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor} ${entry.isLoading ? "animate-pulse" : ""}`} />
-
-                  {/* Address */}
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -753,37 +892,22 @@ export default function WalletDetail() {
                   >
                     {entry.address.length > 20 ? `${entry.address.slice(0, 10)}…${entry.address.slice(-6)}` : entry.address}
                   </button>
-
-                  {/* Known label */}
                   {entry.knownInfo && getKnownBadge(entry.knownInfo)}
-
-                  {/* Commingling warning */}
+                  {savedWallets.has(entry.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
                   {isCommingling && (
                     <span className="flex items-center gap-1 text-yellow-400 bg-yellow-950/40 px-1.5 py-0.5 rounded border border-yellow-500/20">
                       <AlertTriangle className="w-2.5 h-2.5" /> COMMINGLING
                     </span>
                   )}
-
-                  {/* Depth badge */}
                   <span className="text-muted-foreground/60 shrink-0">D{entry.depth}</span>
-
-                  {/* Value */}
                   {entry.totalValueUsd > 0 && (
                     <span className="text-muted-foreground shrink-0">${entry.totalValueUsd.toFixed(0)}</span>
                   )}
-
-                  {/* Tx count */}
                   {entry.txCount > 0 && (
                     <span className="text-muted-foreground/60 shrink-0">{entry.txCount} tx</span>
                   )}
-
-                  {/* Error state */}
                   {entry.error && <span className="text-red-400 text-[10px]">FETCH FAILED</span>}
-
-                  {/* Loading */}
                   {entry.isLoading && <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />}
-
-                  {/* Expand button */}
                   {!entry.isLoading && !entry.isExpanded && !entry.error && entry.depth < 5 && (
                     <button
                       onClick={(e) => { e.stopPropagation(); expandTrailNode(entry); }}

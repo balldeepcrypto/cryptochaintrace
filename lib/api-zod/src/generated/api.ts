@@ -61,7 +61,7 @@ export const GetWalletTransactionsParams = zod.object({
 
 export const getWalletTransactionsQueryChainDefault = `ethereum`;
 export const getWalletTransactionsQueryPageDefault = 1;
-export const getWalletTransactionsQueryLimitDefault = 20;
+export const getWalletTransactionsQueryLimitDefault = 100;
 
 export const GetWalletTransactionsQueryParams = zod.object({
   chain: zod
@@ -79,6 +79,7 @@ export const GetWalletTransactionsQueryParams = zod.object({
     .default(getWalletTransactionsQueryChainDefault),
   page: zod.coerce.number().default(getWalletTransactionsQueryPageDefault),
   limit: zod.coerce.number().default(getWalletTransactionsQueryLimitDefault),
+  cursor: zod.coerce.string().optional(),
 });
 
 export const GetWalletTransactionsResponse = zod.object({
@@ -102,6 +103,13 @@ export const GetWalletTransactionsResponse = zod.object({
   total: zod.number(),
   page: zod.number(),
   limit: zod.number(),
+  nextCursor: zod
+    .string()
+    .nullable()
+    .describe("Cursor token for next page; null when no more pages exist"),
+  hasMore: zod
+    .boolean()
+    .describe("True if additional pages of results are available"),
 });
 
 /**

@@ -112,6 +112,10 @@ export default function WalletDetail() {
   // ── Ledger view toggle ──
   const [groupByCounterparty, setGroupByCounterparty] = useState(false);
 
+  // ── Minimum amount filter ──
+  const [minAmount, setMinAmount] = useState(1.0);
+  const [minAmountInput, setMinAmountInput] = useState("1");
+
   // ── Accumulated transaction state ──
   const [allTxs, setAllTxs] = useState<Tx[]>([]);
   const [nextCursor, setNextCursor] = useState<string | null>(null);
@@ -158,6 +162,8 @@ export default function WalletDetail() {
     setAllTxs([]);
     setNextCursor(null);
     setHasMore(false);
+    setMinAmount(1.0);
+    setMinAmountInput("1");
   }, [address, chain]);
 
   const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(
@@ -235,10 +241,16 @@ export default function WalletDetail() {
     }
   }, [hasMore, loadingAll, loadingMore, nextCursor, allTxs, address, chain]);
 
+  // ── Apply minimum amount filter ──
+  const filteredTxs = useMemo(() => {
+    if (minAmount <= 0) return allTxs;
+    return allTxs.filter((tx) => parseFloat(tx.value) >= minAmount);
+  }, [allTxs, minAmount]);
+
   // ── Group by (address + direction) ──
   const groupedRows = useMemo((): GroupedRow[] => {
     const map = new Map<string, GroupedRow>();
-    for (const tx of allTxs) {
+    for (const tx of filteredTxs) {
       if (tx.direction === "self") continue;
       const cp = tx.direction === "in" ? tx.from : tx.to;
       if (!cp) continue;
@@ -464,8 +476,8 @@ export default function WalletDetail() {
     );
   }
 
-  const inCount = allTxs.filter((t) => t.direction === "in").length;
-  const outCount = allTxs.filter((t) => t.direction === "out").length;
+  const inCount = filteredTxs.filter((t) => t.direction === "in").length;
+  const outCount = filteredTxs.filter((t) => t.direction === "out").length;
 
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6" onClick={() => setActiveMenu(null)}>
@@ -596,7 +608,30 @@ export default function WalletDetail() {
                 {allTxs.length} loaded{hasMore ? ` · more available` : " · complete"}
               </p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* ── Minimum Amount Filter ── */}
+              <div className="flex items-center gap-1.5 bg-muted/20 border border-border/40 rounded px-2 py-1">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider whitespace-nowrap">
+                  Min Amount
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="any"
+                  value={minAmountInput}
+                  onChange={(e) => {
+                    const raw = e.target.value;
+                    setMinAmountInput(raw);
+                    const parsed = parseFloat(raw);
+                    if (!isNaN(parsed) && parsed >= 0) setMinAmount(parsed);
+                    else if (raw === "" || raw === "0") setMinAmount(0);
+                  }}
+                  className="w-16 bg-transparent text-xs font-mono text-foreground outline-none text-right [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  placeholder="1"
+                />
+                <span className="text-[10px] font-mono text-muted-foreground/60 uppercase">{chain}</span>
+              </div>
+
               <button
                 onClick={() => setGroupByCounterparty((v) => !v)}
                 className={`flex items-center gap-1.5 text-xs font-mono px-3 py-1.5 rounded border transition-colors ${
@@ -612,7 +647,7 @@ export default function WalletDetail() {
                 <div className="text-xs font-mono text-muted-foreground">
                   {txLoading ? "LOADING..." : groupByCounterparty
                     ? `${groupedRows.length} COUNTERPARTY ROWS`
-                    : `${allTxs.length} TXS`}
+                    : `${filteredTxs.length} TXS`}
                 </div>
                 <div className="flex gap-3 mt-0.5 text-xs font-mono justify-end">
                   <span className="text-green-400">↓ {inCount} IN</span>
@@ -644,7 +679,9 @@ export default function WalletDetail() {
                     <tr key={i}><td colSpan={7} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
                   ))
                 ) : groupedRows.length === 0 ? (
-                  <tr><td colSpan={7} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">NO TRANSACTIONS FOUND</td></tr>
+                  <tr><td colSpan={7} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">
+                    {allTxs.length > 0 ? `ALL ${allTxs.length} TXS BELOW MIN AMOUNT (${minAmount} ${chain.toUpperCase()})` : "NO TRANSACTIONS FOUND"}
+                  </td></tr>
                 ) : (
                   groupedRows.map((row, idx) => {
                     const known = KNOWN_LABELS[row.address];
@@ -723,10 +760,12 @@ export default function WalletDetail() {
                   Array.from({ length: 8 }).map((_, i) => (
                     <tr key={i}><td colSpan={6} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
                   ))
-                ) : allTxs.length === 0 ? (
-                  <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground font-mono text-sm">NO TRANSACTIONS FOUND</td></tr>
+                ) : filteredTxs.length === 0 ? (
+                  <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground font-mono text-sm">
+                    {allTxs.length > 0 ? `ALL ${allTxs.length} TXS BELOW MIN AMOUNT (${minAmount} ${chain.toUpperCase()})` : "NO TRANSACTIONS FOUND"}
+                  </td></tr>
                 ) : (
-                  allTxs.map((tx, idx) => {
+                  filteredTxs.map((tx, idx) => {
                     const counterparty = tx.direction === "in" ? tx.from : tx.to;
                     const isIn = tx.direction === "in";
                     const isOut = tx.direction === "out";

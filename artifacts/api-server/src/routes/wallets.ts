@@ -37,7 +37,7 @@ const COIN_ID_MAP: Record<string, string> = {
 };
 
 // XRP uses XRPL JSON-RPC; DAG uses Constellation Network API; others use CoinStats
-const COINSTATS_CHAINS = ["xlm", "hbar", "xdc"];
+const COINSTATS_CHAINS = ["hbar", "xdc"];
 const DAG_API = "https://be-mainnet.constellationnetwork.io";
 
 function weiToEth(wei: string): string {
@@ -190,6 +190,53 @@ function datumToDag(datum: number | string): string {
   return (Number(datum) / 1e8).toFixed(8);
 }
 
+// ── Stellar Horizon API (cursor-based via paging_token) ───────────────────
+async function stellarFetch(path: string): Promise<Record<string, unknown>> {
+  const resp = await fetchWithTimeout(`https://horizon.stellar.org${path}`, {
+    headers: { accept: "application/json" },
+  }, 12000);
+  if (!resp.ok) throw new Error(`Stellar Horizon request failed: ${resp.status}`);
+  return resp.json() as Promise<Record<string, unknown>>;
+}
+
+function parseStellarPayment(
+  rec: Record<string, unknown>,
+  address: string,
+  priceUsd: number,
+): {
+  hash: string; from: string; to: string | null; value: string; valueUsd: number;
+  fee: string; feeUsd: number; timestamp: string; blockNumber: number;
+  status: "success" | "failed"; direction: "in" | "out" | "self";
+  tokenSymbol: string; tokenName: null;
+} {
+  const type = String(rec["type"] ?? "payment");
+  let from: string;
+  let to: string | null;
+  let rawAmount: string;
+  if (type === "create_account") {
+    from = String(rec["funder"] ?? "");
+    to = String(rec["account"] ?? "") || null;
+    rawAmount = String(rec["starting_balance"] ?? "0");
+  } else {
+    from = String(rec["from"] ?? "");
+    to = String(rec["to"] ?? "") || null;
+    rawAmount = String(rec["amount"] ?? "0");
+  }
+  const value = parseFloat(rawAmount).toFixed(6);
+  const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
+  const isOut = from === address;
+  const isSelf = from === address && (to === null || to === address);
+  const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
+  return {
+    hash: String(rec["transaction_hash"] ?? ""),
+    from, to, value, valueUsd,
+    fee: "0.000001", feeUsd: parseFloat((0.000001 * priceUsd).toFixed(6)),
+    timestamp: String(rec["created_at"] ?? new Date().toISOString()),
+    blockNumber: 0, status: "success" as const,
+    direction, tokenSymbol: "XLM", tokenName: null,
+  };
+}
+
 // ─── GET /wallets/:address ─────────────────────────────────────────────────
 
 router.get("/wallets/:address", async (req, res): Promise<void> => {
@@ -275,6 +322,35 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       const firstSeen = dagTxArr.length > 0 ? String(dagTxArr[dagTxArr.length - 1]["timestamp"] ?? "") || null : null;
       const lastSeen = dagTxArr.length > 0 ? String(dagTxArr[0]["timestamp"] ?? "") || null : null;
       const txCount = dagTxArr.length;
+      const tags = guessTags(false, txCount);
+      res.json(GetWalletResponse.parse({
+        address, chain, balance, balanceUsd, transactionCount: txCount,
+        firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
+      }));
+      return;
+    }
+
+    if (chain === "xlm") {
+      const [acctResult, lastPayResult, firstPayResult] = await Promise.allSettled([
+        stellarFetch(`/accounts/${address}`),
+        stellarFetch(`/accounts/${address}/payments?limit=1&order=desc`),
+        stellarFetch(`/accounts/${address}/payments?limit=1&order=asc`),
+      ]);
+      const acct = acctResult.status === "fulfilled" ? acctResult.value : {};
+      const balances = (acct["balances"] as Array<Record<string, unknown>>) ?? [];
+      const nativeBal = balances.find((b) => b["asset_type"] === "native");
+      const balance = parseFloat(String(nativeBal?.["balance"] ?? "0")).toFixed(6);
+      const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
+      const lastPayRecs = lastPayResult.status === "fulfilled"
+        ? ((lastPayResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
+        : [];
+      const firstPayRecs = firstPayResult.status === "fulfilled"
+        ? ((firstPayResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
+        : [];
+      const lastSeen = lastPayRecs[0]?.["created_at"] ? String(lastPayRecs[0]["created_at"]) : null;
+      const firstSeen = firstPayRecs[0]?.["created_at"] ? String(firstPayRecs[0]["created_at"]) : null;
+      const subentryCount = Number(acct["subentry_count"] ?? 0);
+      const txCount = Math.max(subentryCount, lastPayRecs.length);
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -501,6 +577,20 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       return;
     }
 
+    if (chain === "xlm") {
+      // Stellar Horizon payments endpoint — cursor = paging_token of last record, 200 per page
+      const stellarLimit = Math.min(limit, 200);
+      const path = `/accounts/${address}/payments?limit=${stellarLimit}&order=desc${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
+      const data = await stellarFetch(path);
+      const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+      const transactions = records.map((rec) => parseStellarPayment(rec, address, priceUsd));
+      const hasMore = records.length === stellarLimit;
+      const lastRec = records[records.length - 1];
+      const nextCursor = hasMore && lastRec ? String(lastRec["paging_token"] ?? "") : null;
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total: transactions.length, page, limit: stellarLimit, nextCursor, hasMore }));
+      return;
+    }
+
     if (COINSTATS_CHAINS.includes(chain)) {
       const connectionId = COIN_ID_MAP[chain] ?? chain;
       const data = await coinstatsFetch(
@@ -689,6 +779,26 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
       const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
+      return;
+    }
+
+    if (chain === "xlm") {
+      const data = await stellarFetch(`/accounts/${address}/payments?limit=30&order=desc`);
+      const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+      const peerSet = new Set<string>();
+      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+      for (const rec of records) {
+        const parsed = parseStellarPayment(rec, address, priceUsd);
+        if (!parsed.from || !parsed.to) continue;
+        peerSet.add(parsed.from); peerSet.add(parsed.to);
+        const val = parseFloat(parsed.value);
+        const key = `${parsed.from}:${parsed.to}`;
+        const ex = edgeMap.get(key);
+        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = parsed.timestamp; }
+        else edgeMap.set(key, { totalValue: parsed.value, totalValueUsd: val * priceUsd, count: 1, lastSeen: parsed.timestamp });
+      }
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, records.length)));
       return;
     }
 

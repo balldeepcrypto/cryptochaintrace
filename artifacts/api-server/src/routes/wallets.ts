@@ -36,8 +36,8 @@ const COIN_ID_MAP: Record<string, string> = {
   dag: "constellation-labs",
 };
 
-// XRP uses XRPL JSON-RPC; DAG uses Constellation Network API; XDC uses its own RPC+BlocksScan; others use CoinStats
-const COINSTATS_CHAINS = ["hbar"];
+// XRP uses XRPL JSON-RPC; DAG uses Constellation Network API; XDC uses its own RPC+BlocksScan; HBAR uses Hedera Mirror Node
+const COINSTATS_CHAINS: string[] = [];
 const DAG_API = "https://be-mainnet.constellationnetwork.io";
 
 function weiToEth(wei: string): string {
@@ -202,6 +202,40 @@ const XDC_RPC_ENDPOINTS = [
 ];
 const XDC_BLOCKSSCAN = "https://api.xdcscan.io/api";
 
+// ── Hedera (HBAR) Mirror Node ─────────────────────────────────────────────────
+const HBAR_MIRROR = "https://mainnet-public.mirrornode.hedera.com";
+
+async function hbarFetch(path: string): Promise<Record<string, unknown>> {
+  const resp = await fetchWithTimeout(`${HBAR_MIRROR}${path}`, {
+    headers: { Accept: "application/json" },
+  }, 8000);
+  if (!resp.ok) throw new Error(`HBAR mirror ${resp.status}: ${path}`);
+  return resp.json() as Promise<Record<string, unknown>>;
+}
+
+/** Extract net HBAR amount (tinybars) for a given account from a transfer list */
+function hbarNetAmount(transfers: Record<string, unknown>[], accountId: string): number {
+  return transfers.reduce((sum, tr) => {
+    if (String(tr["account"]) === accountId) return sum + Number(tr["amount"] ?? 0);
+    return sum;
+  }, 0);
+}
+
+/** Find the primary counterparty (not our address, not system accounts) */
+function hbarCounterparty(transfers: Record<string, unknown>[], accountId: string, isOutgoing: boolean): string {
+  const SYSTEM = new Set(["0.0.98", "0.0.800", "0.0.801", "0.0.802"]);
+  const others = transfers.filter(
+    (tr) => String(tr["account"]) !== accountId && !SYSTEM.has(String(tr["account"]))
+  );
+  if (isOutgoing) {
+    const recipient = others.find((tr) => Number(tr["amount"]) > 0);
+    return String(recipient?.["account"] ?? "");
+  }
+  const sender = others.find((tr) => Number(tr["amount"]) < 0);
+  return String(sender?.["account"] ?? "");
+}
+
+// ── XDC ───────────────────────────────────────────────────────────────────────
 function normalizeXdcAddress(addr: string): string {
   return addr.startsWith("xdc") ? "0x" + addr.slice(3) : addr;
 }
@@ -511,6 +545,44 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
         address, chain, balance, balanceUsd, transactionCount: txCount,
         firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
       }));
+      return;
+    }
+
+    if (chain === "hbar") {
+      try {
+        const acctData = await hbarFetch(`/api/v1/accounts/${address}`);
+        const tinybars = Number((acctData["balance"] as Record<string, unknown>)?.["balance"] ?? 0);
+        const balance = (tinybars / 1e8).toFixed(6);
+        const balanceUsd = parseFloat((tinybars / 1e8 * priceUsd).toFixed(2));
+        const createdTs = String(acctData["created_timestamp"] ?? "0").split(".")[0];
+        let firstSeen: string | null = null;
+        let lastSeen: string | null = null;
+        let txCount = 0;
+        if (createdTs !== "0") {
+          try {
+            const txData = await hbarFetch(
+              `/api/v1/transactions?account.id=${address}&order=asc&timestamp=gte:${createdTs}&limit=100`
+            );
+            const txsArr = (txData["transactions"] as Record<string, unknown>[]) ?? [];
+            txCount = txsArr.length;
+            if (txCount >= 100) txCount = 101;
+            if (txsArr.length > 0) {
+              firstSeen = new Date(Number(String(txsArr[0]["consensus_timestamp"]).split(".")[0]) * 1000).toISOString();
+              lastSeen = new Date(Number(String(txsArr[txsArr.length - 1]["consensus_timestamp"]).split(".")[0]) * 1000).toISOString();
+            }
+          } catch { /* no tx data available */ }
+        }
+        const tags = guessTags(false, txCount);
+        res.json(GetWalletResponse.parse({
+          address, chain, balance, balanceUsd, transactionCount: txCount,
+          firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
+        }));
+      } catch {
+        res.json(GetWalletResponse.parse({
+          address, chain, balance: "0.000000", balanceUsd: 0, transactionCount: 0,
+          firstSeen: null, lastSeen: null, tags: [], riskScore: null, isContract: false,
+        }));
+      }
       return;
     }
 
@@ -845,6 +917,78 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       return;
     }
 
+    if (chain === "hbar") {
+      try {
+        // Get account created_ts as the earliest anchor for asc queries
+        // (Mirror Node order=desc is broken for all accounts; only asc+gte works)
+        let createdTs = "0";
+        try {
+          const acctData = await hbarFetch(`/api/v1/accounts/${address}`);
+          createdTs = String(acctData["created_timestamp"] ?? "0").split(".")[0];
+        } catch { createdTs = "0"; }
+
+        // cursorParam = base64url of mirror node's links.next path (for subsequent pages)
+        // page 1 uses account created_ts anchor; page 2+ follows mirror cursor
+        let mirrorPath: string;
+        if (cursorParam) {
+          mirrorPath = Buffer.from(cursorParam, "base64url").toString("utf8");
+        } else {
+          const anchor = createdTs !== "0" ? createdTs : "0";
+          mirrorPath = `/api/v1/transactions?account.id=${address}&order=asc&timestamp=gte:${anchor}&limit=${limit}`;
+        }
+
+        const txData = await hbarFetch(mirrorPath);
+        const rawTxs = (txData["transactions"] as Record<string, unknown>[]) ?? [];
+        const mirrorLinks = txData["links"] as Record<string, unknown> | undefined;
+        const mirrorNext = mirrorLinks?.["next"] as string | null | undefined;
+
+        // Reverse so newest (last in asc sequence) is shown first
+        const reversed = [...rawTxs].reverse();
+
+        const transactions = reversed.map((tx) => {
+          const ts = Number(String(tx["consensus_timestamp"] ?? "0").split(".")[0]);
+          const transfers = (tx["transfers"] as Record<string, unknown>[]) ?? [];
+          const net = hbarNetAmount(transfers, address);
+          const isOutgoing = net < 0;
+          const isSelf = net === 0;
+          const direction = (isSelf ? "self" : isOutgoing ? "out" : "in") as "in" | "out" | "self";
+          const counterparty = hbarCounterparty(transfers, address, isOutgoing);
+          const from = isOutgoing ? address : counterparty || address;
+          const to = isOutgoing ? counterparty || "" : address;
+          const absNetHbar = Math.abs(net) / 1e8;
+          const feeTinybars = Number(tx["charged_tx_fee"] ?? 0);
+          const value = absNetHbar.toFixed(6);
+          const valueUsd = parseFloat((absNetHbar * priceUsd).toFixed(2));
+          const fee = (feeTinybars / 1e8).toFixed(6);
+          const feeUsd = parseFloat(((feeTinybars / 1e8) * priceUsd).toFixed(2));
+          const txId = String(tx["transaction_id"] ?? tx["consensus_timestamp"] ?? "");
+          const result = String(tx["result"] ?? "SUCCESS");
+          return {
+            hash: txId,
+            from, to: to || null, value, valueUsd, fee, feeUsd,
+            timestamp: new Date(ts * 1000).toISOString(),
+            blockNumber: 0,
+            status: result === "SUCCESS" ? ("success" as const) : ("failed" as const),
+            direction, tokenSymbol: null, tokenName: null,
+          };
+        });
+
+        const hasMore = rawTxs.length >= limit && !!mirrorNext;
+        const nextCursorVal = hasMore && mirrorNext
+          ? Buffer.from(mirrorNext, "utf8").toString("base64url")
+          : null;
+
+        res.json(GetWalletTransactionsResponse.parse({
+          transactions,
+          total: (page - 1) * limit + transactions.length + (hasMore ? 1 : 0),
+          page, limit, nextCursor: nextCursorVal, hasMore,
+        }));
+      } catch {
+        res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit, nextCursor: null, hasMore: false }));
+      }
+      return;
+    }
+
     if (COINSTATS_CHAINS.includes(chain)) {
       const connectionId = COIN_ID_MAP[chain] ?? chain;
       const data = await coinstatsFetch(
@@ -1107,6 +1251,41 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       }
       const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, 10);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, rpcAddr.toLowerCase(), txData.length)));
+      return;
+    }
+
+    if (chain === "hbar") {
+      try {
+        // Fetch recent txs for connection graph
+        const acctData = await hbarFetch(`/api/v1/accounts/${address}`);
+        const createdTs = String(acctData["created_timestamp"] ?? "0").split(".")[0];
+        const txData = await hbarFetch(
+          `/api/v1/transactions?account.id=${address}&order=asc&timestamp=gte:${createdTs}&limit=50`
+        );
+        const rawTxs = (txData["transactions"] as Record<string, unknown>[]) ?? [];
+        const peerSet = new Set<string>();
+        const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+        for (const tx of rawTxs) {
+          const transfers = (tx["transfers"] as Record<string, unknown>[]) ?? [];
+          const net = hbarNetAmount(transfers, address);
+          const isOutgoing = net < 0;
+          const counterparty = hbarCounterparty(transfers, address, isOutgoing);
+          if (!counterparty) continue;
+          peerSet.add(counterparty);
+          const absHbar = Math.abs(net) / 1e8;
+          const ts = new Date(Number(String(tx["consensus_timestamp"] ?? "0").split(".")[0]) * 1000).toISOString();
+          const from = isOutgoing ? address : counterparty;
+          const to = isOutgoing ? counterparty : address;
+          const key = `${from}:${to}`;
+          const ex = edgeMap.get(key);
+          if (ex) { ex.totalValueUsd += absHbar * priceUsd; ex.count += 1; ex.lastSeen = ts; }
+          else edgeMap.set(key, { totalValue: absHbar.toFixed(6), totalValueUsd: absHbar * priceUsd, count: 1, lastSeen: ts });
+        }
+        const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+        res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
+      } catch {
+        res.json(GetWalletConnectionsResponse.parse(buildGraph([], new Map(), address, 0)));
+      }
       return;
     }
 

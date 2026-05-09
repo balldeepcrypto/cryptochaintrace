@@ -315,7 +315,7 @@ const MAX_TOTAL = 25000;
 export default function WalletDetail() {
   const params = useParams();
   const [, setLocation] = useLocation();
-  const address = params.address || "";
+  const address = (params.address || "").trim();
   type ChainId = "ethereum" | "bitcoin" | "polygon" | "bsc" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
   const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
 

@@ -34,11 +34,12 @@ export default function Home() {
     e.preventDefault();
     if (!address.trim()) return;
 
+    const trimmedAddress = address.trim();
     saveSearch.mutate(
-      { data: { address, chain } },
+      { data: { address: trimmedAddress, chain } },
       {
         onSuccess: () => {
-          setLocation(`/wallet/${address}?chain=${chain}`);
+          setLocation(`/wallet/${trimmedAddress}?chain=${chain}`);
         },
       }
     );

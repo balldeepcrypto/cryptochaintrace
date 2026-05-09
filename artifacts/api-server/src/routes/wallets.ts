@@ -85,18 +85,33 @@ async function etherscanFetch(params: Record<string, string>, chain: string): Pr
 }
 
 async function btcFetch(address: string): Promise<Record<string, unknown>> {
-  const resp = await fetch(`https://blockchain.info/rawaddr/${address}?limit=50`);
+  const resp = await fetchWithTimeout(`https://blockchain.info/rawaddr/${address}?limit=50`, {}, 8000);
   if (!resp.ok) throw new Error(`Blockchain.info request failed: ${resp.status}`);
   return resp.json() as Promise<Record<string, unknown>>;
 }
 
+// Fetch with a hard timeout (ms)
+async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8000): Promise<Response> {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // XRPL cluster JSON-RPC — publicly accessible on port 443
 async function xrplRpc(method: string, params: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const resp = await fetch("https://xrplcluster.com/", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ method, params: [params] }),
-  });
+  const resp = await fetchWithTimeout(
+    "https://xrplcluster.com/",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ method, params: [params] }),
+    },
+    8000,
+  );
   if (!resp.ok) throw new Error(`XRPL cluster request failed: ${resp.status}`);
   const data = await resp.json() as Record<string, unknown>;
   const result = data["result"] as Record<string, unknown>;
@@ -471,14 +486,14 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
   try {
     if (chain === "xrp") {
-      const result = await xrplRpc("account_tx", { account: address, limit: 50, forward: false });
+      const result = await xrplRpc("account_tx", { account: address, limit: 20, forward: false });
       const rawTxs = (result["transactions"] as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
 
       for (const entry of rawTxs) {
-        const tx = (entry["tx"] ?? entry) as Record<string, unknown>;
-        const meta = entry["meta"] as Record<string, unknown> | undefined;
+        const tx = (entry["tx"] ?? entry["transaction"] ?? entry) as Record<string, unknown>;
+        const meta = (entry["meta"] ?? entry["metadata"]) as Record<string, unknown> | undefined;
         const from = String(tx["Account"] ?? "");
         const to = String(tx["Destination"] ?? "");
         if (!from || !to) continue;

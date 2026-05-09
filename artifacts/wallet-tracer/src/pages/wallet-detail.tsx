@@ -322,7 +322,7 @@ export default function WalletDetail() {
       while (cursor && accumulated.length < MAX_TOTAL) {
         pageNum++;
         page.current.status = `Loading page ${pageNum} · ${accumulated.length.toLocaleString()} loaded so far…`;
-        setAllTxs([...accumulated]); // live update between pages
+        setAllTxs([...accumulated].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())); // live sorted update
 
         const data = await fetchPage(cursor, limit);
         const seen = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));
@@ -374,7 +374,9 @@ export default function WalletDetail() {
         });
       }
     }
-    return Array.from(map.values()).sort((a, b) => b.txCount - a.txCount);
+    return Array.from(map.values()).sort(
+      (a, b) => new Date(b.latestTs).getTime() - new Date(a.latestTs).getTime()
+    );
   }, [allTxs, chain]);
 
   // ── Commingling detection ──

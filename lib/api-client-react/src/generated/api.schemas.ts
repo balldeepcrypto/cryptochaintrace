@@ -59,6 +59,10 @@ export interface Transaction {
   direction: TransactionDirection;
   tokenSymbol: string | null;
   tokenName: string | null;
+  /** Optional memo, note, or message attached to the transaction */
+  memo?: string | null;
+  /** XRP destination tag or chain-specific routing identifier */
+  destinationTag?: number | null;
 }
 
 export interface TransactionList {

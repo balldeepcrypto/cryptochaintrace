@@ -98,6 +98,16 @@ export const GetWalletTransactionsResponse = zod.object({
       direction: zod.enum(["in", "out", "self"]),
       tokenSymbol: zod.string().nullable(),
       tokenName: zod.string().nullable(),
+      memo: zod
+        .string()
+        .nullish()
+        .describe(
+          "Optional memo, note, or message attached to the transaction",
+        ),
+      destinationTag: zod
+        .number()
+        .nullish()
+        .describe("XRP destination tag or chain-specific routing identifier"),
     }),
   ),
   total: zod.number(),

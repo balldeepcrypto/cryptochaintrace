@@ -359,6 +359,16 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           : new Date().toISOString();
         const feeDrops = String(tx["Fee"] ?? "0");
         const fee = dropToXrp(feeDrops);
+        // Extract destination tag
+        const destinationTag = typeof tx["DestinationTag"] === "number" ? (tx["DestinationTag"] as number) : null;
+        // Extract and decode hex memos
+        const rawMemos = (tx["Memos"] as Array<{ Memo?: { MemoData?: string } }> | undefined) ?? [];
+        const memoTexts = rawMemos.flatMap((m) => {
+          const hex = m?.Memo?.MemoData;
+          if (!hex) return [];
+          try { const t = Buffer.from(hex, "hex").toString("utf8").trim(); return t ? [t] : []; } catch { return []; }
+        });
+        const memo = memoTexts.length > 0 ? memoTexts.join("; ") : null;
         return {
           hash: String(tx["hash"] ?? ""),
           from, to: to || null, value, valueUsd, fee,
@@ -368,7 +378,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           status: ((meta?.["TransactionResult"] as string | undefined) === "tesSUCCESS"
             ? "success" : "failed") as "success" | "failed",
           direction,
-          tokenSymbol: "XRP", tokenName: null,
+          tokenSymbol: "XRP", tokenName: null, memo, destinationTag,
         };
       });
 

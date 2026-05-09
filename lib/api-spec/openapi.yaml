@@ -278,6 +278,14 @@ components:
         tokenName:
           type: string
           nullable: true
+        memo:
+          type: string
+          nullable: true
+          description: Optional memo, note, or message attached to the transaction
+        destinationTag:
+          type: integer
+          nullable: true
+          description: XRP destination tag or chain-specific routing identifier
       required:
         - hash
         - from

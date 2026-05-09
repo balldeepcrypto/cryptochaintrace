@@ -13,26 +13,51 @@ import {
   ArrowLeftRight, ArrowDownLeft, ArrowUpRight,
   Network, GitFork, FileCode, Tag, ShieldAlert, ShieldCheck, Shield,
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
-  AlertTriangle, X, Zap, Bookmark, BookmarkCheck,
+  AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Heart, MessageSquare,
 } from "lucide-react";
 import { Link } from "wouter";
 
 // ─── Known entity labels ──────────────────────────────────────────────────────
 const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" }> = {
+  // XRP
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis", type: "genesis" },
   rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: { label: "Bitstamp Hot", type: "exchange" },
   rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: { label: "Bitfinex", type: "exchange" },
-  r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.", type: "exchange" },
+  r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.", type: "genesis" },
   rBndiPPKs9k5rjBb7HsEiqXKVZ9MMhGmhM: { label: "Kraken XRP", type: "exchange" },
   rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: { label: "Binance XRP", type: "exchange" },
+  rrpNnNLKrartuEqfJGpqyDwPj1BBN1ybNn: { label: "Binance XRP 2", type: "exchange" },
+  rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy: { label: "Huobi XRP", type: "exchange" },
+  r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59: { label: "Ripple Cold 1", type: "genesis" },
+  rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: { label: "Coinbase XRP", type: "exchange" },
+  rKmBGxocj9Abgy25J51Mk1iqFzW9aVF9Tc: { label: "Kraken XRP 2", type: "exchange" },
+  rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy: { label: "OKX XRP", type: "exchange" },
+  // Ethereum / EVM
   "0x28c6c06298d514db089934071355e5743bf21d60": { label: "Binance Hot", type: "exchange" },
   "0x21a31ee1afc51d94c2efccaa2092ad1028285549": { label: "Binance Cold", type: "exchange" },
   "0xdfd5293d8e347dfe59e90efd55b2956a1343963d": { label: "Binance 2", type: "exchange" },
-  "0xa9d1e08c7793af67e9d92fe308d5697fb81d3e43": { label: "Coinbase", type: "exchange" },
+  "0xa9d1e08c7793af67e9d92fe308d5697fb81d3e43": { label: "Coinbase Hot", type: "exchange" },
   "0xbe0eb53f46cd790cd13851d5eff43d12404d33e8": { label: "Binance Cold 3", type: "exchange" },
+  "0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be": { label: "Binance Legacy", type: "exchange" },
+  "0x71660c4005ba85c37ccec55d0c4493e66fe775d3": { label: "Coinbase 2", type: "exchange" },
+  "0x503828976d22510aad0201ac7ec88293211d23da": { label: "Coinbase 3", type: "exchange" },
+  "0xd688aea8f7d450909adeb20364e860db13647ed7": { label: "Coinbase 4", type: "exchange" },
+  "0x267be1c1d684f78cb4f6a176c4911b741e4ffdc0": { label: "Kraken ETH", type: "exchange" },
+  "0x0681d8db095565fe8a346fa0277bffde9c0edbbf": { label: "OKX Hot", type: "exchange" },
+  "0x6cc5f688a315f3dc28a7781717a9a798a59fda7b": { label: "OKX 2", type: "exchange" },
+  "0x2910543af39aba0cd09dbb2d50200b3e800a63d2": { label: "Kraken 2", type: "exchange" },
+  "0x0a869d79a7052c7f1b55a8ebabbea3420f0d1e13": { label: "Kraken 3", type: "exchange" },
+  "0xe93381fb4c4f14bda253907b18fad305d799241a": { label: "Huobi 1", type: "exchange" },
+  "0x46705dfff24256421a05d056c29e81bdc09723b8": { label: "Huobi 2", type: "exchange" },
+  "0xab5c66752a9e8167967685f1450532fb96d5d24f": { label: "Huobi 3", type: "exchange" },
+  // Bitcoin
   "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s": { label: "Binance BTC", type: "exchange" },
   "3E35SFZkfLMGo4qX5aVs1iBnpEiFLSZmBP": { label: "Kraken BTC", type: "exchange" },
   "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h": { label: "Coinbase BTC", type: "exchange" },
+  "3Kzh9qAqVWQhEsfQz7zEQL1EuSx5tyNLNS": { label: "Bitstamp BTC", type: "exchange" },
+  "1LQoWist8KkaUXSPKZHNvEyfrEkPHzSsCd": { label: "Huobi BTC Cold", type: "exchange" },
+  "1HckjUpRGcrrRAtFaaCAUaGjsPx9oYmLaZ": { label: "OKX BTC", type: "exchange" },
+  "3QW95MafXv9SqkXxhpKBgqXCgVzugdwsGt": { label: "Bybit BTC", type: "exchange" },
 };
 
 const EXPLORER_MAP: Record<string, (h: string) => string> = {
@@ -88,6 +113,8 @@ interface Tx {
   direction: "in" | "out" | "self";
   tokenSymbol: string | null;
   tokenName: string | null;
+  memo?: string | null;
+  destinationTag?: number | null;
 }
 
 // ─── Grouped by (address + direction) ─────────────────────────────────────────
@@ -100,7 +127,7 @@ interface GroupedRow {
   asset: string;
 }
 
-const LOAD_LIMIT = 100;
+const LOAD_LIMIT = 500;
 
 export default function WalletDetail() {
   const params = useParams();
@@ -110,7 +137,7 @@ export default function WalletDetail() {
   const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
 
   // ── Ledger view toggle ──
-  const [groupByCounterparty, setGroupByCounterparty] = useState(false);
+  const [groupByCounterparty, setGroupByCounterparty] = useState(true);
 
   // ── Minimum amount filter ──
   const [minAmount, setMinAmount] = useState(1.0);
@@ -559,7 +586,21 @@ export default function WalletDetail() {
             <AddressDisplay address={address} truncate={false} showIcon />
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          <Button
+            variant="outline"
+            className={`font-mono text-xs ${
+              savedWallets.has(address)
+                ? "border-yellow-500/50 text-yellow-400 hover:bg-yellow-950/30 bg-yellow-950/20"
+                : "border-border/40 text-muted-foreground hover:border-yellow-500/50 hover:text-yellow-400"
+            }`}
+            onClick={() => toggleSavedWallet(address)}
+          >
+            {savedWallets.has(address)
+              ? <><BookmarkCheck className="w-3.5 h-3.5 mr-1.5" /> WATCHLISTED</>
+              : <><Bookmark className="w-3.5 h-3.5 mr-1.5" /> ADD TO WATCHLIST</>
+            }
+          </Button>
           <Link href={`/trace/${address}?chain=${chain}`}>
             <Button variant="outline" className="font-mono border-primary/30 text-primary hover:bg-primary/10 text-xs">
               <Network className="w-3.5 h-3.5 mr-1.5" /> TRACE GRAPH
@@ -729,12 +770,25 @@ export default function WalletDetail() {
                           {row.latestTs ? new Date(row.latestTs).toLocaleDateString() : "—"}
                         </td>
                         <td className="px-5 py-3 text-right">
-                          <button
-                            onClick={() => continueTrailOnWallet(row.address)}
-                            className="text-[10px] font-mono text-primary/70 hover:text-primary border border-primary/20 hover:border-primary/50 px-2 py-0.5 rounded transition-colors whitespace-nowrap"
-                          >
-                            TRAIL →
-                          </button>
+                          <div className="flex items-center gap-1.5 justify-end">
+                            <button
+                              onClick={(e) => { e.stopPropagation(); toggleSavedWallet(row.address); }}
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap ${
+                                savedWallets.has(row.address)
+                                  ? "text-yellow-400 border-yellow-500/40 bg-yellow-950/20 hover:bg-yellow-950/40"
+                                  : "text-muted-foreground border-border/30 hover:text-yellow-400 hover:border-yellow-500/40"
+                              }`}
+                              title={savedWallets.has(row.address) ? "Remove from watchlist" : "Add to watchlist"}
+                            >
+                              {savedWallets.has(row.address) ? <BookmarkCheck className="w-3 h-3" /> : <Bookmark className="w-3 h-3" />}
+                            </button>
+                            <button
+                              onClick={() => continueTrailOnWallet(row.address)}
+                              className="text-[10px] font-mono text-primary/70 hover:text-primary border border-primary/20 hover:border-primary/50 px-2 py-0.5 rounded transition-colors whitespace-nowrap"
+                            >
+                              TRAIL →
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -801,6 +855,21 @@ export default function WalletDetail() {
                               )}
                             </div>
                           ) : <span className="text-muted-foreground text-xs">—</span>}
+                          {tx.destinationTag != null && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <span className="text-[10px] font-mono text-cyan-400 bg-cyan-950/40 border border-cyan-500/20 px-1.5 py-0.5 rounded">
+                                TAG: {tx.destinationTag}
+                              </span>
+                            </div>
+                          )}
+                          {tx.memo && (
+                            <div className="flex items-center gap-1 mt-0.5">
+                              <MessageSquare className="w-2.5 h-2.5 text-muted-foreground/60 shrink-0" />
+                              <span className="text-[10px] font-mono text-muted-foreground/80 truncate max-w-[120px]" title={tx.memo}>
+                                {tx.memo}
+                              </span>
+                            </div>
+                          )}
                         </td>
                         <td className="px-5 py-3 text-muted-foreground text-xs">
                           {tx.timestamp ? new Date(tx.timestamp).toLocaleString(undefined, {
@@ -840,7 +909,7 @@ export default function WalletDetail() {
                 disabled={loadingMore || loadingAll}
                 onClick={loadMore}
               >
-                {loadingMore ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</> : "LOAD MORE"}
+                {loadingMore ? <><Loader2 className="w-3 h-3 mr-1.5 animate-spin" /> LOADING…</> : `LOAD +${LOAD_LIMIT} TRANSACTIONS`}
               </Button>
               <Button
                 variant="outline"
@@ -974,6 +1043,44 @@ export default function WalletDetail() {
           </div>
         </Card>
       )}
+      {/* ── Support / Donate ── */}
+      <Card className="bg-card/40 border-border/20">
+        <CardHeader className="pb-3 px-5 pt-5">
+          <div className="flex items-center gap-2">
+            <Heart className="w-4 h-4 text-pink-400" />
+            <CardTitle className="text-sm font-mono uppercase tracking-widest text-foreground">
+              Support This Free Tool
+            </CardTitle>
+            <span className="text-xs font-mono text-muted-foreground">No fees · No ads · No data selling</span>
+          </div>
+          <p className="text-xs text-muted-foreground font-mono mt-1 leading-relaxed">
+            ChainTrace is maintained independently. If it helped your investigation, a small donation keeps the servers running.
+          </p>
+        </CardHeader>
+        <CardContent className="px-5 pb-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+            {([
+              { chain: "ETH / EVM", symbol: "ETH", address: "YOUR_ETH_ADDRESS_HERE", color: "text-blue-400", bg: "bg-blue-950/20 border-blue-500/20" },
+              { chain: "Bitcoin", symbol: "BTC", address: "YOUR_BTC_ADDRESS_HERE", color: "text-orange-400", bg: "bg-orange-950/20 border-orange-500/20" },
+              { chain: "XRP", symbol: "XRP", address: "YOUR_XRP_ADDRESS_HERE", color: "text-cyan-400", bg: "bg-cyan-950/20 border-cyan-500/20" },
+              { chain: "DAG", symbol: "DAG", address: "YOUR_DAG_ADDRESS_HERE", color: "text-purple-400", bg: "bg-purple-950/20 border-purple-500/20" },
+            ] as { chain: string; symbol: string; address: string; color: string; bg: string }[]).map((d) => (
+              <div key={d.symbol} className={`flex items-center gap-2 px-3 py-2.5 rounded border ${d.bg} group`}>
+                <span className={`text-[10px] font-mono font-bold ${d.color} shrink-0 w-14 uppercase`}>{d.symbol}</span>
+                <code className="text-[10px] font-mono text-muted-foreground/80 truncate flex-1 min-w-0">{d.address}</code>
+                <button
+                  onClick={() => { void navigator.clipboard.writeText(d.address); }}
+                  className="shrink-0 text-muted-foreground/40 hover:text-muted-foreground transition-colors opacity-0 group-hover:opacity-100"
+                  title={`Copy ${d.symbol} address`}
+                >
+                  <Copy className="w-3 h-3" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
     </div>
   );
 }

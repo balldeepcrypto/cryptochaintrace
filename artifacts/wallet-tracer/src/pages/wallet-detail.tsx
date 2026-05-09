@@ -206,6 +206,7 @@ export default function WalletDetail() {
   // ── Trail trace ──
   const [showTrailPanel, setShowTrailPanel] = useState(false);
   const [trailEntries, setTrailEntries] = useState<TrailEntry[]>([]);
+  const [showNodeTree, setShowNodeTree] = useState(true);
   const fetchingRef = useRef(new Set<string>());
   const trailPanelRef = useRef<HTMLDivElement>(null);
 
@@ -408,6 +409,88 @@ export default function WalletDetail() {
         .map(([addr]) => addr)
     );
   }, [trailEntries]);
+
+  // ── Intersection / Commingling Analysis ──
+  // Computes all 3 sections purely from data already in memory — no extra API calls.
+  const intersectionData = useMemo(() => {
+    if (!showTrailPanel || trailEntries.length === 0) return null;
+    const rootAddr = trailEntries[0].address;
+
+    // Build per-counterparty stats from loaded transactions
+    const cpMap = new Map<string, {
+      txCount: number; totalValue: number;
+      firstTs: string; lastTs: string;
+      sampleHash: string; sampleDate: string;
+    }>();
+    for (const tx of allTxs) {
+      const cp = tx.direction === "in" ? tx.from : (tx.to ?? null);
+      if (!cp || cp === rootAddr) continue;
+      const v = parseFloat(tx.value) || 0;
+      const ex = cpMap.get(cp);
+      if (ex) {
+        ex.txCount++;
+        ex.totalValue += v;
+        if (tx.timestamp && tx.timestamp < ex.firstTs) ex.firstTs = tx.timestamp;
+        if (tx.timestamp && tx.timestamp > ex.lastTs) {
+          ex.lastTs = tx.timestamp;
+          ex.sampleHash = tx.hash || ex.sampleHash;
+          ex.sampleDate = tx.timestamp;
+        }
+      } else {
+        cpMap.set(cp, {
+          txCount: 1, totalValue: v,
+          firstTs: tx.timestamp || "", lastTs: tx.timestamp || "",
+          sampleHash: tx.hash || "", sampleDate: tx.timestamp || "",
+        });
+      }
+    }
+
+    // § 1 — Direct Intersections: trail nodes whose address also appears in allTxs
+    const trailNodes = trailEntries.filter((e) => e.depth > 0);
+    const directIntersections = trailNodes
+      .filter((e) => cpMap.has(e.address))
+      .map((e) => ({ ...e, cp: cpMap.get(e.address)! }))
+      .sort((a, b) => b.cp.totalValue - a.cp.totalValue);
+    const intersectionAddrs = new Set(directIntersections.map((d) => d.address));
+
+    // § 2 — Common Endpoints: nodes reached via 2+ different parents
+    const parentSets = new Map<string, Set<string>>();
+    for (const e of trailEntries) {
+      if (!e.parentAddress) continue;
+      if (!parentSets.has(e.address)) parentSets.set(e.address, new Set());
+      parentSets.get(e.address)!.add(e.parentAddress);
+    }
+    const commonEndpoints = Array.from(parentSets.entries())
+      .filter(([, parents]) => parents.size > 1)
+      .map(([addr, parents]) => ({
+        address: addr,
+        parents: Array.from(parents),
+        trailEntry: trailEntries.find((e) => e.address === addr),
+        cpData: cpMap.get(addr),
+      }));
+
+    // § 3 — Numbered Trail Paths: DFS root→leaf, prefer paths with intersections
+    const allPaths: string[][] = [];
+    const dfs = (addr: string, path: string[]) => {
+      const children = trailEntries.filter((e) => e.parentAddress === addr);
+      if (children.length === 0) { allPaths.push([...path]); return; }
+      for (const c of children) dfs(c.address, [...path, c.address]);
+    };
+    dfs(rootAddr, [rootAddr]);
+    allPaths.sort((a, b) => {
+      const score = (p: string[]) =>
+        p.filter((addr) => intersectionAddrs.has(addr)).length * 2 +
+        p.filter((addr) => commonEndpoints.some((c) => c.address === addr)).length;
+      return score(b) - score(a);
+    });
+
+    return {
+      directIntersections, commonEndpoints,
+      paths: allPaths.slice(0, 12),
+      intersectionAddrs, rootAddr,
+      totalTxsLoaded: allTxs.length,
+    };
+  }, [showTrailPanel, trailEntries, allTxs]);
 
   // ── Trail trace ──
   const expandTrailNode = useCallback(async (entry: TrailEntry) => {
@@ -1154,85 +1237,287 @@ export default function WalletDetail() {
             </div>
           </CardHeader>
 
-          <div className="p-4 space-y-1 max-h-[500px] overflow-y-auto">
-            {trailEntries.map((entry) => {
-              const isCommingling = comminglingAddresses.has(entry.address);
-              const isExchange = entry.knownInfo?.type === "exchange";
-              const isGenesis = entry.knownInfo?.type === "genesis";
-              const isRoot = entry.depth === 0;
+          {/* ── Analysis Sections ─────────────────────────────────────── */}
+          {intersectionData && !trailEntries[0]?.isLoading && trailEntries.length > 1 && (
+            <div className="divide-y divide-border/20 border-b border-border/30">
 
-              let dotColor = "bg-muted-foreground";
-              if (isRoot) dotColor = "bg-primary";
-              else if (isExchange) dotColor = "bg-blue-500";
-              else if (isGenesis) dotColor = "bg-purple-500";
-              else if (isCommingling) dotColor = "bg-yellow-500";
-
-              let rowBg = "hover:bg-muted/10";
-              if (isCommingling) rowBg = "bg-yellow-950/20 hover:bg-yellow-950/30 border-l-2 border-yellow-500/40";
-              else if (isExchange) rowBg = "bg-blue-950/10 hover:bg-blue-950/20";
-              else if (isRoot) rowBg = "bg-primary/5 border-l-2 border-primary/40";
-
-              return (
-                <div
-                  key={`${entry.address}-${entry.depth}-${entry.parentAddress}`}
-                  className={`flex items-center gap-2 px-3 py-2 rounded text-xs font-mono transition-colors ${rowBg}`}
-                  style={{ paddingLeft: `${12 + entry.depth * 20}px` }}
-                >
-                  {entry.depth > 0 && (
-                    <span className="text-border/60 shrink-0">{"└─"}</span>
-                  )}
-                  <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor} ${entry.isLoading ? "animate-pulse" : ""}`} />
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      const rect = e.currentTarget.getBoundingClientRect();
-                      setActiveMenu({ addr: entry.address, x: rect.left, y: rect.bottom + 4 });
-                    }}
-                    className="text-primary/80 hover:text-primary hover:underline transition-colors truncate max-w-[200px]"
-                  >
-                    {entry.address.length > 20 ? `${entry.address.slice(0, 10)}…${entry.address.slice(-6)}` : entry.address}
-                  </button>
-                  {entry.knownInfo && getKnownBadge(entry.knownInfo)}
-                  {savedWallets.has(entry.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
-                  {isCommingling && (
-                    <span className="flex items-center gap-1 text-yellow-400 bg-yellow-950/40 px-1.5 py-0.5 rounded border border-yellow-500/20">
-                      <AlertTriangle className="w-2.5 h-2.5" /> COMMINGLING
-                    </span>
-                  )}
-                  <span className="text-muted-foreground/60 shrink-0">D{entry.depth}</span>
-                  {entry.totalValueUsd > 0 && (
-                    <span className="text-muted-foreground shrink-0">${entry.totalValueUsd.toFixed(0)}</span>
-                  )}
-                  {entry.txCount > 0 && (
-                    <span className="text-muted-foreground/60 shrink-0">{entry.txCount} tx</span>
-                  )}
-                  {entry.error && <span className="text-red-400 text-[10px]">FETCH FAILED</span>}
-                  {entry.isLoading && <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />}
-                  {!entry.isLoading && !entry.isExpanded && !entry.error && entry.depth < 5 && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); expandTrailNode(entry); }}
-                      className="ml-auto shrink-0 flex items-center gap-1 text-[10px] text-primary/60 hover:text-primary border border-primary/20 hover:border-primary/50 px-1.5 py-0.5 rounded transition-colors"
-                    >
-                      <ChevronRight className="w-2.5 h-2.5" /> EXPAND
-                    </button>
-                  )}
-                  {entry.isExpanded && entry.childAddresses.length > 0 && (
-                    <span className="ml-auto shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground">
-                      <ChevronDown className="w-2.5 h-2.5" /> {entry.childAddresses.length} peers
-                    </span>
-                  )}
-                  {entry.isExpanded && entry.childAddresses.length === 0 && (
-                    <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/40">NO CONNECTIONS</span>
-                  )}
-                  {entry.depth >= 5 && (
-                    <span className="ml-auto shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground/40">
-                      <Zap className="w-2.5 h-2.5" /> MAX DEPTH
+              {/* ── § 1 Direct Intersections ──────────────────────────────── */}
+              <div className="p-4">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-green-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-green-400 font-bold tracking-widest uppercase">
+                    § 1 — Direct Intersections
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {intersectionData.directIntersections.length > 0
+                      ? `${intersectionData.directIntersections.length} wallet${intersectionData.directIntersections.length > 1 ? "s" : ""} found in both trail + tx history`
+                      : "none found"}
+                  </span>
+                  {intersectionData.totalTxsLoaded === 0 && (
+                    <span className="text-[10px] font-mono text-yellow-400 bg-yellow-950/30 px-1.5 py-0.5 rounded border border-yellow-500/20">
+                      load transactions first
                     </span>
                   )}
                 </div>
-              );
-            })}
-          </div>
+                {intersectionData.directIntersections.length === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
+                    A direct intersection means a wallet appears in both this address's transaction history AND the connection graph.
+                    Expand more trail nodes and load more transactions to surface them.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {intersectionData.directIntersections.map((d, i) => (
+                      <div key={d.address} className="bg-green-950/20 border border-green-500/20 rounded p-3">
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <span className="text-[10px] font-mono bg-green-900/60 text-green-300 px-1.5 py-0.5 rounded font-bold shrink-0">
+                            #{i + 1}
+                          </span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: d.address, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {d.address.length > 16 ? `${d.address.slice(0, 8)}…${d.address.slice(-6)}` : d.address}
+                          </button>
+                          {d.knownInfo && getKnownBadge(d.knownInfo)}
+                          {savedWallets.has(d.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                          <span className="ml-auto text-[10px] font-mono text-muted-foreground shrink-0">TRAIL DEPTH {d.depth}</span>
+                        </div>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-6 gap-y-1 text-[10px] font-mono pl-1">
+                          <div><span className="text-muted-foreground">TXS </span><span className="text-green-300 font-bold">{d.cp.txCount}</span></div>
+                          <div><span className="text-muted-foreground">TOTAL </span><span className="text-foreground font-bold">{d.cp.totalValue.toFixed(4)} {chain.toUpperCase()}</span></div>
+                          <div><span className="text-muted-foreground">FIRST </span><span className="text-foreground">{d.cp.firstTs.slice(0, 10)}</span></div>
+                          <div><span className="text-muted-foreground">LAST </span><span className="text-foreground">{d.cp.lastTs.slice(0, 10)}</span></div>
+                        </div>
+                        {d.cp.sampleHash && (
+                          <div className="text-[10px] font-mono text-muted-foreground/60 mt-1.5 flex items-center gap-1.5 flex-wrap pl-1">
+                            <span>SAMPLE TX:</span>
+                            <span className="text-primary/60">{d.cp.sampleHash.slice(0, 16)}…</span>
+                            {explorerTxUrl && (
+                              <a href={explorerTxUrl(d.cp.sampleHash)} target="_blank" rel="noopener noreferrer"
+                                className="text-muted-foreground hover:text-primary transition-colors">
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                            <span className="text-muted-foreground/40">{d.cp.sampleDate.slice(0, 16).replace("T", " ")} UTC</span>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── § 2 Common Endpoints ──────────────────────────────────── */}
+              <div className="p-4">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-orange-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-orange-400 font-bold tracking-widest uppercase">
+                    § 2 — Common Endpoints
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {intersectionData.commonEndpoints.length > 0
+                      ? `${intersectionData.commonEndpoints.length} wallet${intersectionData.commonEndpoints.length > 1 ? "s" : ""} reachable via multiple paths — potential commingling`
+                      : "none detected"}
+                  </span>
+                </div>
+                {intersectionData.commonEndpoints.length === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
+                    Expand more trail nodes to detect wallets reachable from multiple independent paths — a classic indicator of fund commingling or round-tripping.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {intersectionData.commonEndpoints.map((ep, i) => (
+                      <div key={ep.address} className="bg-orange-950/20 border border-orange-500/30 rounded p-3">
+                        <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                          <span className="text-[10px] font-mono bg-orange-900/60 text-orange-300 px-1.5 py-0.5 rounded font-bold shrink-0">
+                            #{i + 1}
+                          </span>
+                          <AlertTriangle className="w-3 h-3 text-orange-400 shrink-0" />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: ep.address, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {ep.address.length > 16 ? `${ep.address.slice(0, 8)}…${ep.address.slice(-6)}` : ep.address}
+                          </button>
+                          {ep.trailEntry?.knownInfo && getKnownBadge(ep.trailEntry.knownInfo)}
+                          <span className="text-[10px] font-mono text-orange-400 font-bold ml-auto shrink-0">{ep.parents.length} PATHS CONVERGE</span>
+                        </div>
+                        <div className="text-[10px] font-mono text-muted-foreground pl-1 flex flex-wrap gap-1 items-center">
+                          <span className="text-muted-foreground/50">VIA:</span>
+                          {ep.parents.map((p, pi) => (
+                            <span key={p} className="flex items-center gap-1">
+                              <button
+                                onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: p, x: r.left, y: r.bottom + 4 }); }}
+                                className="text-primary/60 hover:text-primary hover:underline font-mono transition-colors"
+                              >
+                                {p.length > 12 ? `${p.slice(0, 6)}…${p.slice(-4)}` : p}
+                              </button>
+                              {pi < ep.parents.length - 1 && <span className="text-muted-foreground/30">·</span>}
+                            </span>
+                          ))}
+                        </div>
+                        {ep.cpData && (
+                          <div className="grid grid-cols-2 gap-x-6 text-[10px] font-mono mt-1.5 pl-1">
+                            <div><span className="text-muted-foreground">TXS </span><span className="text-foreground">{ep.cpData.txCount}</span></div>
+                            <div><span className="text-muted-foreground">TOTAL </span><span className="text-foreground">{ep.cpData.totalValue.toFixed(4)} {chain.toUpperCase()}</span></div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── § 3 Numbered Trail Paths ──────────────────────────────── */}
+              <div className="p-4">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-primary rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-primary font-bold tracking-widest uppercase">
+                    § 3 — Trail Paths
+                  </span>
+                  <span className="text-[10px] font-mono text-muted-foreground">
+                    {intersectionData.paths.length} path{intersectionData.paths.length !== 1 ? "s" : ""} · ⚡ intersection · ⚠ commingling
+                  </span>
+                </div>
+                <div className="space-y-1.5">
+                  {intersectionData.paths.map((path, pi) => (
+                    <div key={pi} className="flex items-start gap-2 flex-wrap text-[10px] font-mono">
+                      <span className="text-muted-foreground/40 shrink-0 w-5 text-right mt-0.5">#{pi + 1}</span>
+                      <div className="flex items-center gap-1 flex-wrap">
+                        {path.map((addr, ai) => {
+                          const isInt = intersectionData.intersectionAddrs.has(addr);
+                          const isComEP = intersectionData.commonEndpoints.some((c) => c.address === addr);
+                          const isRoot = ai === 0;
+                          const known = KNOWN_LABELS[addr];
+                          const short = addr.length > 12 ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : addr;
+                          return (
+                            <span key={addr + ai} className="flex items-center gap-1">
+                              {ai > 0 && <span className="text-muted-foreground/25">→</span>}
+                              <button
+                                onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr, x: r.left, y: r.bottom + 4 }); }}
+                                className={`px-1.5 py-0.5 rounded border transition-colors ${
+                                  isRoot
+                                    ? "bg-primary/20 text-primary border-primary/30"
+                                    : isInt
+                                    ? "bg-green-950/60 text-green-300 border-green-500/40 font-bold"
+                                    : isComEP
+                                    ? "bg-orange-950/60 text-orange-300 border-orange-500/40"
+                                    : "text-muted-foreground hover:text-foreground border-transparent hover:border-border/30"
+                                }`}
+                              >
+                                {isInt && <span className="mr-0.5">⚡</span>}
+                                {isComEP && !isInt && <span className="mr-0.5">⚠</span>}
+                                {known ? known.label : short}
+                              </button>
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+            </div>
+          )}
+
+          {/* ── § 4 Full Connection Tree (collapsible) ────────────────────── */}
+          <button
+            onClick={(e) => { e.stopPropagation(); setShowNodeTree((v) => !v); }}
+            className="w-full flex items-center gap-2 px-4 py-2.5 text-[10px] font-mono text-muted-foreground hover:text-foreground border-b border-border/20 hover:bg-muted/10 transition-colors"
+          >
+            {showNodeTree ? <ChevronDown className="w-3 h-3 shrink-0" /> : <ChevronRight className="w-3 h-3 shrink-0" />}
+            <span className="uppercase tracking-wider">§ 4 — Full Connection Tree</span>
+            <span className="text-muted-foreground/40">{trailEntries.length} nodes · click to {showNodeTree ? "collapse" : "expand"}</span>
+          </button>
+          {showNodeTree && (
+            <div className="p-4 space-y-1 max-h-[420px] overflow-y-auto">
+              {trailEntries.map((entry) => {
+                const isCommingling = comminglingAddresses.has(entry.address);
+                const isExchange = entry.knownInfo?.type === "exchange";
+                const isGenesis = entry.knownInfo?.type === "genesis";
+                const isRoot = entry.depth === 0;
+
+                let dotColor = "bg-muted-foreground";
+                if (isRoot) dotColor = "bg-primary";
+                else if (isExchange) dotColor = "bg-blue-500";
+                else if (isGenesis) dotColor = "bg-purple-500";
+                else if (isCommingling) dotColor = "bg-yellow-500";
+                else if (intersectionData?.intersectionAddrs.has(entry.address)) dotColor = "bg-green-500";
+
+                let rowBg = "hover:bg-muted/10";
+                if (isCommingling) rowBg = "bg-yellow-950/20 hover:bg-yellow-950/30 border-l-2 border-yellow-500/40";
+                else if (intersectionData?.intersectionAddrs.has(entry.address)) rowBg = "bg-green-950/20 hover:bg-green-950/30 border-l-2 border-green-500/40";
+                else if (isExchange) rowBg = "bg-blue-950/10 hover:bg-blue-950/20";
+                else if (isRoot) rowBg = "bg-primary/5 border-l-2 border-primary/40";
+
+                return (
+                  <div
+                    key={`${entry.address}-${entry.depth}-${entry.parentAddress}`}
+                    className={`flex items-center gap-2 px-3 py-2 rounded text-xs font-mono transition-colors ${rowBg}`}
+                    style={{ paddingLeft: `${12 + entry.depth * 20}px` }}
+                  >
+                    {entry.depth > 0 && (
+                      <span className="text-border/60 shrink-0">{"└─"}</span>
+                    )}
+                    <span className={`w-2 h-2 rounded-full shrink-0 ${dotColor} ${entry.isLoading ? "animate-pulse" : ""}`} />
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        setActiveMenu({ addr: entry.address, x: rect.left, y: rect.bottom + 4 });
+                      }}
+                      className="text-primary/80 hover:text-primary hover:underline transition-colors truncate max-w-[200px]"
+                    >
+                      {entry.address.length > 20 ? `${entry.address.slice(0, 10)}…${entry.address.slice(-6)}` : entry.address}
+                    </button>
+                    {entry.knownInfo && getKnownBadge(entry.knownInfo)}
+                    {savedWallets.has(entry.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                    {intersectionData?.intersectionAddrs.has(entry.address) && (
+                      <span className="flex items-center gap-1 text-green-400 bg-green-950/40 px-1.5 py-0.5 rounded border border-green-500/20 text-[10px]">
+                        ⚡ INTERSECTION
+                      </span>
+                    )}
+                    {isCommingling && !intersectionData?.intersectionAddrs.has(entry.address) && (
+                      <span className="flex items-center gap-1 text-yellow-400 bg-yellow-950/40 px-1.5 py-0.5 rounded border border-yellow-500/20 text-[10px]">
+                        <AlertTriangle className="w-2.5 h-2.5" /> COMMINGLING
+                      </span>
+                    )}
+                    <span className="text-muted-foreground/60 shrink-0">D{entry.depth}</span>
+                    {entry.totalValueUsd > 0 && (
+                      <span className="text-muted-foreground shrink-0">${entry.totalValueUsd.toFixed(0)}</span>
+                    )}
+                    {entry.txCount > 0 && (
+                      <span className="text-muted-foreground/60 shrink-0">{entry.txCount} tx</span>
+                    )}
+                    {entry.error && <span className="text-red-400 text-[10px]">FETCH FAILED</span>}
+                    {entry.isLoading && <Loader2 className="w-3 h-3 text-primary animate-spin shrink-0" />}
+                    {!entry.isLoading && !entry.isExpanded && !entry.error && entry.depth < 5 && (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); expandTrailNode(entry); }}
+                        className="ml-auto shrink-0 flex items-center gap-1 text-[10px] text-primary/60 hover:text-primary border border-primary/20 hover:border-primary/50 px-1.5 py-0.5 rounded transition-colors"
+                      >
+                        <ChevronRight className="w-2.5 h-2.5" /> EXPAND
+                      </button>
+                    )}
+                    {entry.isExpanded && entry.childAddresses.length > 0 && (
+                      <span className="ml-auto shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground">
+                        <ChevronDown className="w-2.5 h-2.5" /> {entry.childAddresses.length} peers
+                      </span>
+                    )}
+                    {entry.isExpanded && entry.childAddresses.length === 0 && (
+                      <span className="ml-auto shrink-0 text-[10px] text-muted-foreground/40">NO CONNECTIONS</span>
+                    )}
+                    {entry.depth >= 5 && (
+                      <span className="ml-auto shrink-0 flex items-center gap-1 text-[10px] text-muted-foreground/40">
+                        <Zap className="w-2.5 h-2.5" /> MAX DEPTH
+                      </span>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
       )}
     </div>

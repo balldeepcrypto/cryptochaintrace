@@ -24,35 +24,51 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis", type: "genesis" },
   r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.", type: "genesis" },
   r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59: { label: "Ripple Cold 1", type: "genesis" },
-  rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: { label: "Bitstamp XRP", type: "exchange" },
-  rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: { label: "Bitfinex XRP", type: "exchange" },
-  rBndiPPKs9k5rjBb7HsEiqXKVZ9MMhGmhM: { label: "Kraken XRP", type: "exchange" },
-  rKmBGxocj9Abgy25J51Mk1iqFzW9aVF9Tc: { label: "Kraken XRP 2", type: "exchange" },
-  rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: { label: "Binance XRP", type: "exchange" },
-  rrpNnNLKrartuEqfJGpqyDwPj1BBN1ybNn: { label: "Binance XRP 2", type: "exchange" },
-  rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: { label: "Coinbase XRP", type: "exchange" },
-  rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy: { label: "OKX XRP", type: "exchange" },
-  rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy: { label: "Huobi XRP", type: "exchange" },
-  r4FuDeXifHAZork5KcEQKKBqmBWPGiFmJC:  { label: "Uphold XRP", type: "exchange" },
+  rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: { label: "Bitstamp XRP",   type: "exchange" },
+  rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: { label: "Bitfinex XRP",   type: "exchange" },
+  rBndiPPKs9k5rjBb7HsEiqXKVZ9MMhGmhM: { label: "Kraken XRP",     type: "exchange" },
+  rKmBGxocj9Abgy25J51Mk1iqFzW9aVF9Tc: { label: "Kraken XRP 2",   type: "exchange" },
+  rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: { label: "Binance XRP",    type: "exchange" },
+  rrpNnNLKrartuEqfJGpqyDwPj1BBN1ybNn: { label: "Binance XRP 2",  type: "exchange" },
+  rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: { label: "Coinbase XRP",   type: "exchange" },
+  rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy: { label: "OKX XRP",        type: "exchange" },
+  rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy: { label: "Huobi XRP",      type: "exchange" },
+  r4FuDeXifHAZork5KcEQKKBqmBWPGiFmJC: { label: "Uphold XRP",     type: "exchange" },
   rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1: { label: "Bitstamp XRP 2", type: "exchange" },
-  rGFuMiw48HdbnrUbkRToR1yMBZkjbqvUhQ: { label: "MEXC XRP", type: "exchange" },
-  rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: { label: "Bybit XRP", type: "exchange" },
+  rGFuMiw48HdbnrUbkRToR1yMBZkjbqvUhQ: { label: "MEXC XRP",       type: "exchange" },
+  rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: { label: "Bybit XRP",      type: "exchange" },
+  rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV: { label: "KuCoin XRP",     type: "exchange" },
+  rGsxGQNdaDyFhZQ5JqDGPkT3VGFFexCaM3: { label: "Gate.io XRP",    type: "exchange" },
+  rBx5RkPh2KR3JqBtZWoU25ZxGHaJzYMD84: { label: "KrakenXRP 3",    type: "exchange" },
   // ── XLM (Stellar) ──────────────────────────────────────────────────────────
-  GDDEAH46MNFO6JD7NTQ5FWJBC4ZSA47YEK3RKFHQWADYTS6NDVD5NZN: { label: "Binance XLM", type: "exchange" },
-  GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN: { label: "Coinbase XLM", type: "exchange" },
-  GA5XIGA5C7QTPTWXQHY6T19HSGZDQXPKFBM7NZQND4KHZFVU5HY6KKK: { label: "Kraken XLM", type: "exchange" },
-  GAP5LETOV6YIE62YAM56STDANPRDO7ZFDBGSNHJQIYGGKSMOZAHOOS2S: { label: "Bitstamp XLM", type: "exchange" },
-  GBVOL67TMUQBGL4TZYNMY3ZQ5WGQYFPFD5VJRWXR72VA33VFNL225PL: { label: "Huobi XLM", type: "exchange" },
-  GBZ35ZJRIKJGYH5PBKLKOZ5L5GQXCDIARHV3LIJEV7MIRUCQIRLVVB6: { label: "Bitfinex XLM", type: "exchange" },
-  GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66MEMGHMN: { label: "OKX XLM", type: "exchange" },
-  GDKIJJIKXLOM2NRMPNQZUUYK24ZPVFC6426GZAEP3KUK6KEJLACCWNMX: { label: "MEXC XLM", type: "exchange" },
-  GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4: { label: "Uphold XLM", type: "exchange" },
+  GDDEAH46MNFO6JD7NTQ5FWJBC4ZSA47YEK3RKFHQWADYTS6NDVD5NZN: { label: "Binance XLM",   type: "exchange" },
+  GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN: { label: "Coinbase XLM",  type: "exchange" },
+  GA5XIGA5C7QTPTWXQHY6T19HSGZDQXPKFBM7NZQND4KHZFVU5HY6KKK: { label: "Kraken XLM",   type: "exchange" },
+  GAP5LETOV6YIE62YAM56STDANPRDO7ZFDBGSNHJQIYGGKSMOZAHOOS2S: { label: "Bitstamp XLM",  type: "exchange" },
+  GBVOL67TMUQBGL4TZYNMY3ZQ5WGQYFPFD5VJRWXR72VA33VFNL225PL: { label: "Huobi XLM",     type: "exchange" },
+  GBZ35ZJRIKJGYH5PBKLKOZ5L5GQXCDIARHV3LIJEV7MIRUCQIRLVVB6: { label: "Bitfinex XLM",  type: "exchange" },
+  GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66MEMGHMN: { label: "OKX XLM",       type: "exchange" },
+  GDKIJJIKXLOM2NRMPNQZUUYK24ZPVFC6426GZAEP3KUK6KEJLACCWNMX: { label: "MEXC XLM",      type: "exchange" },
+  GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4: { label: "Uphold XLM",    type: "exchange" },
+  GCNSGHUCG5VMGLT5RIYYZSO7VQULQKAJ62QA7EC7KH6X7HJR3BXCRRY: { label: "KuCoin XLM",    type: "exchange" },
+  GBUQWP3BOUZX34TOND2QV7QQ7K7VJTM6DBYRD3UI1FAB6B5OKKWKFKP: { label: "Bybit XLM",     type: "exchange" },
+  GBEZDAOKKUDLLNR4EGZFGLCDBQBQLQCQS72LKRNKRUAWPDBPXJVBJV74: { label: "KuCoin XLM 2",  type: "exchange" },
   // ── HBAR (Hedera) ──────────────────────────────────────────────────────────
-  "0.0.23576": { label: "Binance HBAR", type: "exchange" },
-  "0.0.726513": { label: "OKX HBAR", type: "exchange" },
-  "0.0.5094": { label: "Hedera Foundation", type: "genesis" },
-  "0.0.98": { label: "Hedera Fee Collector", type: "genesis" },
-  "0.0.800": { label: "Hedera Rewards", type: "genesis" },
+  "0.0.23576":   { label: "Binance HBAR",   type: "exchange" },
+  "0.0.726513":  { label: "OKX HBAR",       type: "exchange" },
+  "0.0.3664683": { label: "Coinbase HBAR",  type: "exchange" },
+  "0.0.1649540": { label: "KuCoin HBAR",    type: "exchange" },
+  "0.0.3014985": { label: "Bybit HBAR",     type: "exchange" },
+  "0.0.2764670": { label: "Uphold HBAR",    type: "exchange" },
+  "0.0.34140":   { label: "Binance HBAR 2", type: "exchange" },
+  "0.0.5094":    { label: "Hedera Foundation",   type: "genesis" },
+  "0.0.98":      { label: "Hedera Fee Collector", type: "genesis" },
+  "0.0.800":     { label: "Hedera Rewards",       type: "genesis" },
+  // ── XDC (XinFin) ───────────────────────────────────────────────────────────
+  xdc1c5808a8c6a24dd5e9d7af4c1bb92e3a7fcb5f55: { label: "Bitrue XDC",  type: "exchange" },
+  xdcadf8f46f6d9b480e1f91c02c0cAfec9d37d3aa:   { label: "AscendEX XDC", type: "exchange" },
+  xdc4a62f8ceEF3F2ea81E32e0EAce2e16e8c8BEbC54: { label: "KuCoin XDC",  type: "exchange" },
+  xdc2a0f8B4D3ac1D66a72A0e29eCFd60b79Fe54f7Cc: { label: "Gate.io XDC", type: "exchange" },
   // ── Ethereum / EVM ─────────────────────────────────────────────────────────
   "0x28c6c06298d514db089934071355e5743bf21d60": { label: "Binance Hot", type: "exchange" },
   "0x21a31ee1afc51d94c2efccaa2092ad1028285549": { label: "Binance Cold", type: "exchange" },
@@ -266,7 +282,7 @@ export default function WalletDetail() {
   }
 
   // ── Group sort (only active when groupByCounterparty is ON) ──
-  type GroupSort = "most-txs" | "highest-value" | "recent";
+  type GroupSort = "most-txs" | "highest-value" | "recent" | "exchange-first";
   const [groupSort, setGroupSort] = useState<GroupSort>("most-txs");
 
   // ── Minimum amount filter ──
@@ -526,6 +542,14 @@ export default function WalletDetail() {
       if (viewMode !== "mixed" && a.direction !== b.direction) {
         if (viewMode === "in-first") return a.direction === "in" ? -1 : 1;
         if (viewMode === "out-first") return a.direction === "out" ? -1 : 1;
+      }
+      if (groupSort === "exchange-first") {
+        const aKnown = KNOWN_LABELS[a.address];
+        const bKnown = KNOWN_LABELS[b.address];
+        const aIsExchange = aKnown?.type === "exchange" ? 0 : aKnown ? 1 : 2;
+        const bIsExchange = bKnown?.type === "exchange" ? 0 : bKnown ? 1 : 2;
+        if (aIsExchange !== bIsExchange) return aIsExchange - bIsExchange;
+        return b.txCount - a.txCount;
       }
       if (groupSort === "most-txs")      return b.txCount - a.txCount;
       if (groupSort === "highest-value") return b.totalValue - a.totalValue;
@@ -1200,16 +1224,23 @@ export default function WalletDetail() {
           {groupByCounterparty && (
             <div className="flex items-center gap-2.5 pt-3 mt-1 border-t border-border/30 flex-wrap">
               <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider whitespace-nowrap">Sort Counterparties:</span>
-              <div className="flex items-center rounded border border-border/40 overflow-hidden text-[10px] font-mono">
-                {(["most-txs", "highest-value", "recent"] as const).map((key) => {
-                  const label = { "most-txs": "⬆ MOST TXS", "highest-value": "💰 HIGHEST VALUE", recent: "🕐 RECENT" }[key];
+              <div className="flex items-center rounded border border-border/40 overflow-hidden text-[10px] font-mono flex-wrap">
+                {(["most-txs", "highest-value", "recent", "exchange-first"] as const).map((key) => {
+                  const label = {
+                    "most-txs":       "⬆ MOST TXS",
+                    "highest-value":  "💰 HIGHEST VALUE",
+                    "recent":         "🕐 RECENT",
+                    "exchange-first": "🏦 EXCHANGES FIRST",
+                  }[key];
                   return (
                     <button
                       key={key}
                       onClick={() => setGroupSort(key)}
                       className={`px-3 py-1.5 border-r last:border-r-0 border-border/40 transition-colors whitespace-nowrap ${
                         groupSort === key
-                          ? "bg-primary/20 text-primary font-semibold"
+                          ? key === "exchange-first"
+                            ? "bg-blue-900/40 text-blue-300 font-semibold"
+                            : "bg-primary/20 text-primary font-semibold"
                           : "bg-muted/10 text-muted-foreground hover:text-primary hover:bg-muted/20"
                       }`}
                     >

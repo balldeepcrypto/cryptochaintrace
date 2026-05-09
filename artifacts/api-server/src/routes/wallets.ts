@@ -36,8 +36,8 @@ const COIN_ID_MAP: Record<string, string> = {
   dag: "constellation-labs",
 };
 
-// XRP uses XRPL JSON-RPC; DAG uses Constellation Network API; others use CoinStats
-const COINSTATS_CHAINS = ["hbar", "xdc"];
+// XRP uses XRPL JSON-RPC; DAG uses Constellation Network API; XDC uses its own RPC+BlocksScan; others use CoinStats
+const COINSTATS_CHAINS = ["hbar"];
 const DAG_API = "https://be-mainnet.constellationnetwork.io";
 
 function weiToEth(wei: string): string {
@@ -192,6 +192,52 @@ async function coinstatsFetch(path: string): Promise<Record<string, unknown>> {
   }, 8000);
   if (!resp.ok) throw new Error(`CoinStats request failed: ${resp.status}`);
   return resp.json() as Promise<Record<string, unknown>>;
+}
+
+// ── XDC Network: RPC + BlocksScan etherscan-compat API ────────────────────
+const XDC_RPC_ENDPOINTS = [
+  "https://rpc.xinfin.network",
+  "https://erpc.xinfin.network",
+  "https://rpc.ankr.com/xdc",
+];
+const XDC_BLOCKSSCAN = "https://xdc.blocksscan.io/api";
+
+function normalizeXdcAddress(addr: string): string {
+  return addr.startsWith("xdc") ? "0x" + addr.slice(3) : addr;
+}
+
+async function xdcRpc(method: string, params: unknown[]): Promise<unknown> {
+  let lastErr: Error = new Error("XDC RPC unavailable");
+  for (const ep of XDC_RPC_ENDPOINTS) {
+    try {
+      const resp = await fetchWithTimeout(ep, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+      }, 8000);
+      if (!resp.ok) { lastErr = new Error(`XDC RPC ${resp.status} at ${ep}`); continue; }
+      const data = await resp.json() as { result?: unknown; error?: { message: string } };
+      if (data.error) { lastErr = new Error(data.error.message); continue; }
+      return data.result;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+    }
+  }
+  throw lastErr;
+}
+
+async function xdcBlocksScanFetch(params: Record<string, string>): Promise<Record<string, unknown>> {
+  const qs = new URLSearchParams(params).toString();
+  const resp = await fetchWithTimeout(`${XDC_BLOCKSSCAN}?${qs}`, {
+    headers: { "User-Agent": "CryptoChainTrace/1.0", "Accept": "application/json" },
+  }, 12000);
+  if (!resp.ok) throw new Error(`BlocksScan HTTP ${resp.status}`);
+  const data = await resp.json() as Record<string, unknown>;
+  const msg = String(data["message"] ?? "");
+  if (msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("error")) {
+    throw new Error(`BlocksScan error: ${msg}`);
+  }
+  return data;
 }
 
 // Constellation Network DAG public explorer API
@@ -424,6 +470,38 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       const firstSeen = firstOpRecs[0]?.["created_at"] ? String(firstOpRecs[0]["created_at"]) : null;
       const subentryCount = Number(acct["subentry_count"] ?? 0);
       const txCount = Math.max(subentryCount, lastOpRecs.length);
+      const tags = guessTags(false, txCount);
+      res.json(GetWalletResponse.parse({
+        address, chain, balance, balanceUsd, transactionCount: txCount,
+        firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
+      }));
+      return;
+    }
+
+    if (chain === "xdc") {
+      const rpcAddr = normalizeXdcAddress(address);
+      const [balHex, nonceHex] = await Promise.all([
+        xdcRpc("eth_getBalance", [rpcAddr, "latest"]),
+        xdcRpc("eth_getTransactionCount", [rpcAddr, "latest"]),
+      ]);
+      const balance = weiToEth(BigInt(String(balHex ?? "0x0")).toString());
+      const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
+      let txCount = parseInt(String(nonceHex ?? "0x0"), 16);
+      let firstSeen: string | null = null;
+      let lastSeen: string | null = null;
+      try {
+        const [firstPage, lastPage] = await Promise.all([
+          xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "1", sort: "asc" }),
+          xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "1", sort: "desc" }),
+        ]);
+        const firstTxs = Array.isArray(firstPage["result"]) ? firstPage["result"] as Record<string, unknown>[] : [];
+        const lastTxs = Array.isArray(lastPage["result"]) ? lastPage["result"] as Record<string, unknown>[] : [];
+        if (firstTxs.length > 0) firstSeen = new Date(Number(firstTxs[0]["timeStamp"]) * 1000).toISOString();
+        if (lastTxs.length > 0) lastSeen = new Date(Number(lastTxs[0]["timeStamp"]) * 1000).toISOString();
+        if (typeof firstPage["total"] === "number" && Number(firstPage["total"]) > txCount) {
+          txCount = Number(firstPage["total"]);
+        }
+      } catch { /* use RPC nonce as fallback tx count */ }
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -673,6 +751,90 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       return;
     }
 
+    if (chain === "xdc") {
+      const rpcAddr = normalizeXdcAddress(address);
+      let rawTxs: Record<string, unknown>[] = [];
+      let total = 0;
+      let usedBlocksScan = false;
+      try {
+        const bsData = await xdcBlocksScanFetch({
+          module: "account", action: "txlist",
+          address: rpcAddr, page: String(page), offset: String(limit), sort: "desc",
+        });
+        rawTxs = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
+        total = typeof bsData["total"] === "number" ? Number(bsData["total"]) : rawTxs.length;
+        usedBlocksScan = true;
+      } catch {
+        if (COINSTATS_KEY) {
+          try {
+            const data = await coinstatsFetch(
+              `/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=xdce-crowd-sale&limit=${limit}&page=${page}`
+            );
+            const csTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
+            const transactions = csTxs.map((tx) => {
+              const value = parseFloat(String(tx["amount"] ?? tx["value"] ?? "0")).toFixed(6);
+              const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
+              const fromAddr = String(tx["from"] ?? tx["sender"] ?? address);
+              const toAddr = String(tx["to"] ?? tx["receiver"] ?? "");
+              const isSelf = fromAddr.toLowerCase() === address.toLowerCase() && toAddr.toLowerCase() === address.toLowerCase();
+              const isOut = fromAddr.toLowerCase() === address.toLowerCase();
+              const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
+              return {
+                hash: String(tx["hash"] ?? tx["txid"] ?? tx["id"] ?? ""),
+                from: fromAddr, to: toAddr || null, value, valueUsd,
+                fee: "0.000000", feeUsd: 0,
+                timestamp: tx["date"] ? new Date(String(tx["date"])).toISOString() : new Date().toISOString(),
+                blockNumber: Number(tx["blockNumber"] ?? 0),
+                status: "success" as const, direction,
+                tokenSymbol: "XDC", tokenName: null,
+              };
+            });
+            const csHasMore = csTxs.length >= limit;
+            res.json(GetWalletTransactionsResponse.parse({
+              transactions, total: Number(data["total"] ?? csTxs.length),
+              page, limit, nextCursor: csHasMore ? String(page + 1) : null, hasMore: csHasMore,
+            }));
+            return;
+          } catch { /* CoinStats also failed — fall through to empty response */ }
+        }
+      }
+      if (usedBlocksScan) {
+        const transactions = rawTxs.map((tx) => {
+          const from = String(tx["from"] ?? "");
+          const to = String(tx["to"] ?? "");
+          const rawVal = String(tx["value"] ?? "0");
+          const value = weiToEth(rawVal === "" ? "0" : rawVal);
+          const valueUsd = weiToUsd(rawVal === "" ? "0" : rawVal, priceUsd);
+          const gpRaw = String(tx["gasPrice"] ?? "0");
+          const guRaw = String(tx["gasUsed"] ?? "0");
+          const feeWei = String(BigInt(gpRaw === "" ? "0" : gpRaw) * BigInt(guRaw === "" ? "0" : guRaw));
+          const fee = weiToEth(feeWei);
+          const feeUsd = weiToUsd(feeWei, priceUsd);
+          const isSelf = from.toLowerCase() === rpcAddr.toLowerCase() && to.toLowerCase() === rpcAddr.toLowerCase();
+          const isOut = from.toLowerCase() === rpcAddr.toLowerCase();
+          const direction = (isSelf ? "self" : isOut ? "out" : "in") as "in" | "out" | "self";
+          return {
+            hash: String(tx["hash"] ?? ""),
+            from, to: to || null, value, valueUsd, fee, feeUsd,
+            timestamp: new Date(Number(tx["timeStamp"]) * 1000).toISOString(),
+            blockNumber: Number(tx["blockNumber"] ?? 0),
+            status: tx["isError"] === "1" ? ("failed" as const) : ("success" as const),
+            direction, tokenSymbol: null, tokenName: null,
+          };
+        });
+        const hasMore = rawTxs.length >= limit;
+        const calcTotal = hasMore ? page * limit + 1 : (page - 1) * limit + transactions.length;
+        res.json(GetWalletTransactionsResponse.parse({
+          transactions, total: total || calcTotal,
+          page, limit, nextCursor: hasMore ? String(page + 1) : null, hasMore,
+        }));
+        return;
+      }
+      // No data source available — return empty
+      res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit, nextCursor: null, hasMore: false }));
+      return;
+    }
+
     if (COINSTATS_CHAINS.includes(chain)) {
       const connectionId = COIN_ID_MAP[chain] ?? chain;
       const data = await coinstatsFetch(
@@ -881,6 +1043,60 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       }
       const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, records.length)));
+      return;
+    }
+
+    if (chain === "xdc") {
+      const rpcAddr = normalizeXdcAddress(address);
+      let txData: Record<string, unknown>[] = [];
+      try {
+        const bsData = await xdcBlocksScanFetch({
+          module: "account", action: "txlist",
+          address: rpcAddr, page: "1", offset: "50", sort: "desc",
+        });
+        txData = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
+      } catch {
+        if (COINSTATS_KEY) {
+          try {
+            const data = await coinstatsFetch(`/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=xdce-crowd-sale&limit=30`);
+            const csTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
+            const peerSet = new Set<string>();
+            const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+            for (const tx of csTxs) {
+              const from = String(tx["from"] ?? tx["sender"] ?? "").toLowerCase();
+              const to = String(tx["to"] ?? tx["receiver"] ?? "").toLowerCase();
+              if (!from || !to) continue;
+              peerSet.add(from); peerSet.add(to);
+              const val = parseFloat(String(tx["amount"] ?? tx["value"] ?? "0"));
+              const ts = tx["date"] ? new Date(String(tx["date"])).toISOString() : new Date().toISOString();
+              const key = `${from}:${to}`;
+              const ex = edgeMap.get(key);
+              if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = ts; }
+              else edgeMap.set(key, { totalValue: val.toFixed(6), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
+            }
+            const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, 10);
+            res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, rpcAddr.toLowerCase(), csTxs.length)));
+            return;
+          } catch { /* CoinStats also failed — fall through to empty graph */ }
+        }
+      }
+      const peerSet = new Set<string>();
+      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+      for (const tx of txData) {
+        const from = String(tx["from"] ?? "").toLowerCase();
+        const to = String(tx["to"] ?? "").toLowerCase();
+        if (!from || !to) continue;
+        peerSet.add(from); peerSet.add(to);
+        const rawVal = String(tx["value"] ?? "0");
+        const val = Number(BigInt(rawVal === "" ? "0" : rawVal)) / 1e18;
+        const ts = new Date(Number(tx["timeStamp"]) * 1000).toISOString();
+        const key = `${from}:${to}`;
+        const ex = edgeMap.get(key);
+        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = ts; }
+        else edgeMap.set(key, { totalValue: val.toFixed(6), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
+      }
+      const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, 10);
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, rpcAddr.toLowerCase(), txData.length)));
       return;
     }
 

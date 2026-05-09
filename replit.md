@@ -35,6 +35,7 @@ A crypto blockchain wallet tracing tool with a dark intelligence-dashboard UI. U
 
 - **Contract-first**: All API shapes live in `openapi.yaml`; never hand-write request/response types
 - **DAG via Constellation Network API**: `https://be-mainnet.constellationnetwork.io` (NOT CoinStats). Balance in DATUM (÷1e8). Transactions use `meta.next` token as cursor (base64-encoded JSON `{hash:"..."}`), passed as `?next=<token>` — zero overlap between pages. Do NOT use `search_after` — it causes massive page overlap (95-99 duplicate txs per page).
+- **BTC via Blockstream API**: `https://blockstream.info/api`. Balance = `chain_stats.funded_txo_sum - chain_stats.spent_txo_sum` (satoshis ÷1e8). Page 1: `GET /address/{addr}/txs`; subsequent pages: `GET /address/{addr}/txs/chain/{last_txid}` — 25 txs per page, zero overlap. Cursor = `txid` of last tx in the batch. Do NOT use blockchain.info — page-based only, 50 tx limit.
 - **XRP cursor pagination**: Uses XRPL marker objects (JSON-encoded) as cursor strings; marker returned by `account_tx` RPC is stringified and returned as `nextCursor`
 - **Address case sensitivity**: Only EVM chains (ethereum/polygon/bsc) get `.toLowerCase()`. XRP, XLM, HBAR, XDC, DAG are case-sensitive — never lowercase them.
 - **Transaction accumulation**: Frontend accumulates transactions across pages in local state (`allTxs`). React Query fetches page 1; "Load More" and "Load All History" buttons fetch subsequent pages via direct `fetch()` with cursor params.
@@ -58,8 +59,9 @@ A crypto blockchain wallet tracing tool with a dark intelligence-dashboard UI. U
 - XRP `date` field is Ripple epoch (add 946684800 seconds to get Unix time)
 - XRP `nextCursor` is `JSON.stringify(marker)` — parse with `JSON.parse` before sending to XRPL RPC
 - All external fetches use `fetchWithTimeout(url, options, 8000)` — 8 second limit
-- `COINSTATS_CHAINS = ["xlm", "hbar", "xdc"]` — DAG is NOT in this list (uses its own API)
-- `evmChains = ["ethereum", "polygon", "bsc"]` — only these get `.toLowerCase()` on addresses
+- `COINSTATS_CHAINS = ["xlm", "hbar", "xdc"]` — DAG is NOT in this list (uses its own API); BTC is NOT in this list (uses Blockstream)
+- `evmChains = ["ethereum", "polygon", "bsc"]` — only these get `.toLowerCase()` on addresses; BTC addresses are case-sensitive
+- `KNOWN_LABELS` in `wallet-detail.tsx` covers XRP (16 entries), XLM (9 entries), HBAR (5 entries), EVM (18 entries), BTC (12 entries)
 
 ## Pointers
 

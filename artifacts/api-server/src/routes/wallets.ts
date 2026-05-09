@@ -85,10 +85,59 @@ async function etherscanFetch(params: Record<string, string>, chain: string): Pr
   return resp.json() as Promise<Record<string, unknown>>;
 }
 
-async function btcFetch(address: string): Promise<Record<string, unknown>> {
-  const resp = await fetchWithTimeout(`https://blockchain.info/rawaddr/${address}?limit=50`, {}, 8000);
-  if (!resp.ok) throw new Error(`Blockchain.info request failed: ${resp.status}`);
+// ── Blockstream.info BTC API (cursor-based, 25 txs/page, no overlap) ─────────
+async function blockstreamAddress(address: string): Promise<Record<string, unknown>> {
+  const resp = await fetchWithTimeout(`https://blockstream.info/api/address/${address}`, {}, 10000);
+  if (!resp.ok) throw new Error(`Blockstream address API ${resp.status}`);
   return resp.json() as Promise<Record<string, unknown>>;
+}
+
+async function blockstreamTxs(address: string, afterTxid?: string): Promise<Array<Record<string, unknown>>> {
+  const path = afterTxid
+    ? `/api/address/${address}/txs/chain/${afterTxid}`
+    : `/api/address/${address}/txs`;
+  const resp = await fetchWithTimeout(`https://blockstream.info${path}`, {}, 10000);
+  if (!resp.ok) throw new Error(`Blockstream txs API ${resp.status}`);
+  return resp.json() as Promise<Array<Record<string, unknown>>>;
+}
+
+function parseBtcTx(tx: Record<string, unknown>, address: string, priceUsd: number) {
+  const vin = (tx["vin"] as Array<Record<string, unknown>>) ?? [];
+  const vout = (tx["vout"] as Array<Record<string, unknown>>) ?? [];
+  const status = (tx["status"] as Record<string, unknown>) ?? {};
+  const isCoinbase = vin.some((v) => v["is_coinbase"] === true);
+  const isOutgoing = !isCoinbase && vin.some((v) => {
+    const prevout = v["prevout"] as Record<string, unknown> | undefined;
+    return String(prevout?.["scriptpubkey_address"] ?? "") === address;
+  });
+  const valueToSelf = vout
+    .filter((o) => String(o["scriptpubkey_address"] ?? "") === address)
+    .reduce((sum, o) => sum + Number(o["value"] ?? 0), 0);
+  const valueSentOut = vout
+    .filter((o) => String(o["scriptpubkey_address"] ?? "") !== address)
+    .reduce((sum, o) => sum + Number(o["value"] ?? 0), 0);
+  const valueSat = isOutgoing ? valueSentOut : valueToSelf;
+  const value = satToBtc(valueSat);
+  const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
+  const fromAddr = isCoinbase ? "coinbase"
+    : isOutgoing ? address
+    : String((vin[0]?.["prevout"] as Record<string, unknown> | undefined)?.["scriptpubkey_address"] ?? "unknown");
+  const toAddr: string | null = isOutgoing
+    ? (String(vout.find((o) => String(o["scriptpubkey_address"] ?? "") !== address)?.["scriptpubkey_address"] ?? "") || null)
+    : (valueToSelf > 0 ? address : null);
+  const blockTime = Number(status["block_time"] ?? 0);
+  const timestamp = blockTime ? new Date(blockTime * 1000).toISOString() : new Date().toISOString();
+  const isSelf = isOutgoing && valueSentOut === 0 && valueToSelf > 0;
+  return {
+    hash: String(tx["txid"] ?? ""),
+    from: fromAddr, to: toAddr, value, valueUsd,
+    fee: satToBtc(Number(tx["fee"] ?? 0)),
+    feeUsd: parseFloat((Number(tx["fee"] ?? 0) / 1e8 * priceUsd).toFixed(4)),
+    timestamp, blockNumber: Number(status["block_height"] ?? 0),
+    status: (status["confirmed"] ? "success" : "pending") as "success" | "pending" | "failed",
+    direction: (isCoinbase ? "in" : isSelf ? "self" : isOutgoing ? "out" : "in") as "in" | "out" | "self",
+    tokenSymbol: "BTC", tokenName: null as string | null,
+  };
 }
 
 // Fetch with a hard timeout (ms)
@@ -188,17 +237,25 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
     }
 
     if (chain === "bitcoin") {
-      const data = await btcFetch(address);
-      const n_tx = (data["n_tx"] as number) ?? 0;
-      const balance = satToBtc(String(data["final_balance"] ?? "0"));
+      const [addrData, recentTxs] = await Promise.all([
+        blockstreamAddress(address),
+        blockstreamTxs(address),
+      ]);
+      const chainStats = (addrData["chain_stats"] as Record<string, unknown>) ?? {};
+      const balanceSat = Math.max(0, Number(chainStats["funded_txo_sum"] ?? 0) - Number(chainStats["spent_txo_sum"] ?? 0));
+      const balance = satToBtc(balanceSat);
       const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
-      const txs = (data["txs"] as Array<Record<string, unknown>>) ?? [];
-      const firstSeen = txs.length > 0 ? new Date(Number(txs[txs.length - 1]["time"]) * 1000).toISOString() : null;
-      const lastSeen = txs.length > 0 ? new Date(Number(txs[0]["time"]) * 1000).toISOString() : null;
-      const tags = guessTags(false, n_tx);
+      const txCount = Number(chainStats["tx_count"] ?? 0);
+      const getTs = (t: Record<string, unknown> | undefined) => {
+        const bt = Number((t?.["status"] as Record<string, unknown>)?.["block_time"] ?? 0);
+        return bt ? new Date(bt * 1000).toISOString() : null;
+      };
+      const firstSeen = recentTxs.length > 0 ? getTs(recentTxs[recentTxs.length - 1]) : null;
+      const lastSeen  = recentTxs.length > 0 ? getTs(recentTxs[0]) : null;
+      const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
-        address, chain, balance, balanceUsd, transactionCount: n_tx,
-        firstSeen, lastSeen, tags, riskScore: computeRiskScore(n_tx, tags), isContract: false,
+        address, chain, balance, balanceUsd, transactionCount: txCount,
+        firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
       }));
       return;
     }
@@ -430,41 +487,17 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     }
 
     if (chain === "bitcoin") {
-      const data = await btcFetch(address);
-      const txs = (data["txs"] as Array<Record<string, unknown>>) ?? [];
-      const total = (data["n_tx"] as number) ?? txs.length;
-      const paginated = txs.slice((page - 1) * limit, page * limit);
-
-      const transactions = paginated.map((tx) => {
-        const inputs = (tx["inputs"] as Array<Record<string, unknown>>) ?? [];
-        const out = (tx["out"] as Array<Record<string, unknown>>) ?? [];
-        const isFrom = inputs.some((i) => {
-          const prev = i["prev_out"] as Record<string, unknown> | undefined;
-          return prev?.["addr"] === address;
-        });
-        const valueSat = out.reduce((sum, o) => sum + Number(o["value"] ?? 0), 0);
-        const value = satToBtc(valueSat);
-        const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
-        const feeSat = (tx["fee"] as number) ?? 0;
-        const fee = satToBtc(feeSat);
-        const toAddr = out.map((o) => o["addr"] as string).filter(Boolean)[0] ?? null;
-        const direction = isFrom ? (toAddr === address ? "self" : "out") : "in";
-        return {
-          hash: String(tx["hash"]),
-          from: inputs[0] ? String((inputs[0]["prev_out"] as Record<string, unknown>)?.["addr"] ?? "coinbase") : "coinbase",
-          to: toAddr, value, valueUsd, fee,
-          feeUsd: parseFloat((parseFloat(fee) * priceUsd).toFixed(2)),
-          timestamp: new Date(Number(tx["time"]) * 1000).toISOString(),
-          blockNumber: Number(tx["block_height"] ?? 0),
-          status: "success" as const,
-          direction: direction as "in" | "out" | "self",
-          tokenSymbol: null, tokenName: null,
-        };
-      });
-
-      const btcHasMore = paginated.length === limit;
-      const nextCursor = btcHasMore ? String(page + 1) : null;
-      res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit, nextCursor, hasMore: btcHasMore }));
+      // Blockstream cursor: pass last txid as cursor → /txs/chain/{txid} for next page of 25
+      const [txs, addrData] = await Promise.all([
+        blockstreamTxs(address, cursorParam ?? undefined),
+        blockstreamAddress(address),
+      ]);
+      const chainStats = (addrData["chain_stats"] as Record<string, unknown>) ?? {};
+      const total = Number(chainStats["tx_count"] ?? txs.length);
+      const transactions = txs.map((tx) => parseBtcTx(tx, address, priceUsd));
+      const hasMore = txs.length === 25;
+      const nextCursor = hasMore ? String(txs[txs.length - 1]["txid"] ?? "") : null;
+      res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit: 25, nextCursor, hasMore }));
       return;
     }
 
@@ -617,27 +650,19 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     }
 
     if (chain === "bitcoin") {
-      const data = await btcFetch(address);
-      const txs = (data["txs"] as Array<Record<string, unknown>>) ?? [];
+      const txs = await blockstreamTxs(address);
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
-
       for (const tx of txs.slice(0, 20)) {
-        const inputs = (tx["inputs"] as Array<Record<string, unknown>>) ?? [];
-        const outs = (tx["out"] as Array<Record<string, unknown>>) ?? [];
-        const fromAddr = inputs[0] ? String((inputs[0]["prev_out"] as Record<string, unknown>)?.["addr"] ?? "") : "";
-        for (const o of outs) {
-          const toAddr = String(o["addr"] ?? "");
-          const val = Number(o["value"] ?? 0) / 1e8;
-          if (!toAddr || toAddr === fromAddr) continue;
-          peerSet.add(fromAddr); peerSet.add(toAddr);
-          const key = `${fromAddr}:${toAddr}`;
-          const ex = edgeMap.get(key);
-          if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; }
-          else edgeMap.set(key, { totalValue: val.toFixed(8), totalValueUsd: val * priceUsd, count: 1, lastSeen: new Date().toISOString() });
-        }
+        const parsed = parseBtcTx(tx, address, priceUsd);
+        if (!parsed.from || !parsed.to) continue;
+        peerSet.add(parsed.from); peerSet.add(parsed.to);
+        const key = `${parsed.from}:${parsed.to}`;
+        const val = parseFloat(parsed.value);
+        const ex = edgeMap.get(key);
+        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = parsed.timestamp; }
+        else edgeMap.set(key, { totalValue: parsed.value, totalValueUsd: val * priceUsd, count: 1, lastSeen: parsed.timestamp });
       }
-
       const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, txs.length)));
       return;

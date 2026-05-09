@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useGetRecentSearches, useGetSearchStats, useSaveSearch } from "@workspace/api-client-react";
-import { Search, ShieldAlert, History, LayoutDashboard } from "lucide-react";
+import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -24,6 +24,7 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const [address, setAddress] = useState("");
   const [chain, setChain] = useState("ethereum");
+  const [showDonate, setShowDonate] = useState(false);
 
   const { data: recentSearches, isLoading: recentLoading } = useGetRecentSearches();
   const { data: stats, isLoading: statsLoading } = useGetSearchStats();
@@ -43,11 +44,69 @@ export default function Home() {
     );
   };
 
+  const DONATE_ADDRESSES = [
+    { chain: "ETH", symbol: "ETH", address: "0x742d35Cc6634C0532925a3b8D4C9b9b8D8b8D8b8" },
+    { chain: "BTC", symbol: "BTC", address: "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh" },
+    { chain: "XRP", symbol: "XRP", address: "rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh" },
+    { chain: "DAG", symbol: "DAG", address: "DAG3WnpWbwnnKBLtu8FvBp3VUkmxJgdcs41dTHg5" },
+  ];
+
+  const [copiedAddr, setCopiedAddr] = useState<string | null>(null);
+  const copyAddr = (addr: string) => {
+    navigator.clipboard.writeText(addr).catch(() => {});
+    setCopiedAddr(addr);
+    setTimeout(() => setCopiedAddr(null), 2000);
+  };
+
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Intelligence Search</h1>
         <p className="text-muted-foreground font-mono text-sm">Enter target wallet address for full profile extraction.</p>
+      </div>
+
+      {/* ── Donate / Support banner ── */}
+      <div className="rounded-xl border border-pink-500/30 bg-gradient-to-r from-pink-950/40 via-rose-900/20 to-pink-950/40 shadow-lg shadow-pink-500/10 overflow-hidden">
+        <div className="flex items-start gap-4 p-5">
+          <div className="flex-shrink-0 w-12 h-12 rounded-full bg-pink-500/20 border border-pink-500/40 flex items-center justify-center">
+            <Heart className="w-5 h-5 text-pink-400 fill-pink-400/30" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center justify-between gap-4 flex-wrap">
+              <div>
+                <h2 className="text-lg font-bold text-pink-400 font-mono tracking-wide">Support This Free Tool</h2>
+                <p className="text-sm text-muted-foreground mt-0.5">
+                  <span className="text-pink-300 font-semibold">100% free</span> — no fees, ads, or data selling.
+                  CryptoChainTrace is community-powered. Even a small donation keeps the servers running and new chains coming.
+                </p>
+              </div>
+              <button
+                onClick={() => setShowDonate(!showDonate)}
+                className="flex-shrink-0 px-4 py-1.5 rounded border border-pink-500/50 bg-pink-500/10 hover:bg-pink-500/20 text-pink-300 font-mono text-xs font-bold tracking-wider transition-colors"
+              >
+                {showDonate ? "HIDE ↑" : "DONATE ↓"}
+              </button>
+            </div>
+
+            {showDonate && (
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                {DONATE_ADDRESSES.map(({ chain: c, symbol, address: addr }) => (
+                  <div key={c} className="flex items-center gap-2 rounded-lg bg-black/30 border border-pink-500/20 px-3 py-2 group">
+                    <span className="text-xs font-mono font-bold text-pink-400 w-8 flex-shrink-0">{symbol}</span>
+                    <span className="text-xs font-mono text-muted-foreground truncate flex-1">{addr}</span>
+                    <button
+                      onClick={() => copyAddr(addr)}
+                      className="flex-shrink-0 text-muted-foreground hover:text-pink-300 transition-colors"
+                      title={`Copy ${symbol} address`}
+                    >
+                      <Copy className={`w-3.5 h-3.5 ${copiedAddr === addr ? "text-green-400" : ""}`} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
       </div>
 
       <Card className="border-primary/20 bg-card/40 shadow-lg shadow-primary/5">

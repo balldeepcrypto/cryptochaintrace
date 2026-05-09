@@ -195,11 +195,29 @@ async function stellarFetch(path: string): Promise<Record<string, unknown>> {
   const resp = await fetchWithTimeout(`https://horizon.stellar.org${path}`, {
     headers: { accept: "application/json" },
   }, 12000);
+  // 400 = invalid address format, 404 = account not found — return empty gracefully
+  if (resp.status === 400 || resp.status === 404) return { _empty: true, _status: resp.status };
   if (!resp.ok) throw new Error(`Stellar Horizon request failed: ${resp.status}`);
   return resp.json() as Promise<Record<string, unknown>>;
 }
 
-function parseStellarPayment(
+// Stellar op types that carry a value transfer (we skip change_trust, manage_offer, etc.)
+const STELLAR_VALUE_OPS = new Set([
+  "payment", "create_account",
+  "path_payment_strict_receive", "path_payment_strict_send",
+  "account_merge",
+  "create_claimable_balance", "claim_claimable_balance",
+]);
+
+/** Extract the asset symbol from a Stellar asset string like "yXRP:GCFZ..." or "native" */
+function stellarAssetSymbol(asset: unknown): string {
+  const s = String(asset ?? "native");
+  if (s === "native") return "XLM";
+  const colon = s.indexOf(":");
+  return colon > 0 ? s.slice(0, colon) : s;
+}
+
+function parseStellarOp(
   rec: Record<string, unknown>,
   address: string,
   priceUsd: number,
@@ -208,34 +226,63 @@ function parseStellarPayment(
   fee: string; feeUsd: number; timestamp: string; blockNumber: number;
   status: "success" | "failed"; direction: "in" | "out" | "self";
   tokenSymbol: string; tokenName: null;
-} {
+} | null {
   const type = String(rec["type"] ?? "payment");
+  if (!STELLAR_VALUE_OPS.has(type)) return null; // skip non-value ops
+
   let from: string;
   let to: string | null;
   let rawAmount: string;
+  let tokenSymbol = "XLM";
+
   if (type === "create_account") {
     from = String(rec["funder"] ?? "");
     to = String(rec["account"] ?? "") || null;
     rawAmount = String(rec["starting_balance"] ?? "0");
-  } else {
-    from = String(rec["from"] ?? "");
-    to = String(rec["to"] ?? "") || null;
+  } else if (type === "account_merge") {
+    from = String(rec["account"] ?? address);
+    to = String(rec["into"] ?? "") || null;
+    rawAmount = "0"; // merged balance unknown without extra fetch
+  } else if (type === "create_claimable_balance") {
+    // Someone creates a claimable balance earmarked for specific claimants
+    from = String(rec["sponsor"] ?? rec["source_account"] ?? "");
+    // Find which claimant is our address (recipient); fall back to first claimant
+    const claimants = (rec["claimants"] as Array<{ destination: string }> | undefined) ?? [];
+    const ours = claimants.find((c) => c.destination === address);
+    to = (ours ?? claimants[0])?.destination ?? null;
     rawAmount = String(rec["amount"] ?? "0");
+    tokenSymbol = stellarAssetSymbol(rec["asset"]);
+  } else if (type === "claim_claimable_balance") {
+    // This address is claiming a previously-created claimable balance (receiving)
+    from = String(rec["source_account"] ?? "");
+    to = String(rec["claimant"] ?? address);
+    rawAmount = "0"; // amount requires a separate lookup of the balance_id
+    tokenSymbol = "XLM";
+  } else {
+    // payment, path_payment_strict_receive, path_payment_strict_send
+    from = String(rec["from"] ?? rec["source_account"] ?? "");
+    to = String(rec["to"] ?? "") || null;
+    // path_payment_strict_send uses source_amount; strict_receive uses amount
+    rawAmount = String(rec["amount"] ?? rec["source_amount"] ?? "0");
+    tokenSymbol = stellarAssetSymbol(rec["asset_type"] === "native" ? "native" : rec["asset_code"]);
   }
+
   const value = parseFloat(rawAmount).toFixed(6);
   const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
   const isOut = from === address;
   const isSelf = from === address && (to === null || to === address);
   const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
+
   return {
     hash: String(rec["transaction_hash"] ?? ""),
     from, to, value, valueUsd,
     fee: "0.000001", feeUsd: parseFloat((0.000001 * priceUsd).toFixed(6)),
     timestamp: String(rec["created_at"] ?? new Date().toISOString()),
     blockNumber: 0, status: "success" as const,
-    direction, tokenSymbol: "XLM", tokenName: null,
+    direction, tokenSymbol, tokenName: null,
   };
 }
+
 
 // ─── GET /wallets/:address ─────────────────────────────────────────────────
 
@@ -331,26 +378,34 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
     }
 
     if (chain === "xlm") {
-      const [acctResult, lastPayResult, firstPayResult] = await Promise.allSettled([
+      const [acctResult, lastOpResult, firstOpResult] = await Promise.allSettled([
         stellarFetch(`/accounts/${address}`),
-        stellarFetch(`/accounts/${address}/payments?limit=1&order=desc`),
-        stellarFetch(`/accounts/${address}/payments?limit=1&order=asc`),
+        stellarFetch(`/accounts/${address}/operations?limit=1&order=desc`),
+        stellarFetch(`/accounts/${address}/operations?limit=1&order=asc`),
       ]);
       const acct = acctResult.status === "fulfilled" ? acctResult.value : {};
+      // If account not found or invalid, return empty wallet
+      if (acct["_empty"]) {
+        res.json(GetWalletResponse.parse({
+          address, chain, balance: "0.000000", balanceUsd: 0, transactionCount: 0,
+          firstSeen: null, lastSeen: null, tags: [], riskScore: null, isContract: false,
+        }));
+        return;
+      }
       const balances = (acct["balances"] as Array<Record<string, unknown>>) ?? [];
       const nativeBal = balances.find((b) => b["asset_type"] === "native");
       const balance = parseFloat(String(nativeBal?.["balance"] ?? "0")).toFixed(6);
       const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
-      const lastPayRecs = lastPayResult.status === "fulfilled"
-        ? ((lastPayResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
+      const lastOpRecs = lastOpResult.status === "fulfilled"
+        ? ((lastOpResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
         : [];
-      const firstPayRecs = firstPayResult.status === "fulfilled"
-        ? ((firstPayResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
+      const firstOpRecs = firstOpResult.status === "fulfilled"
+        ? ((firstOpResult.value["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? []
         : [];
-      const lastSeen = lastPayRecs[0]?.["created_at"] ? String(lastPayRecs[0]["created_at"]) : null;
-      const firstSeen = firstPayRecs[0]?.["created_at"] ? String(firstPayRecs[0]["created_at"]) : null;
+      const lastSeen = lastOpRecs[0]?.["created_at"] ? String(lastOpRecs[0]["created_at"]) : null;
+      const firstSeen = firstOpRecs[0]?.["created_at"] ? String(firstOpRecs[0]["created_at"]) : null;
       const subentryCount = Number(acct["subentry_count"] ?? 0);
-      const txCount = Math.max(subentryCount, lastPayRecs.length);
+      const txCount = Math.max(subentryCount, lastOpRecs.length);
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -578,12 +633,21 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     }
 
     if (chain === "xlm") {
-      // Stellar Horizon payments endpoint — cursor = paging_token of last record, 200 per page
+      // Stellar Horizon operations endpoint — broader than /payments (catches path payments, merges, etc.)
+      // cursor = paging_token of last record, up to 200 per page, no overlap
       const stellarLimit = Math.min(limit, 200);
-      const path = `/accounts/${address}/payments?limit=${stellarLimit}&order=desc${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
+      const path = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
       const data = await stellarFetch(path);
+      if (data["_empty"]) {
+        res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit: stellarLimit, nextCursor: null, hasMore: false }));
+        return;
+      }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
-      const transactions = records.map((rec) => parseStellarPayment(rec, address, priceUsd));
+      // Filter to value-bearing ops only (skip change_trust, manage_offer, etc.)
+      const transactions = records.flatMap((rec) => {
+        const parsed = parseStellarOp(rec, address, priceUsd);
+        return parsed ? [parsed] : [];
+      });
       const hasMore = records.length === stellarLimit;
       const lastRec = records[records.length - 1];
       const nextCursor = hasMore && lastRec ? String(lastRec["paging_token"] ?? "") : null;
@@ -783,13 +847,13 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     }
 
     if (chain === "xlm") {
-      const data = await stellarFetch(`/accounts/${address}/payments?limit=30&order=desc`);
-      const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+      const data = await stellarFetch(`/accounts/${address}/operations?limit=30&order=desc`);
+      const records = ((data["_empty"] ? [] : (data["_embedded"] as Record<string, unknown> | undefined)?.["records"]) as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
       for (const rec of records) {
-        const parsed = parseStellarPayment(rec, address, priceUsd);
-        if (!parsed.from || !parsed.to) continue;
+        const parsed = parseStellarOp(rec, address, priceUsd);
+        if (!parsed || !parsed.from || !parsed.to) continue;
         peerSet.add(parsed.from); peerSet.add(parsed.to);
         const val = parseFloat(parsed.value);
         const key = `${parsed.from}:${parsed.to}`;

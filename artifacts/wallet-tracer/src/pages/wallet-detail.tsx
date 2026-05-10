@@ -369,9 +369,14 @@ export default function WalletDetail() {
 
   // ── Multi-wallet selection ──────────────────────────────────────────────────
   const [selectedWallets, setSelectedWallets] = useState<Set<string>>(new Set());
-  const toggleSelected = (addr: string) =>
+  const toggleSelected = (addr: string) => {
     setSelectedWallets((prev) => { const s = new Set(prev); if (s.has(addr)) s.delete(addr); else s.add(addr); return s; });
-  const clearSelected = () => setSelectedWallets(new Set());
+    setMultiWallets((prev) => prev.includes(addr) ? prev.filter(a => a !== addr) : [...prev, addr]);
+  };
+  const clearSelected = () => {
+    setSelectedWallets(new Set());
+    setMultiWallets([]);
+  };
 
   // ── Investigative report modal ─────────────────────────────────────────────
   const [showReportModal, setShowReportModal] = useState(false);
@@ -2272,7 +2277,7 @@ export default function WalletDetail() {
               </button>
             </div>
             <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
-              Map depth-2 connections for multiple wallets and surface shared counterparties, common endpoints, and commingling paths. Add up to 4 additional wallets to cross-reference.
+              Map depth-2 connections for multiple wallets and surface shared counterparties, common endpoints, and commingling paths. Select counterparties in the ledger below to auto-populate — or paste addresses manually. No limit.
             </p>
 
             {/* ── Tracked Wallet List ── */}
@@ -2299,7 +2304,10 @@ export default function WalletDetail() {
                     <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">Wallet {i + 2}</span>
                     {KNOWN_LABELS[w] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[w])}</span>}
                     <button
-                      onClick={() => setMultiWallets((prev) => prev.filter((_, j) => j !== i))}
+                      onClick={() => {
+                        setMultiWallets((prev) => prev.filter((_, j) => j !== i));
+                        setSelectedWallets((prev) => { const s = new Set(prev); s.delete(w); return s; });
+                      }}
                       className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"
                     >
                       <X className="w-3 h-3" />
@@ -2309,7 +2317,7 @@ export default function WalletDetail() {
               })}
 
               {/* Add wallet input */}
-              {multiWallets.length < 4 && (
+              {true && (
                 <div className="flex gap-2">
                   <input
                     type="text"
@@ -2367,6 +2375,19 @@ export default function WalletDetail() {
 
           {multiResult && (
             <div className="divide-y divide-border/20">
+
+              {/* ── Generate report from analysis ── */}
+              <div className="px-5 py-3 bg-orange-950/20 border-b border-orange-500/20 flex items-center justify-between gap-3">
+                <div className="text-xs font-mono text-orange-300/80">
+                  Analysis complete · {multiResult.trackedWallets.length} wallets · {multiResult.sharedCounterparties.length + multiResult.commonEndpoints.length} shared nodes found
+                </div>
+                <button
+                  onClick={() => { setReportContent(generateReport()); setShowReportModal(true); }}
+                  className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-orange-600 hover:bg-orange-500 border border-orange-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
+                >
+                  <FileText className="w-3.5 h-3.5" /> GENERATE INVESTIGATIVE REPORT
+                </button>
+              </div>
 
               {/* ── Wallet legend ── */}
               <div className="px-5 py-3 flex items-center gap-4 flex-wrap bg-muted/5">

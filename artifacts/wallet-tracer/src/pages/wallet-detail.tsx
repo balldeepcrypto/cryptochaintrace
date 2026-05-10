@@ -13,7 +13,7 @@ import {
   ArrowLeftRight, ArrowDownLeft, ArrowUpRight,
   Network, GitFork, FileCode, Tag, ShieldAlert, ShieldCheck, Shield,
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
-  AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Heart, MessageSquare,
+  AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Check, Heart, MessageSquare,
   Plus, GitMerge, Layers,
 } from "lucide-react";
 import { Link } from "wouter";
@@ -360,6 +360,12 @@ export default function WalletDetail() {
   // Everything else is read directly from page.current in the render.
   const [allTxs, setAllTxs] = useState<Tx[]>([]);
   const [showDonate, setShowDonate] = useState(false);
+  const [copiedDonate, setCopiedDonate] = useState<string | null>(null);
+  const copyDonateAddr = (addr: string) => {
+    navigator.clipboard.writeText(addr).catch(() => {});
+    setCopiedDonate(addr);
+    setTimeout(() => setCopiedDonate(null), 2000);
+  };
 
   // Commit new pagination data: sort newest-first, mutate the ref, trigger re-render.
   function commit(txs: Tx[], cursor: string | null, more: boolean) {
@@ -1175,12 +1181,10 @@ export default function WalletDetail() {
           {showDonate && (
             <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
               {([
-                { symbol: "XRP",  label: "Ripple",        address: "YOUR_XRP_DONATION_ADDRESS_HERE",  color: "text-cyan-300",   bg: "bg-cyan-950/30",   border: "border-cyan-500/25" },
-                { symbol: "XLM",  label: "Stellar",       address: "YOUR_XLM_DONATION_ADDRESS_HERE",  color: "text-sky-300",    bg: "bg-sky-950/30",    border: "border-sky-500/25" },
-                { symbol: "HBAR", label: "Hedera",        address: "YOUR_HBAR_DONATION_ADDRESS_HERE", color: "text-violet-300", bg: "bg-violet-950/30", border: "border-violet-500/25" },
-                { symbol: "BTC",  label: "Bitcoin",       address: "YOUR_BTC_DONATION_ADDRESS_HERE",  color: "text-orange-300", bg: "bg-orange-950/30", border: "border-orange-500/25" },
-                { symbol: "XDC",  label: "XinFin",        address: "YOUR_XDC_DONATION_ADDRESS_HERE",  color: "text-teal-300",   bg: "bg-teal-950/30",   border: "border-teal-500/25" },
-                { symbol: "ETH",  label: "Ethereum",      address: "YOUR_ETH_DONATION_ADDRESS_HERE",  color: "text-blue-300",   bg: "bg-blue-950/30",   border: "border-blue-500/25" },
+                { symbol: "XLM", label: "Stellar",  address: "GCXUMH47OGMC6JKUCMNG5KSKUOZGX7H4A6P2YZTZ2FCA2ZEB2PPSB6XW", color: "text-sky-300",    bg: "bg-sky-950/30",    border: "border-sky-500/25" },
+                { symbol: "XRP", label: "Ripple",   address: "rHm4Erz4urYGqvssR6Rs8DwsQkDeEQwxuV",                          color: "text-cyan-300",   bg: "bg-cyan-950/30",   border: "border-cyan-500/25" },
+                { symbol: "BTC", label: "Bitcoin",  address: "bc1q3k20tfjatu8prsszr9jmtyayj665af2aavfeyt",                   color: "text-orange-300", bg: "bg-orange-950/30", border: "border-orange-500/25" },
+                { symbol: "ETH", label: "Ethereum", address: "0x0b3E9efb09Ead589F9F4c957228eE5E45B286d55",                  color: "text-blue-300",   bg: "bg-blue-950/30",   border: "border-blue-500/25" },
               ] as { symbol: string; label: string; address: string; color: string; bg: string; border: string }[]).map((d) => (
                 <div key={d.symbol} className={`flex items-center gap-3 ${d.bg} border ${d.border} px-3 py-2.5 rounded-lg`}>
                   <div className="shrink-0 text-center w-10">
@@ -1189,11 +1193,13 @@ export default function WalletDetail() {
                   </div>
                   <code className="text-[10px] font-mono text-muted-foreground/70 truncate flex-1 min-w-0">{d.address}</code>
                   <button
-                    onClick={() => void navigator.clipboard.writeText(d.address)}
-                    className={`${d.color} opacity-60 hover:opacity-100 transition-opacity shrink-0`}
+                    onClick={() => copyDonateAddr(d.address)}
+                    className={`shrink-0 transition-all ${copiedDonate === d.address ? "text-green-400 scale-110" : `${d.color} opacity-60 hover:opacity-100`}`}
                     title={`Copy ${d.symbol} address`}
                   >
-                    <Copy className="w-3.5 h-3.5" />
+                    {copiedDonate === d.address
+                      ? <Check className="w-3.5 h-3.5" />
+                      : <Copy className="w-3.5 h-3.5" />}
                   </button>
                 </div>
               ))}

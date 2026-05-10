@@ -46,12 +46,10 @@ export default function Home() {
   };
 
   const DONATE_ADDRESSES = [
-    { chain: "XRP",  symbol: "XRP",  color: "text-cyan-300",   bg: "bg-cyan-950/40",   border: "border-cyan-500/30",   address: "YOUR_XRP_DONATION_ADDRESS_HERE" },
-    { chain: "XLM",  symbol: "XLM",  color: "text-sky-300",    bg: "bg-sky-950/40",    border: "border-sky-500/30",    address: "YOUR_XLM_DONATION_ADDRESS_HERE" },
-    { chain: "HBAR", symbol: "HBAR", color: "text-violet-300", bg: "bg-violet-950/40", border: "border-violet-500/30", address: "YOUR_HBAR_DONATION_ADDRESS_HERE" },
-    { chain: "BTC",  symbol: "BTC",  color: "text-orange-300", bg: "bg-orange-950/40", border: "border-orange-500/30", address: "YOUR_BTC_DONATION_ADDRESS_HERE" },
-    { chain: "XDC",  symbol: "XDC",  color: "text-teal-300",   bg: "bg-teal-950/40",   border: "border-teal-500/30",   address: "YOUR_XDC_DONATION_ADDRESS_HERE" },
-    { chain: "ETH",  symbol: "ETH",  color: "text-blue-300",   bg: "bg-blue-950/40",   border: "border-blue-500/30",   address: "YOUR_ETH_DONATION_ADDRESS_HERE" },
+    { chain: "XLM", symbol: "XLM", color: "text-sky-300",    bg: "bg-sky-950/40",    border: "border-sky-500/30",    address: "GCXUMH47OGMC6JKUCMNG5KSKUOZGX7H4A6P2YZTZ2FCA2ZEB2PPSB6XW" },
+    { chain: "XRP", symbol: "XRP", color: "text-cyan-300",   bg: "bg-cyan-950/40",   border: "border-cyan-500/30",   address: "rHm4Erz4urYGqvssR6Rs8DwsQkDeEQwxuV" },
+    { chain: "BTC", symbol: "BTC", color: "text-orange-300", bg: "bg-orange-950/40", border: "border-orange-500/30", address: "bc1q3k20tfjatu8prsszr9jmtyayj665af2aavfeyt" },
+    { chain: "ETH", symbol: "ETH", color: "text-blue-300",   bg: "bg-blue-950/40",   border: "border-blue-500/30",   address: "0x0b3E9efb09Ead589F9F4c957228eE5E45B286d55" },
   ];
 
   const [copiedAddr, setCopiedAddr] = useState<string | null>(null);

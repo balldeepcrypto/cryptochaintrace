@@ -624,6 +624,15 @@ export default function WalletDetail() {
   }
 
   // ── Saved wallets (localStorage) ──
+  // ── Multi-wallet commingling analysis (declared early so setMultiWallets is in scope for toggleSavedWallet) ──
+  const [showMultiPanel, setShowMultiPanel] = useState(false);
+  const [multiWallets, setMultiWallets] = useState<string[]>([]);
+  const [multiWalletInput, setMultiWalletInput] = useState("");
+  const [multiResult, setMultiResult] = useState<MultiAnalysisResult | null>(null);
+  const [multiLoading, setMultiLoading] = useState(false);
+  const [multiProgress, setMultiProgress] = useState("");
+  const [multiError, setMultiError] = useState<string | null>(null);
+
   const [savedWallets, setSavedWallets] = useState<Set<string>>(() => {
     try {
       const raw = localStorage.getItem("chaintrace-saved-wallets");
@@ -655,14 +664,7 @@ export default function WalletDetail() {
   const trailPanelRef = useRef<HTMLDivElement>(null);
   const multiPanelRef = useRef<HTMLDivElement>(null);
 
-  // ── Multi-wallet commingling analysis ──
-  const [showMultiPanel, setShowMultiPanel] = useState(false);
-  const [multiWallets, setMultiWallets] = useState<string[]>([]);
-  const [multiWalletInput, setMultiWalletInput] = useState("");
-  const [multiResult, setMultiResult] = useState<MultiAnalysisResult | null>(null);
-  const [multiLoading, setMultiLoading] = useState(false);
-  const [multiProgress, setMultiProgress] = useState("");
-  const [multiError, setMultiError] = useState<string | null>(null);
+  // (multi-wallet state moved above toggleSavedWallet — see above)
 
   // ── Blocks React Query background-refetches from overwriting accumulated txs ──
   const txInitializedRef = useRef(false);

@@ -11,8 +11,6 @@ import { AddressDisplay } from "@/components/address-display";
 const CHAINS = [
   { value: "ethereum", label: "Ethereum" },
   { value: "bitcoin", label: "Bitcoin" },
-  { value: "polygon", label: "Polygon" },
-  { value: "bsc", label: "BSC" },
   { value: "xrp", label: "XRP (XRPL)" },
   { value: "xlm", label: "XLM (Stellar)" },
   { value: "hbar", label: "HBAR (Hedera)" },

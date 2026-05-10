@@ -10,7 +10,7 @@ import { AddressDisplay } from "@/components/address-display";
 export default function TraceGraph() {
   const params = useParams();
   const address = params.address || "";
-  type ChainId = "ethereum" | "bitcoin" | "polygon" | "bsc" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
+  type ChainId = "ethereum" | "bitcoin" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
   const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
   const [depth, setDepth] = useState<"1" | "2" | "3">("1");
   

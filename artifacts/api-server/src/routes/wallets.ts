@@ -934,46 +934,27 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     }
 
     if (chain === "xlm") {
-      // Stellar Horizon /transactions endpoint — one record per transaction envelope
-      // cursor = paging_token of last record, up to 200 per page, no overlap
+      // Stellar Horizon /operations endpoint — one record per operation, real amounts
+      // (The /transactions envelope endpoint always has value=0; only /operations has actual amounts)
       const stellarLimit = Math.min(limit, 200);
-      const path = `/accounts/${address}/transactions?limit=${stellarLimit}&order=desc${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
+      const path = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
       const data = await stellarFetch(path);
       if (data["_empty"]) {
         res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit: stellarLimit, nextCursor: null, hasMore: false }));
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
-      const transactions = records.map((rec) => {
-        const sourceAccount = String(rec["source_account"] ?? "");
-        const isOut = sourceAccount === address;
-        const direction: "in" | "out" | "self" = isOut ? "out" : "in";
-        const ts = String(rec["created_at"] ?? new Date().toISOString());
-        const ledger = Number(rec["ledger"] ?? 0);
-        const feeStroops = Number(rec["fee_charged"] ?? 0);
-        const feeXlm = (feeStroops / 1e7).toFixed(7);
-        const feeUsd = parseFloat((feeStroops / 1e7 * priceUsd).toFixed(2));
-        const successful = rec["successful"] !== false;
-        return {
-          hash: String(rec["hash"] ?? rec["id"] ?? ""),
-          from: sourceAccount,
-          to: null as string | null,
-          value: "0.000000",
-          valueUsd: 0,
-          fee: feeXlm,
-          feeUsd,
-          timestamp: ts,
-          blockNumber: ledger,
-          status: (successful ? "success" : "failed") as "success" | "failed",
-          direction,
-          tokenSymbol: null as string | null,
-          tokenName: null as string | null,
-        };
-      });
+      const transactions = records
+        .map((rec) => parseStellarOp(rec, address, priceUsd))
+        .filter((t): t is NonNullable<typeof t> => t !== null);
       const hasMore = records.length === stellarLimit;
       const lastRec = records[records.length - 1];
       const nextCursor = hasMore && lastRec ? String(lastRec["paging_token"] ?? "") : null;
-      res.json(GetWalletTransactionsResponse.parse({ transactions, total: (page - 1) * stellarLimit + transactions.length + (hasMore ? 1 : 0), page, limit: stellarLimit, nextCursor, hasMore }));
+      res.json(GetWalletTransactionsResponse.parse({
+        transactions,
+        total: (page - 1) * stellarLimit + transactions.length + (hasMore ? 1 : 0),
+        page, limit: stellarLimit, nextCursor, hasMore,
+      }));
       return;
     }
 

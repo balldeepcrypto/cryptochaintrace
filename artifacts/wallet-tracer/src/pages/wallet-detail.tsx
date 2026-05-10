@@ -376,12 +376,19 @@ export default function WalletDetail() {
   // ── Investigative report modal ─────────────────────────────────────────────
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportCopied, setReportCopied] = useState(false);
+  const [reportContent, setReportContent] = useState("");
 
   function generateReport(): string {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
     const short = (a: string) => a.length > 18 ? `${a.slice(0, 10)}...${a.slice(-6)}` : a;
-    const shortHash = (h: string) => h ? (h.length > 16 ? `${h.slice(0, 10)}...${h.slice(-6)}` : h) : "(none)";
+    const shortHash = (h: string) => h ? (h.length > 12 ? `${h.slice(0, 10)}...` : h) : "(none)";
+    const fmtAmt = (v: string, dir: "in" | "out") => {
+      const n = parseFloat(v);
+      const sign = dir === "in" ? "+" : "−";
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+    };
+    const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
     const sep = (label = "") => label
       ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
       : "─".repeat(64);
@@ -415,8 +422,10 @@ export default function WalletDetail() {
     // Ensure every selected wallet appears even if filtered out by minAmount
     for (const a of selectedWallets) if (!byAddr.has(a)) byAddr.set(a, []);
 
-    lines.push(sep(`SELECTED COUNTERPARTIES  (${selectedWallets.size})`));
+    lines.push(sep(`TRANSACTION TREE  (${address.slice(0, 10)}...)  →  ${selectedWallets.size} selected`));
     lines.push("");
+    lines.push(`  ${address}${KNOWN_LABELS[address] ? `  ← ${KNOWN_LABELS[address].label.toUpperCase()}` : ""}`);
+    lines.push(`  │`);
 
     const addrs = Array.from(byAddr.keys());
     addrs.forEach((addr, i) => {
@@ -427,19 +436,39 @@ export default function WalletDetail() {
       const indent    = isLast ? "   " : "│  ";
       const inRow  = rows.find(r => r.direction === "in");
       const outRow = rows.find(r => r.direction === "out");
-      const dirLabel = inRow && outRow ? "IN+OUT" : inRow ? "IN" : outRow ? "OUT" : "—";
+      const dirLabel = inRow && outRow ? "IN+OUT" : outRow ? "OUT" : "IN";
       const totalTxs = rows.reduce((s, r) => s + r.txCount, 0);
       const totalVal = rows.reduce((s, r) => s + r.totalValue, 0);
-      const sampleTxs = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr).slice(0, 2);
-      const txLine = sampleTxs.map(t => shortHash(t.hash)).join("  ");
-      const memos = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.memo).map(t => t.memo!).slice(0, 2);
       const lastTs = rows.reduce((l, r) => r.latestTs > l ? r.latestTs : l, "").slice(0, 10);
-      lines.push(`  ${connector} [${dirLabel}]  ${short(addr)}${known ? `  ◄ ${known.label.toUpperCase()}` : ""}`);
-      lines.push(`  ${indent}    Full     : ${addr}`);
-      if (totalTxs > 0) lines.push(`  ${indent}    Txs      : ${totalTxs}   |   Total: ${totalVal.toFixed(4)} ${chainUp}`);
-      if (lastTs) lines.push(`  ${indent}    Last Seen: ${lastTs}`);
-      if (txLine) lines.push(`  ${indent}    TX hash${sampleTxs.length > 1 ? "es" : " "} : ${txLine}`);
-      if (memos.length > 0) lines.push(`  ${indent}    Memo${memos.length > 1 ? "s" : " "} : ${memos.join("  |  ")}`);
+      const labelStr = known ? `  ← ${known.label.toUpperCase()}` : "";
+
+      lines.push(`  ${connector} ${dirLabel}  →  ${short(addr)}${labelStr}`);
+      lines.push(`  ${indent}   Full  : ${addr}`);
+      lines.push(`  ${indent}   Total : ${totalTxs} tx${totalTxs !== 1 ? "s" : ""}  |  ${totalVal.toFixed(4)} ${chainUp}  |  Last: ${lastTs || "—"}`);
+
+      // Individual transactions for this counterparty
+      const txsForAddr = allTxs
+        .filter(t => {
+          const cp = t.direction === "in" ? t.from : t.to;
+          return cp === addr && parseFloat(t.value) >= minAmount;
+        })
+        .slice(0, 12);
+
+      if (txsForAddr.length > 0) {
+        lines.push(`  ${indent}   │`);
+        txsForAddr.forEach((tx, ti) => {
+          const txConn = ti === txsForAddr.length - 1 ? "└──" : "├──";
+          const dir   = tx.direction === "in" ? "IN " : "OUT";
+          const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
+          const asset = tx.tokenSymbol || chainUp;
+          const memoStr = tx.memo ? `  [memo: "${tx.memo}"]` : "";
+          const dtStr   = tx.destinationTag ? `  [DT: ${tx.destinationTag}]` : "";
+          lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${shortHash(tx.hash)})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}${memoStr}${dtStr}`);
+        });
+        const remaining = totalTxs - txsForAddr.length;
+        if (remaining > 0) lines.push(`  ${indent}       (+ ${remaining} more transactions not shown)`);
+      }
+
       if (!isLast) lines.push(`  │`);
     });
     lines.push("");
@@ -487,6 +516,93 @@ export default function WalletDetail() {
         lines.push(`  │       Txs: ${totalTxs}  |  Total: ${totalVal.toFixed(4)} ${chainUp}`);
         if (sampleTx) lines.push(`  │       Sample TX : ${shortHash(sampleTx.hash)}`);
         if (memos.length > 0) lines.push(`  │       Memos (subpoena targets): ${memos.join("  |  ")}`);
+      }
+      lines.push("");
+    }
+
+    lines.push("═".repeat(64));
+    lines.push("Generated by CryptoChainTrace  ·  cryptochaintrace.replit.app");
+    return lines.join("\n");
+  }
+
+  function generateTrailReport(): string {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const chainUp = chain.toUpperCase();
+    const short = (a: string) => a.length > 18 ? `${a.slice(0, 10)}...${a.slice(-6)}` : a;
+    const sep = (label = "") => label
+      ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
+      : "─".repeat(64);
+    const lines: string[] = [];
+
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║          TRAIL TRACE REPORT — CryptoChainTrace              ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`Generated : ${now}`);
+    lines.push(`Chain     : ${chainUp}   |   Nodes: ${trailEntries.length}   |   Commingling: ${comminglingAddresses.size}`);
+    lines.push("");
+
+    if (trailEntries.length === 0) {
+      lines.push("  No trail data. Run START TRAIL TRACE first.");
+      return lines.join("\n");
+    }
+
+    const root = trailEntries[0];
+    lines.push(sep("ROOT WALLET"));
+    lines.push("");
+    const rootKnown = KNOWN_LABELS[root.address];
+    lines.push(`  [ROOT]  ${root.address}`);
+    if (rootKnown) lines.push(`          Label   : ${rootKnown.label.toUpperCase()}`);
+    lines.push(`          Tx Count : ${root.txCount}   |   USD: $${root.totalValueUsd.toLocaleString()}`);
+    lines.push("");
+
+    lines.push(sep("TRAIL TREE"));
+    lines.push("");
+
+    const printNode = (entry: TrailEntry, prefix: string, isLast: boolean) => {
+      const conn = isLast ? "└── " : "├── ";
+      const childPfx = isLast ? "     " : "│    ";
+      const known = KNOWN_LABELS[entry.address];
+      const isComm = comminglingAddresses.has(entry.address);
+      const flags = [
+        known   ? `← ${known.label.toUpperCase()}` : "",
+        isComm  ? "⚠ COMMINGLING HUB" : "",
+        entry.error ? "! ERROR" : "",
+      ].filter(Boolean).join("  ");
+      lines.push(`  ${prefix}${conn}${short(entry.address)}${flags ? "  " + flags : ""}`);
+      lines.push(`  ${prefix}${childPfx}Full: ${entry.address}`);
+      if (entry.txCount > 0)
+        lines.push(`  ${prefix}${childPfx}Txs: ${entry.txCount}   Depth: ${entry.depth}   USD: $${entry.totalValueUsd.toLocaleString()}`);
+      const children = trailEntries.filter(e => e.parentAddress === entry.address);
+      children.forEach((child, ci) => printNode(child, prefix + childPfx, ci === children.length - 1));
+    };
+
+    const rootChildren = trailEntries.filter(e => e.parentAddress === root.address);
+    rootChildren.forEach((child, i) => printNode(child, "", i === rootChildren.length - 1));
+    lines.push("");
+
+    if (comminglingAddresses.size > 0) {
+      lines.push(sep("COMMINGLING HUBS DETECTED"));
+      lines.push("");
+      for (const addr of comminglingAddresses) {
+        const known = KNOWN_LABELS[addr];
+        const entry = trailEntries.find(e => e.address === addr);
+        lines.push(`  ⚠  ${addr}`);
+        if (known) lines.push(`       Label: ${known.label.toUpperCase()}`);
+        if (entry) lines.push(`       Txs: ${entry.txCount}   Depth: ${entry.depth}   USD: $${entry.totalValueUsd.toLocaleString()}`);
+      }
+      lines.push("");
+    }
+
+    const exchanges = trailEntries.filter(e => KNOWN_LABELS[e.address]?.type === "exchange");
+    if (exchanges.length > 0) {
+      lines.push(sep("EXCHANGE ON-RAMPS"));
+      lines.push("");
+      for (const e of exchanges) {
+        const known = KNOWN_LABELS[e.address]!;
+        lines.push(`  ├── ${e.address}`);
+        lines.push(`  │       ◄ OFFICIAL ${known.label.toUpperCase()}`);
+        lines.push(`  │       Depth: ${e.depth}   Txs: ${e.txCount}   USD: $${e.totalValueUsd.toLocaleString()}`);
+        if (e.parentAddress) lines.push(`  │       Reached via: ${short(e.parentAddress)}`);
       }
       lines.push("");
     }
@@ -1296,7 +1412,7 @@ export default function WalletDetail() {
               </div>
               <Button
                 className="font-mono text-xs bg-orange-600 hover:bg-orange-500 text-white border-0"
-                onClick={() => setShowReportModal(true)}
+                onClick={() => { setReportContent(generateReport()); setShowReportModal(true); }}
               >
                 <FileText className="w-3.5 h-3.5 mr-1.5" /> GENERATE INVESTIGATIVE REPORT
               </Button>
@@ -1556,8 +1672,9 @@ export default function WalletDetail() {
                   groupedRows.map((row, idx) => {
                     const known = KNOWN_LABELS[row.address];
                     const saved = savedWallets.has(row.address);
+                    const isSelected = selectedWallets.has(row.address);
                     return (
-                      <tr key={`${row.address}:${row.direction}:${idx}`} className={`hover:bg-muted/10 transition-colors text-sm font-mono ${known ? "bg-muted/5" : ""}`}>
+                      <tr key={`${row.address}:${row.direction}:${idx}`} className={`hover:bg-muted/10 transition-colors text-sm font-mono ${isSelected ? "bg-yellow-950/25 border-l-2 border-yellow-500/50" : known ? "bg-muted/5" : ""}`}>
                         <td className="px-5 py-3">
                           {row.direction === "in" ? (
                             <span className="inline-flex items-center gap-1 text-green-400 bg-green-950/40 border border-green-500/20 px-2 py-0.5 rounded text-xs"><ArrowDownLeft className="w-3 h-3" /> IN</span>
@@ -1833,6 +1950,12 @@ export default function WalletDetail() {
                   </span>
                 )}
               </div>
+              <button
+                onClick={() => { setReportContent(generateTrailReport()); setShowReportModal(true); }}
+                className="flex items-center gap-1 text-[11px] font-mono text-orange-400 hover:text-orange-300 bg-orange-950/30 hover:bg-orange-950/60 border border-orange-500/30 rounded px-2 py-1 transition-colors"
+              >
+                <FileText className="w-3 h-3" /> TRAIL REPORT
+              </button>
               <button onClick={() => setShowTrailPanel(false)} className="text-muted-foreground hover:text-foreground transition-colors">
                 <X className="w-4 h-4" />
               </button>
@@ -2457,8 +2580,7 @@ export default function WalletDetail() {
               <div className="flex items-center gap-2">
                 <button
                   onClick={() => {
-                    const text = generateReport();
-                    navigator.clipboard.writeText(text).catch(() => {});
+                    navigator.clipboard.writeText(reportContent).catch(() => {});
                     setReportCopied(true);
                     setTimeout(() => setReportCopied(false), 2500);
                   }}
@@ -2482,7 +2604,7 @@ export default function WalletDetail() {
             {/* Report body */}
             <div className="overflow-y-auto flex-1 p-5">
               <pre className="font-mono text-[11px] leading-relaxed text-green-300/90 whitespace-pre bg-transparent select-all">
-                {generateReport()}
+                {reportContent}
               </pre>
             </div>
 
@@ -2493,8 +2615,7 @@ export default function WalletDetail() {
               </span>
               <button
                 onClick={() => {
-                  const text = generateReport();
-                  navigator.clipboard.writeText(text).catch(() => {});
+                  navigator.clipboard.writeText(reportContent).catch(() => {});
                   setReportCopied(true);
                   setTimeout(() => setReportCopied(false), 2500);
                 }}

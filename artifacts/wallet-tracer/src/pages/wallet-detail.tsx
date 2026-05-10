@@ -369,14 +369,9 @@ export default function WalletDetail() {
 
   // ── Multi-wallet selection ──────────────────────────────────────────────────
   const [selectedWallets, setSelectedWallets] = useState<Set<string>>(new Set());
-  const toggleSelected = (addr: string) => {
+  const toggleSelected = (addr: string) =>
     setSelectedWallets((prev) => { const s = new Set(prev); if (s.has(addr)) s.delete(addr); else s.add(addr); return s; });
-    setMultiWallets((prev) => prev.includes(addr) ? prev.filter(a => a !== addr) : [...prev, addr]);
-  };
-  const clearSelected = () => {
-    setSelectedWallets(new Set());
-    setMultiWallets([]);
-  };
+  const clearSelected = () => setSelectedWallets(new Set());
 
   // ── Investigative report modal ─────────────────────────────────────────────
   const [showReportModal, setShowReportModal] = useState(false);
@@ -644,6 +639,9 @@ export default function WalletDetail() {
       try { localStorage.setItem("chaintrace-saved-wallets", JSON.stringify([...next])); } catch { /* noop */ }
       return next;
     });
+    // Also sync into selectedWallets (shows SELECTED state) and multiWallets (Analysis pool)
+    setSelectedWallets((prev) => { const s = new Set(prev); if (s.has(addr)) s.delete(addr); else s.add(addr); return s; });
+    setMultiWallets((prev) => prev.includes(addr) ? prev.filter(a => a !== addr) : [...prev, addr]);
   }, []);
 
   // ── Counterparty context menu ──
@@ -1726,14 +1724,16 @@ export default function WalletDetail() {
                           <div className="flex items-center gap-1.5 justify-end">
                             <button
                               onClick={(e) => { e.stopPropagation(); toggleSavedWallet(row.address); }}
-                              className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap ${
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap flex items-center gap-1 ${
                                 savedWallets.has(row.address)
                                   ? "text-yellow-400 border-yellow-500/40 bg-yellow-950/20 hover:bg-yellow-950/40"
                                   : "text-muted-foreground border-border/30 hover:text-yellow-400 hover:border-yellow-500/40"
                               }`}
-                              title={savedWallets.has(row.address) ? "Remove from watchlist" : "Add to watchlist"}
+                              title={savedWallets.has(row.address) ? "Remove from Analysis pool & watchlist" : "Add to Multi-Wallet Analysis pool"}
                             >
-                              {savedWallets.has(row.address) ? <BookmarkCheck className="w-3 h-3" /> : <Bookmark className="w-3 h-3" />}
+                              {savedWallets.has(row.address)
+                                ? <><BookmarkCheck className="w-3 h-3" /> TRACKED</>
+                                : <><Bookmark className="w-3 h-3" /> TRACK</>}
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); toggleSelected(row.address); }}
@@ -2307,6 +2307,11 @@ export default function WalletDetail() {
                       onClick={() => {
                         setMultiWallets((prev) => prev.filter((_, j) => j !== i));
                         setSelectedWallets((prev) => { const s = new Set(prev); s.delete(w); return s; });
+                        setSavedWallets((prev) => {
+                          const next = new Set(prev); next.delete(w);
+                          try { localStorage.setItem("chaintrace-saved-wallets", JSON.stringify([...next])); } catch { /* noop */ }
+                          return next;
+                        });
                       }}
                       className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"
                     >

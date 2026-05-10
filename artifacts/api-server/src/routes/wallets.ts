@@ -73,6 +73,64 @@ function guessTags(isContract: boolean, txCount: number): string[] {
   return tags;
 }
 
+// ── Blockscout v2 — free, no API key, covers ETH and Polygon ──────────────
+const BLOCKSCOUT_BASES: Record<string, string> = {
+  ethereum: "https://eth.blockscout.com",
+  polygon: "https://polygon.blockscout.com",
+};
+
+async function blockscoutFetchAddress(address: string, chain: string): Promise<Record<string, unknown>> {
+  const base = BLOCKSCOUT_BASES[chain];
+  if (!base) throw new Error(`No Blockscout endpoint for chain: ${chain}`);
+  const resp = await fetchWithTimeout(`${base}/api/v2/addresses/${address}`, {}, 10000);
+  if (!resp.ok) throw new Error(`Blockscout address ${resp.status}`);
+  return resp.json() as Promise<Record<string, unknown>>;
+}
+
+interface BlockscoutTxsResult {
+  items: Record<string, unknown>[];
+  nextPageParams: Record<string, unknown> | null;
+}
+
+async function blockscoutFetchTxs(address: string, chain: string, cursor?: string): Promise<BlockscoutTxsResult> {
+  const base = BLOCKSCOUT_BASES[chain];
+  if (!base) throw new Error(`No Blockscout endpoint for chain: ${chain}`);
+  const url = new URL(`${base}/api/v2/addresses/${address}/transactions`);
+  if (cursor) {
+    const params = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
+  }
+  const resp = await fetchWithTimeout(url.toString(), {}, 10000);
+  if (!resp.ok) throw new Error(`Blockscout txs ${resp.status}`);
+  const data = await resp.json() as { items?: Record<string, unknown>[]; next_page_params?: Record<string, unknown> | null };
+  return { items: data.items ?? [], nextPageParams: data.next_page_params ?? null };
+}
+
+function parseBlockscoutTx(tx: Record<string, unknown>, address: string, priceUsd: number) {
+  const fromHash = String((tx["from"] as Record<string, unknown> | null)?.["hash"] ?? "");
+  const toRaw = tx["to"] as Record<string, unknown> | null;
+  const toHash = toRaw?.["hash"] != null ? String(toRaw["hash"]) : null;
+  const weiValue = String(tx["value"] ?? "0");
+  const feeValue = String((tx["fee"] as Record<string, unknown> | null)?.["value"] ?? "0");
+  const addrLower = address.toLowerCase();
+  const direction: "in" | "out" | "self" =
+    fromHash.toLowerCase() === addrLower
+      ? toHash?.toLowerCase() === addrLower ? "self" : "out"
+      : "in";
+  const status: "success" | "failed" | "pending" =
+    tx["status"] === "ok" ? "success" : tx["status"] === "error" ? "failed" : "pending";
+  return {
+    hash: String(tx["hash"] ?? ""),
+    from: fromHash, to: toHash,
+    value: weiToEth(weiValue), valueUsd: weiToUsd(weiValue, priceUsd),
+    fee: weiToEth(feeValue), feeUsd: weiToUsd(feeValue, priceUsd),
+    timestamp: String(tx["timestamp"] ?? new Date().toISOString()),
+    blockNumber: Number(tx["block_number"] ?? 0),
+    status, direction,
+    tokenSymbol: null as string | null, tokenName: null as string | null,
+  };
+}
+
 async function etherscanFetch(params: Record<string, string>, chain: string): Promise<Record<string, unknown>> {
   let baseUrl = ETHERSCAN_BASE;
   if (chain === "polygon") baseUrl = "https://api.polygonscan.com/api";
@@ -671,6 +729,29 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       return;
     }
 
+    if (BLOCKSCOUT_BASES[chain]) {
+      // ETH / Polygon — Blockscout v2 (no API key required)
+      const [addrData, txData] = await Promise.allSettled([
+        blockscoutFetchAddress(address, chain),
+        blockscoutFetchTxs(address, chain),
+      ]);
+      const addrInfo = addrData.status === "fulfilled" ? addrData.value : {};
+      const weiBalance = String(addrInfo["coin_balance"] ?? "0");
+      const balance = weiToEth(weiBalance);
+      const balanceUsd = weiToUsd(weiBalance, priceUsd);
+      const isContract = addrInfo["is_contract"] === true;
+      const txItems = txData.status === "fulfilled" ? txData.value.items : [];
+      const txCount = Number(addrInfo["transaction_count"] ?? txItems.length);
+      const tags = guessTags(isContract, txCount);
+      const lastSeen = txItems.length > 0 ? String(txItems[0]["timestamp"] ?? "") || null : null;
+      res.json(GetWalletResponse.parse({
+        address, chain, balance, balanceUsd, transactionCount: txCount,
+        firstSeen: null, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract,
+      }));
+      return;
+    }
+
+    // BSC (and any future EVM chain) — Etherscan-style (requires API key)
     const [balRes, txCountRes, codeRes] = await Promise.all([
       etherscanFetch({ module: "account", action: "balance", address, tag: "latest" }, chain),
       etherscanFetch({ module: "proxy", action: "eth_getTransactionCount", address, tag: "latest" }, chain),
@@ -1152,6 +1233,22 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       return;
     }
 
+    if (BLOCKSCOUT_BASES[chain]) {
+      // ETH / Polygon — Blockscout v2 (no API key required)
+      const { items, nextPageParams } = await blockscoutFetchTxs(address, chain, cursorParam ?? undefined);
+      const transactions = items.map((tx) => parseBlockscoutTx(tx, address, priceUsd));
+      const hasMore = nextPageParams !== null;
+      const nextCursor = hasMore
+        ? Buffer.from(JSON.stringify(nextPageParams), "utf8").toString("base64url")
+        : null;
+      res.json(GetWalletTransactionsResponse.parse({
+        transactions, total: transactions.length + (hasMore ? 1 : 0),
+        page, limit, nextCursor, hasMore,
+      }));
+      return;
+    }
+
+    // BSC (and any future EVM chain) — Etherscan-style (requires API key)
     const data = await etherscanFetch({
       module: "account", action: "txlist",
       address, startblock: "0", endblock: "99999999",
@@ -1433,6 +1530,30 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       return;
     }
 
+    if (BLOCKSCOUT_BASES[chain]) {
+      // ETH / Polygon — Blockscout v2 (no API key required)
+      const { items } = await blockscoutFetchTxs(address, chain);
+      const peerSet = new Set<string>();
+      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+      for (const tx of items) {
+        const from = String((tx["from"] as Record<string, unknown> | null)?.["hash"] ?? "").toLowerCase();
+        const toRaw = tx["to"] as Record<string, unknown> | null;
+        const to = toRaw?.["hash"] != null ? String(toRaw["hash"]).toLowerCase() : null;
+        if (!from || !to) continue;
+        peerSet.add(from); peerSet.add(to);
+        const weiValue = String(tx["value"] ?? "0");
+        const ts = String(tx["timestamp"] ?? new Date().toISOString());
+        const key = `${from}:${to}`;
+        const ex = edgeMap.get(key);
+        if (ex) { ex.totalValueUsd += weiToUsd(weiValue, priceUsd); ex.count += 1; ex.lastSeen = ts; }
+        else edgeMap.set(key, { totalValue: weiToEth(weiValue), totalValueUsd: weiToUsd(weiValue, priceUsd), count: 1, lastSeen: ts });
+      }
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, items.length)));
+      return;
+    }
+
+    // BSC (and any future EVM chain) — Etherscan-style (requires API key)
     const data = await etherscanFetch({
       module: "account", action: "txlist",
       address, startblock: "0", endblock: "99999999", page: "1", offset: "50", sort: "desc",

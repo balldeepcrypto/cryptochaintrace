@@ -339,9 +339,10 @@ export default function WalletDetail() {
   type DirFilter = "all" | "only-in" | "only-out";
   const [dirFilter, setDirFilter] = useState<DirFilter>("all");
 
-  // ── Minimum amount filter — default 1 (hide dust/spam; user can lower to 0) ──
-  const [minAmount, setMinAmount] = useState(1);
-  const [minAmountInput, setMinAmountInput] = useState("1");
+  // ── Minimum amount filter — chain-specific default (BTC/ETH show small transfers) ──
+  const defaultMinAmount = ["bitcoin", "ethereum"].includes(chain) ? 0.001 : 1;
+  const [minAmount, setMinAmount] = useState(defaultMinAmount);
+  const [minAmountInput, setMinAmountInput] = useState(String(defaultMinAmount));
 
   // ── All pagination state in one ref — plain mutable object, zero stale-closure risk ──
   // Reading page.current in render always gives the latest value.

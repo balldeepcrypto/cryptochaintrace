@@ -1,0 +1,47 @@
+ENHANCED MULTI-WALLET SELECTION + INVESTIGATIVE TRAIL REPORT (Major UX Upgrade)
+
+Current setup:
+- Group by Counterparty view has per-row "TRAIL" buttons (yellow bookmark style)
+- Top bar has: ADD TO WATCHLIST, TRACE GRAPH, MULTI-WALLET ANALYSIS, START TRAIL TRACE
+
+New behavior we want:
+1. Clicking the yellow TRAIL / bookmark button on any counterparty row **flags / selects** that wallet (visual highlight, count updates like "3 wallets selected").
+2. User can select as many as they want (no limit).
+3. The top action buttons now become **smart**:
+   - TRACE GRAPH → builds graph from all selected wallets
+   - MULTI-WALLET ANALYSIS → analyzes all selected wallets
+   - **NEW BUTTON**: "GENERATE INVESTIGATIVE REPORT" (prominent, next to the others)
+
+4. When "GENERATE INVESTIGATIVE REPORT" is clicked, produce a clean, copy-pasteable ASCII tree report in this exact style:
+
+THEFT WALLET (Source)
+[starting wallet address]
+    │
+    ├── OUT (TA: [short tx hash] ...) → [counterparty] [LABEL if exchange]
+    │                        │
+    │                        └── OUT → [next wallet] ← MAJOR MIXING HUB
+    │
+    └── OUT (multiple TAs) → [wallet] ← RECURRING COMMINGLING NODE
+
+                    ↓↓↓  CENTRAL COMMINGLING LAYER  ↓↓↓
+
+[central hub address] (central mixing hub)
+    │
+    ├── Multiple IN/OUT to: [list of connected wallets + labels]
+    └── Flows into major bridge nodes: [list]
+
+                    ↓↓↓  EXCHANGE ON-RAMPS & CUSTODIAL LAYER  ↓↓↓
+
+1. DIRECT EXCHANGE DEPOSITS (with Memos – subpoena targets)
+   ├── [address] → [Exchange Name] (Memos: ...)
+
+2. CONFIRMED CUSTODIAL / EXCHANGE WALLETS
+   ├── [address] ← OFFICIAL [Exchange] COLDWALLET
+
+Include transaction counts, directions, shortened TX hashes, labels, and memos where available.
+
+Add a "Copy to Clipboard" button right below the generated report.
+
+Keep existing per-row TRAIL functionality for quick single-wallet actions.
+
+Hot-reload and test with the DAG wallet in the screenshot (select multiple counterparties → Generate Report).

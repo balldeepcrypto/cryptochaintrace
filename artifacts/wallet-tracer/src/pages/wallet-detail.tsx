@@ -14,7 +14,7 @@ import {
   Network, GitFork, FileCode, Tag, ShieldAlert, ShieldCheck, Shield,
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
   AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Check, Heart, MessageSquare,
-  Plus, GitMerge, Layers,
+  Plus, GitMerge, Layers, Flag, FileText, MousePointer2,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -366,6 +366,135 @@ export default function WalletDetail() {
     setCopiedDonate(addr);
     setTimeout(() => setCopiedDonate(null), 2000);
   };
+
+  // ── Multi-wallet selection ──────────────────────────────────────────────────
+  const [selectedWallets, setSelectedWallets] = useState<Set<string>>(new Set());
+  const toggleSelected = (addr: string) =>
+    setSelectedWallets((prev) => { const s = new Set(prev); if (s.has(addr)) s.delete(addr); else s.add(addr); return s; });
+  const clearSelected = () => setSelectedWallets(new Set());
+
+  // ── Investigative report modal ─────────────────────────────────────────────
+  const [showReportModal, setShowReportModal] = useState(false);
+  const [reportCopied, setReportCopied] = useState(false);
+
+  function generateReport(): string {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const chainUp = chain.toUpperCase();
+    const short = (a: string) => a.length > 18 ? `${a.slice(0, 10)}...${a.slice(-6)}` : a;
+    const shortHash = (h: string) => h ? (h.length > 16 ? `${h.slice(0, 10)}...${h.slice(-6)}` : h) : "(none)";
+    const sep = (label = "") => label
+      ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
+      : "─".repeat(64);
+    const lines: string[] = [];
+
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║        INVESTIGATIVE REPORT — CryptoChainTrace              ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`Generated : ${now}`);
+    lines.push(`Chain     : ${chainUp}   |   Selected Wallets : ${selectedWallets.size}`);
+    lines.push("");
+
+    // Subject wallet
+    lines.push(sep("SUBJECT WALLET"));
+    lines.push("");
+    const rootLabel = KNOWN_LABELS[address];
+    lines.push(`  [ROOT]  ${address}`);
+    if (rootLabel) lines.push(`          Label   : ${rootLabel.label} (${rootLabel.type})`);
+    lines.push(`          Balance : ${wallet?.balance ?? "?"} ${chainUp}`);
+    lines.push(`          Txs     : ${wallet?.transactionCount ?? allTxs.length}`);
+    lines.push(`          Last    : ${wallet?.lastSeen ? wallet.lastSeen.slice(0, 10) : "unknown"}`);
+    lines.push("");
+
+    // Build per-address map from groupedRows (filtered by selection)
+    const byAddr = new Map<string, GroupedRow[]>();
+    for (const r of groupedRows) {
+      if (!selectedWallets.has(r.address)) continue;
+      if (!byAddr.has(r.address)) byAddr.set(r.address, []);
+      byAddr.get(r.address)!.push(r);
+    }
+    // Ensure every selected wallet appears even if filtered out by minAmount
+    for (const a of selectedWallets) if (!byAddr.has(a)) byAddr.set(a, []);
+
+    lines.push(sep(`SELECTED COUNTERPARTIES  (${selectedWallets.size})`));
+    lines.push("");
+
+    const addrs = Array.from(byAddr.keys());
+    addrs.forEach((addr, i) => {
+      const rows = byAddr.get(addr)!;
+      const known = KNOWN_LABELS[addr];
+      const isLast = i === addrs.length - 1;
+      const connector = isLast ? "└──" : "├──";
+      const indent    = isLast ? "   " : "│  ";
+      const inRow  = rows.find(r => r.direction === "in");
+      const outRow = rows.find(r => r.direction === "out");
+      const dirLabel = inRow && outRow ? "IN+OUT" : inRow ? "IN" : outRow ? "OUT" : "—";
+      const totalTxs = rows.reduce((s, r) => s + r.txCount, 0);
+      const totalVal = rows.reduce((s, r) => s + r.totalValue, 0);
+      const sampleTxs = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr).slice(0, 2);
+      const txLine = sampleTxs.map(t => shortHash(t.hash)).join("  ");
+      const memos = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.memo).map(t => t.memo!).slice(0, 2);
+      const lastTs = rows.reduce((l, r) => r.latestTs > l ? r.latestTs : l, "").slice(0, 10);
+      lines.push(`  ${connector} [${dirLabel}]  ${short(addr)}${known ? `  ◄ ${known.label.toUpperCase()}` : ""}`);
+      lines.push(`  ${indent}    Full     : ${addr}`);
+      if (totalTxs > 0) lines.push(`  ${indent}    Txs      : ${totalTxs}   |   Total: ${totalVal.toFixed(4)} ${chainUp}`);
+      if (lastTs) lines.push(`  ${indent}    Last Seen: ${lastTs}`);
+      if (txLine) lines.push(`  ${indent}    TX hash${sampleTxs.length > 1 ? "es" : " "} : ${txLine}`);
+      if (memos.length > 0) lines.push(`  ${indent}    Memo${memos.length > 1 ? "s" : " "} : ${memos.join("  |  ")}`);
+      if (!isLast) lines.push(`  │`);
+    });
+    lines.push("");
+
+    // Flow summary
+    const outRows = groupedRows.filter(r => selectedWallets.has(r.address) && r.direction === "out");
+    const inRows  = groupedRows.filter(r => selectedWallets.has(r.address) && r.direction === "in");
+    if (outRows.length > 0 || inRows.length > 0) {
+      lines.push(sep("TRANSACTION FLOW SUMMARY"));
+      lines.push("");
+      if (outRows.length > 0) {
+        lines.push(`  OUTBOUND  (${address.slice(0, 8)}...  →  selected wallets)`);
+        for (const r of outRows.slice(0, 10)) {
+          const kn = KNOWN_LABELS[r.address];
+          lines.push(`    → ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount} tx  |  ${r.totalValue.toFixed(4)} ${chainUp}`);
+        }
+        lines.push("");
+      }
+      if (inRows.length > 0) {
+        lines.push(`  INBOUND   (selected wallets  →  ${address.slice(0, 8)}...)`);
+        for (const r of inRows.slice(0, 10)) {
+          const kn = KNOWN_LABELS[r.address];
+          lines.push(`    ← ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount} tx  |  ${r.totalValue.toFixed(4)} ${chainUp}`);
+        }
+        lines.push("");
+      }
+    }
+
+    // Exchange layer
+    const exchangeAddrs = addrs.filter(a => KNOWN_LABELS[a]?.type === "exchange");
+    if (exchangeAddrs.length > 0) {
+      lines.push(sep("EXCHANGE ON-RAMPS & CUSTODIAL LAYER"));
+      lines.push("");
+      lines.push("  CONFIRMED CUSTODIAL / EXCHANGE WALLETS:");
+      for (const addr of exchangeAddrs) {
+        const known = KNOWN_LABELS[addr]!;
+        const rows = byAddr.get(addr)!;
+        const totalTxs = rows.reduce((s, r) => s + r.txCount, 0);
+        const totalVal = rows.reduce((s, r) => s + r.totalValue, 0);
+        const sampleTx = allTxs.find(t => (t.direction === "in" ? t.from : t.to) === addr);
+        const memos = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.memo).map(t => t.memo!).slice(0, 3);
+        lines.push("");
+        lines.push(`  ├── ${addr}`);
+        lines.push(`  │       ◄ OFFICIAL ${known.label.toUpperCase()} COLDWALLET`);
+        lines.push(`  │       Txs: ${totalTxs}  |  Total: ${totalVal.toFixed(4)} ${chainUp}`);
+        if (sampleTx) lines.push(`  │       Sample TX : ${shortHash(sampleTx.hash)}`);
+        if (memos.length > 0) lines.push(`  │       Memos (subpoena targets): ${memos.join("  |  ")}`);
+      }
+      lines.push("");
+    }
+
+    lines.push("═".repeat(64));
+    lines.push("Generated by CryptoChainTrace  ·  cryptochaintrace.replit.app");
+    return lines.join("\n");
+  }
 
   // Commit new pagination data: sort newest-first, mutate the ref, trigger re-render.
   function commit(txs: Tx[], cursor: string | null, more: boolean) {
@@ -1120,39 +1249,59 @@ export default function WalletDetail() {
             <AddressDisplay address={address} truncate={false} showIcon />
           </div>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
-          <Button
-            variant="outline"
-            className={`font-mono text-xs ${
-              savedWallets.has(address)
-                ? "border-yellow-500/50 text-yellow-400 hover:bg-yellow-950/30 bg-yellow-950/20"
-                : "border-border/40 text-muted-foreground hover:border-yellow-500/50 hover:text-yellow-400"
-            }`}
-            onClick={() => toggleSavedWallet(address)}
-          >
-            {savedWallets.has(address)
-              ? <><BookmarkCheck className="w-3.5 h-3.5 mr-1.5" /> WATCHLISTED</>
-              : <><Bookmark className="w-3.5 h-3.5 mr-1.5" /> ADD TO WATCHLIST</>
-            }
-          </Button>
-          <Link href={`/trace/${address}?chain=${chain}`}>
-            <Button variant="outline" className="font-mono border-primary/30 text-primary hover:bg-primary/10 text-xs">
-              <Network className="w-3.5 h-3.5 mr-1.5" /> TRACE GRAPH
+        <div className="flex flex-col items-end gap-2 shrink-0">
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <Button
+              variant="outline"
+              className={`font-mono text-xs ${
+                savedWallets.has(address)
+                  ? "border-yellow-500/50 text-yellow-400 hover:bg-yellow-950/30 bg-yellow-950/20"
+                  : "border-border/40 text-muted-foreground hover:border-yellow-500/50 hover:text-yellow-400"
+              }`}
+              onClick={() => toggleSavedWallet(address)}
+            >
+              {savedWallets.has(address)
+                ? <><BookmarkCheck className="w-3.5 h-3.5 mr-1.5" /> WATCHLISTED</>
+                : <><Bookmark className="w-3.5 h-3.5 mr-1.5" /> ADD TO WATCHLIST</>
+              }
             </Button>
-          </Link>
-          <Button
-            variant="outline"
-            className={`font-mono text-xs ${showMultiPanel ? "border-violet-500/60 text-violet-300 bg-violet-950/30 hover:bg-violet-950/50" : "border-violet-500/30 text-violet-400 hover:bg-violet-950/30 hover:border-violet-500/60"}`}
-            onClick={() => { setShowMultiPanel((v) => !v); if (!showMultiPanel) setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
-          >
-            <Layers className="w-3.5 h-3.5 mr-1.5" /> MULTI-WALLET ANALYSIS
-          </Button>
-          <Button
-            className="font-mono bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
-            onClick={() => startTrailTrace(address)}
-          >
-            <GitFork className="w-3.5 h-3.5 mr-1.5" /> START TRAIL TRACE
-          </Button>
+            <Link href={`/trace/${address}?chain=${chain}`}>
+              <Button variant="outline" className="font-mono border-primary/30 text-primary hover:bg-primary/10 text-xs">
+                <Network className="w-3.5 h-3.5 mr-1.5" /> TRACE GRAPH
+              </Button>
+            </Link>
+            <Button
+              variant="outline"
+              className={`font-mono text-xs ${showMultiPanel ? "border-violet-500/60 text-violet-300 bg-violet-950/30 hover:bg-violet-950/50" : "border-violet-500/30 text-violet-400 hover:bg-violet-950/30 hover:border-violet-500/60"}`}
+              onClick={() => { setShowMultiPanel((v) => !v); if (!showMultiPanel) setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
+            >
+              <Layers className="w-3.5 h-3.5 mr-1.5" /> MULTI-WALLET ANALYSIS
+            </Button>
+            <Button
+              className="font-mono bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
+              onClick={() => startTrailTrace(address)}
+            >
+              <GitFork className="w-3.5 h-3.5 mr-1.5" /> START TRAIL TRACE
+            </Button>
+          </div>
+          {/* ── Selection badge + Generate Report ── */}
+          {selectedWallets.size > 0 && (
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-orange-950/40 border border-orange-500/30 rounded text-[11px] font-mono text-orange-300">
+                <Flag className="w-3 h-3 fill-orange-400 text-orange-400" />
+                <span>{selectedWallets.size} wallet{selectedWallets.size !== 1 ? "s" : ""} selected</span>
+                <button onClick={clearSelected} className="ml-1 text-orange-400/60 hover:text-orange-300 transition-colors">
+                  <X className="w-3 h-3" />
+                </button>
+              </div>
+              <Button
+                className="font-mono text-xs bg-orange-600 hover:bg-orange-500 text-white border-0"
+                onClick={() => setShowReportModal(true)}
+              >
+                <FileText className="w-3.5 h-3.5 mr-1.5" /> GENERATE INVESTIGATIVE REPORT
+              </Button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -1465,10 +1614,23 @@ export default function WalletDetail() {
                               {savedWallets.has(row.address) ? <BookmarkCheck className="w-3 h-3" /> : <Bookmark className="w-3 h-3" />}
                             </button>
                             <button
-                              onClick={() => continueTrailOnWallet(row.address)}
-                              className="text-[10px] font-mono text-primary/70 hover:text-primary border border-primary/20 hover:border-primary/50 px-2 py-0.5 rounded transition-colors whitespace-nowrap"
+                              onClick={(e) => { e.stopPropagation(); toggleSelected(row.address); }}
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap flex items-center gap-1 ${
+                                selectedWallets.has(row.address)
+                                  ? "text-orange-300 border-orange-500/50 bg-orange-950/40 hover:bg-orange-950/60"
+                                  : "text-muted-foreground border-border/30 hover:text-orange-300 hover:border-orange-500/40"
+                              }`}
+                              title={selectedWallets.has(row.address) ? "Deselect wallet" : "Select for report"}
                             >
-                              TRAIL →
+                              <Flag className={`w-3 h-3 ${selectedWallets.has(row.address) ? "fill-orange-400 text-orange-400" : ""}`} />
+                              {selectedWallets.has(row.address) ? "SELECTED" : "SELECT"}
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); continueTrailOnWallet(row.address); }}
+                              className="text-[10px] font-mono text-primary/60 hover:text-primary border border-primary/15 hover:border-primary/40 px-1.5 py-0.5 rounded transition-colors whitespace-nowrap"
+                              title="Continue trail trace on this wallet"
+                            >
+                              ▶
                             </button>
                           </div>
                         </td>
@@ -2269,6 +2431,84 @@ export default function WalletDetail() {
             </div>
           )}
         </Card>
+      )}
+
+      {/* ── Investigative Report Modal ─────────────────────────────────────── */}
+      {showReportModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
+          onClick={() => setShowReportModal(false)}
+        >
+          <div
+            className="relative w-full max-w-4xl bg-[#0a0c10] border border-orange-500/30 rounded-lg shadow-2xl flex flex-col max-h-[90vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
+                <span className="font-mono text-sm text-orange-300 font-bold uppercase tracking-widest">
+                  Investigative Report
+                </span>
+                <span className="text-[11px] font-mono text-muted-foreground">
+                  {selectedWallets.size} selected wallet{selectedWallets.size !== 1 ? "s" : ""} · {chain.toUpperCase()}
+                </span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    const text = generateReport();
+                    navigator.clipboard.writeText(text).catch(() => {});
+                    setReportCopied(true);
+                    setTimeout(() => setReportCopied(false), 2500);
+                  }}
+                  className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
+                    reportCopied
+                      ? "border-green-500/50 text-green-400 bg-green-950/30"
+                      : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30 hover:border-orange-500/60"
+                  }`}
+                >
+                  {reportCopied ? <><Check className="w-3.5 h-3.5" /> COPIED!</> : <><Copy className="w-3.5 h-3.5" /> COPY TO CLIPBOARD</>}
+                </button>
+                <button
+                  onClick={() => setShowReportModal(false)}
+                  className="text-muted-foreground hover:text-foreground transition-colors p-1"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+
+            {/* Report body */}
+            <div className="overflow-y-auto flex-1 p-5">
+              <pre className="font-mono text-[11px] leading-relaxed text-green-300/90 whitespace-pre bg-transparent select-all">
+                {generateReport()}
+              </pre>
+            </div>
+
+            {/* Footer */}
+            <div className="px-5 py-3 border-t border-border/30 shrink-0 flex items-center justify-between bg-muted/5">
+              <span className="text-[10px] font-mono text-muted-foreground/50">
+                Click anywhere outside to close · Select text to copy manually
+              </span>
+              <button
+                onClick={() => {
+                  const text = generateReport();
+                  navigator.clipboard.writeText(text).catch(() => {});
+                  setReportCopied(true);
+                  setTimeout(() => setReportCopied(false), 2500);
+                }}
+                className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
+                  reportCopied
+                    ? "border-green-500/50 text-green-400 bg-green-950/30"
+                    : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30"
+                }`}
+              >
+                {reportCopied ? <><Check className="w-3 h-3" /> COPIED!</> : <><Copy className="w-3 h-3" /> COPY TO CLIPBOARD</>}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
     </div>

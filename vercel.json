@@ -1,14 +1,14 @@
 {
   "version": 2,
   "installCommand": "pnpm install --frozen-lockfile",
-  "buildCommand": "NODE_ENV=production pnpm --filter @workspace/api-server run build && NODE_ENV=production BASE_PATH=/ PORT=3000 pnpm --filter @workspace/wallet-tracer run build",
-  "outputDirectory": "artifacts/wallet-tracer/dist/public",
+  "buildCommand": "NODE_ENV=production pnpm --filter @workspace/api-server run build && NODE_ENV=production BASE_PATH=/dist/public PORT=3000 pnpm --filter @workspace/wallet-tracer run build",
   "functions": {
     "api/[...route].ts": {
       "maxDuration": 30
     }
   },
   "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    { "source": "/api/:path*", "destination": "/api/[...route].ts" },
+    { "source": "/:path*", "destination": "/dist/public/index.html" }
   ]
 }

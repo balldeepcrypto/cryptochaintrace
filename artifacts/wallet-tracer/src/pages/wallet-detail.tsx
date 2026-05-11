@@ -787,14 +787,33 @@ export default function WalletDetail() {
 
   // ── Commingle Check ──
   const [showComminglePanel, setShowComminglePanel] = useState(false);
-  const [commingleWallets, setCommingleWallets] = useState<string[]>([]);
+  const [commingleWallets, setCommingleWallets] = useState<string[]>(() => {
+    try {
+      const raw = localStorage.getItem("chaintrace-commingle-wallets");
+      const all: string[] = raw ? JSON.parse(raw) : [];
+      return all.filter((w) => w !== address);
+    } catch { return []; }
+  });
   const [commingleWalletInput, setCommingleWalletInput] = useState("");
   const [commingleLoading, setCommingleLoading] = useState(false);
   const [commingleProgress, setCommingleProgress] = useState("");
   const [commingleResult, setCommingleResult] = useState<CommingleCheckResult | null>(null);
   const [commingleError, setCommingleError] = useState<string | null>(null);
   const [commingleReportCopied, setCommingleReportCopied] = useState(false);
+  const [commingleToast, setCommingleToast] = useState<string | null>(null);
   const comminglePanelRef = useRef<HTMLDivElement>(null);
+
+  const addToCommingle = useCallback((addr: string) => {
+    if (!addr) return;
+    setCommingleWallets((prev) => {
+      if (prev.includes(addr)) return prev;
+      const next = [...prev, addr];
+      try { localStorage.setItem("chaintrace-commingle-wallets", JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+    setCommingleToast("Added to Commingle Check");
+    setTimeout(() => setCommingleToast(null), 2500);
+  }, []);
 
   const [savedWallets, setSavedWallets] = useState<Set<string>>(() => {
     try {
@@ -1682,6 +1701,13 @@ export default function WalletDetail() {
             <ExternalLink className="w-2.5 h-2.5" />
           </a>
         )}
+        <button
+          onClick={(e) => { e.stopPropagation(); addToCommingle(addr); }}
+          className={`transition-colors shrink-0 ${commingleWallets.includes(addr) ? "text-purple-400" : "text-muted-foreground/40 hover:text-purple-400"}`}
+          title={commingleWallets.includes(addr) ? "In Commingle Check" : "Add to Commingle Check"}
+        >
+          <GitMerge className="w-2.5 h-2.5" />
+        </button>
       </div>
     );
   };
@@ -1710,6 +1736,14 @@ export default function WalletDetail() {
   return (
     <div className="p-6 max-w-7xl mx-auto space-y-6" onClick={() => setActiveMenu(null)}>
 
+      {/* ── Commingle toast ── */}
+      {commingleToast && (
+        <div className="fixed bottom-6 right-6 z-[100] flex items-center gap-2.5 px-4 py-3 bg-purple-900/95 border border-purple-500/50 rounded-lg shadow-xl shadow-black/40 text-purple-200 text-xs font-mono pointer-events-none">
+          <GitMerge className="w-3.5 h-3.5 text-purple-400 shrink-0" />
+          {commingleToast}
+        </div>
+      )}
+
       {/* ── Counterparty context menu ── */}
       {activeMenu && (
         <div
@@ -1733,6 +1767,12 @@ export default function WalletDetail() {
               className="w-full text-left px-3 py-2 text-xs font-mono text-primary hover:bg-primary/10 rounded-md transition-colors flex items-center gap-2"
             >
               <GitFork className="w-3 h-3" /> Continue Trail on this Wallet
+            </button>
+            <button
+              onClick={() => { addToCommingle(activeMenu.addr); setActiveMenu(null); }}
+              className="w-full text-left px-3 py-2 text-xs font-mono text-purple-400 hover:bg-purple-950/30 rounded-md transition-colors flex items-center gap-2"
+            >
+              <GitMerge className="w-3 h-3" /> Add to Commingle Check
             </button>
             <button
               onClick={() => { toggleSavedWallet(activeMenu.addr); setActiveMenu(null); }}
@@ -1821,6 +1861,24 @@ export default function WalletDetail() {
               onClick={() => { setShowComminglePanel((v) => !v); if (!showComminglePanel) setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
             >
               <GitMerge className="w-3.5 h-3.5 mr-1.5" /> COMMINGLE CHECK
+            </Button>
+            <Button
+              variant="outline"
+              className="font-mono text-xs border-purple-500/30 text-purple-400 hover:bg-purple-950/30 hover:border-purple-500/60"
+              onClick={() => {
+                try {
+                  const raw = localStorage.getItem("chaintrace-commingle-wallets");
+                  const existing: string[] = raw ? JSON.parse(raw) : [];
+                  if (!existing.includes(address)) {
+                    localStorage.setItem("chaintrace-commingle-wallets", JSON.stringify([...existing, address]));
+                  }
+                } catch { /* noop */ }
+                setCommingleToast("Wallet saved — open Commingle Check on any profile to compare");
+                setTimeout(() => setCommingleToast(null), 3000);
+              }}
+              title="Save this wallet address into your Commingle Check comparison list"
+            >
+              <GitMerge className="w-3.5 h-3.5 mr-1.5" /> ADD TO COMMINGLE
             </Button>
             <Button
               variant="outline"
@@ -2179,6 +2237,18 @@ export default function WalletDetail() {
                             >
                               <Flag className={`w-3 h-3 ${selectedWallets.has(row.address) ? "fill-orange-400 text-orange-400" : ""}`} />
                               {selectedWallets.has(row.address) ? "SELECTED" : "SELECT"}
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); addToCommingle(row.address); }}
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap flex items-center gap-1 ${
+                                commingleWallets.includes(row.address)
+                                  ? "text-purple-400 border-purple-500/40 bg-purple-950/20 hover:bg-purple-950/40"
+                                  : "text-muted-foreground border-border/30 hover:text-purple-400 hover:border-purple-500/40"
+                              }`}
+                              title={commingleWallets.includes(row.address) ? "In Commingle Check" : "Add to Commingle Check"}
+                            >
+                              <GitMerge className={`w-3 h-3 ${commingleWallets.includes(row.address) ? "text-purple-400" : ""}`} />
+                              {commingleWallets.includes(row.address) ? "COMMINGLED" : "+ COMMINGLE"}
                             </button>
                             <button
                               onClick={(e) => { e.stopPropagation(); continueTrailOnWallet(row.address); }}
@@ -3303,7 +3373,7 @@ export default function WalletDetail() {
                   <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">Wallet {i + 1}</span>
                   {KNOWN_LABELS[w] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[w])}</span>}
                   <button
-                    onClick={() => setCommingleWallets((prev) => prev.filter((_, j) => j !== i))}
+                    onClick={() => setCommingleWallets((prev) => { const next = prev.filter((_, j) => j !== i); try { localStorage.setItem("chaintrace-commingle-wallets", JSON.stringify(next)); } catch { /* noop */ } return next; })}
                     className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"
                   >
                     <X className="w-3 h-3" />
@@ -3320,7 +3390,7 @@ export default function WalletDetail() {
                     if (e.key === "Enter") {
                       const trimmed = commingleWalletInput.trim();
                       if (trimmed && !commingleWallets.includes(trimmed) && trimmed !== address) {
-                        setCommingleWallets((prev) => [...prev, trimmed]);
+                        setCommingleWallets((prev) => { const next = [...prev, trimmed]; try { localStorage.setItem("chaintrace-commingle-wallets", JSON.stringify(next)); } catch { /* noop */ } return next; });
                         setCommingleWalletInput("");
                       }
                     }
@@ -3332,7 +3402,7 @@ export default function WalletDetail() {
                   onClick={() => {
                     const trimmed = commingleWalletInput.trim();
                     if (trimmed && !commingleWallets.includes(trimmed) && trimmed !== address) {
-                      setCommingleWallets((prev) => [...prev, trimmed]);
+                      setCommingleWallets((prev) => { const next = [...prev, trimmed]; try { localStorage.setItem("chaintrace-commingle-wallets", JSON.stringify(next)); } catch { /* noop */ } return next; });
                       setCommingleWalletInput("");
                     }
                   }}

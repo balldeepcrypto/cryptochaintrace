@@ -322,6 +322,26 @@ interface MultiAnalysisResult {
   }>;
 }
 
+// ─── Commingle Check types ────────────────────────────────────────────────────
+interface CommingleFinding {
+  sharedAddress: string;
+  knownInfo?: { label: string; type: string };
+  tier: number;
+  targetPath: string[];
+  comparisons: Array<{ wallet: string; path: string[] }>;
+  txCountTarget: number;
+}
+
+interface CommingleCheckResult {
+  targetWallet: string;
+  comparisonWallets: string[];
+  chain: string;
+  scannedAt: string;
+  findings: CommingleFinding[];
+  tieredCounts: [number, number, number, number];
+  totalScanned: number;
+}
+
 const DAG_BATCH = 250;
 const XRP_INIT = 200;
 const XRP_BATCH = 500;
@@ -629,6 +649,121 @@ export default function WalletDetail() {
     return lines.join("\n");
   }
 
+  function generateCommingleReport(): string {
+    if (!commingleResult) return "";
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const chainUp = commingleResult.chain.toUpperCase();
+    const short = (a: string) => a.length > 20 ? `${a.slice(0, 10)}...${a.slice(-6)}` : a;
+    const sep = (label = "") => label
+      ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
+      : "─".repeat(64);
+    const lines: string[] = [];
+
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║        COMMINGLING CHECK REPORT — CryptoChainTrace          ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`Generated    : ${now}`);
+    lines.push(`Chain        : ${chainUp}`);
+    lines.push(`Target       : ${commingleResult.targetWallet}`);
+    commingleResult.comparisonWallets.forEach((w, i) => {
+      lines.push(`Comparison ${i + 1} : ${w}`);
+    });
+    lines.push(`Depth        : 4 tiers   |   Nodes Scanned: ${commingleResult.totalScanned}`);
+    lines.push("");
+
+    const { findings, tieredCounts } = commingleResult;
+    lines.push(sep("SUMMARY"));
+    lines.push("");
+    lines.push(`  Total Shared Nodes : ${findings.length}`);
+    lines.push(`    Tier 1 (direct)  : ${tieredCounts[0]}`);
+    lines.push(`    Tier 2 (depth 2) : ${tieredCounts[1]}`);
+    lines.push(`    Tier 3 (depth 3) : ${tieredCounts[2]}`);
+    lines.push(`    Tier 4 (depth 4) : ${tieredCounts[3]}`);
+    lines.push("");
+
+    const exchangeFindings = findings.filter((f) => f.knownInfo?.type === "exchange");
+    if (exchangeFindings.length > 0) {
+      lines.push(`  ⚠  ${exchangeFindings.length} shared exchange(s) — possible commingling via custodial service`);
+      lines.push("");
+    }
+
+    if (findings.length === 0) {
+      lines.push("  No shared nodes found within 4 tiers. Wallets appear unconnected.");
+      lines.push("");
+    } else {
+      const t1 = findings.filter((f) => f.tier === 1);
+      lines.push(sep("TIER 1 — DIRECT SHARED COUNTERPARTIES"));
+      lines.push("");
+      if (t1.length === 0) {
+        lines.push("  None found.");
+      } else {
+        t1.forEach((f, i) => {
+          const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
+          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
+          if (f.knownInfo?.type === "exchange") lines.push(`       ⚠ EXCHANGE — funds may have passed through custodial service`);
+          lines.push(`       Shared with: ${f.comparisons.map((c) => short(c.wallet)).join(", ")}`);
+          lines.push(`       Path: ${f.targetPath.map(short).join(" → ")}`);
+        });
+      }
+      lines.push("");
+
+      const t2 = findings.filter((f) => f.tier === 2);
+      lines.push(sep("TIER 2 — SECOND-DEGREE SHARED NODES"));
+      lines.push("");
+      if (t2.length === 0) {
+        lines.push("  None found.");
+      } else {
+        t2.slice(0, 20).forEach((f, i) => {
+          const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
+          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
+          lines.push(`       Path from target: ${f.targetPath.map(short).join(" → ")}`);
+          lines.push(`       Shared with: ${f.comparisons.map((c) => short(c.wallet)).join(", ")}`);
+        });
+        if (t2.length > 20) lines.push(`  … and ${t2.length - 20} more`);
+      }
+      lines.push("");
+
+      const t3 = findings.filter((f) => f.tier === 3);
+      const t4 = findings.filter((f) => f.tier === 4);
+      if (t3.length > 0 || t4.length > 0) {
+        lines.push(sep("TIER 3–4 — DEEP SHARED NODES"));
+        lines.push("");
+        [...t3.slice(0, 10), ...t4.slice(0, 10)].forEach((f, i) => {
+          const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
+          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${label}`);
+          lines.push(`       Path: ${f.targetPath.map(short).join(" → ")}`);
+          lines.push(`       Shared with: ${f.comparisons.map((c) => short(c.wallet)).join(", ")}`);
+        });
+        if (t3.length + t4.length > 20) lines.push(`  … and ${t3.length + t4.length - 20} more`);
+        lines.push("");
+      }
+    }
+
+    lines.push(sep("ASSESSMENT"));
+    lines.push("");
+    if (findings.length === 0) {
+      lines.push("  LOW RISK — No shared nodes found within 4 tiers of separation.");
+      lines.push("  The wallets under analysis do not appear to share any common");
+      lines.push("  counterparties, intermediaries, or endpoints.");
+    } else if (tieredCounts[0] > 0) {
+      lines.push("  HIGH RISK — Direct shared counterparties detected (Tier 1).");
+      lines.push("  The target and comparison wallet(s) transact with the same");
+      lines.push("  addresses directly. This is a strong commingling indicator.");
+    } else if (tieredCounts[1] > 0) {
+      lines.push("  MEDIUM RISK — Shared nodes at Tier 2 detected.");
+      lines.push("  Wallets share common 2nd-degree connections. May indicate");
+      lines.push("  indirect fund commingling or use of common intermediaries.");
+    } else {
+      lines.push("  LOW-MEDIUM RISK — Shared nodes at Tier 3–4 only.");
+      lines.push("  Connections are distal and may reflect shared service usage");
+      lines.push("  (e.g. common exchanges) rather than direct commingling.");
+    }
+    lines.push("");
+    lines.push("═".repeat(64));
+    lines.push("Generated by CryptoChainTrace  ·  cryptochaintrace.replit.app");
+    return lines.join("\n");
+  }
+
   // Commit new pagination data: sort newest-first, mutate the ref, trigger re-render.
   function commit(txs: Tx[], cursor: string | null, more: boolean) {
     const sorted = [...txs].sort(
@@ -649,6 +784,17 @@ export default function WalletDetail() {
   const [multiLoading, setMultiLoading] = useState(false);
   const [multiProgress, setMultiProgress] = useState("");
   const [multiError, setMultiError] = useState<string | null>(null);
+
+  // ── Commingle Check ──
+  const [showComminglePanel, setShowComminglePanel] = useState(false);
+  const [commingleWallets, setCommingleWallets] = useState<string[]>([]);
+  const [commingleWalletInput, setCommingleWalletInput] = useState("");
+  const [commingleLoading, setCommingleLoading] = useState(false);
+  const [commingleProgress, setCommingleProgress] = useState("");
+  const [commingleResult, setCommingleResult] = useState<CommingleCheckResult | null>(null);
+  const [commingleError, setCommingleError] = useState<string | null>(null);
+  const [commingleReportCopied, setCommingleReportCopied] = useState(false);
+  const comminglePanelRef = useRef<HTMLDivElement>(null);
 
   const [savedWallets, setSavedWallets] = useState<Set<string>>(() => {
     try {
@@ -1306,6 +1452,145 @@ export default function WalletDetail() {
     }
   }, [address, multiWallets, chain]);
 
+  // ── COMMINGLE CHECK — depth-1 through depth-4 BFS across target + comparison wallets ──
+  const runCommingleCheck = useCallback(async () => {
+    if (commingleWallets.length === 0) {
+      setCommingleError("Add at least one comparison wallet address.");
+      return;
+    }
+    setCommingleLoading(true);
+    setCommingleError(null);
+    setCommingleResult(null);
+    setCommingleProgress("");
+
+    type ReachNode = { path: string[]; tier: number; txCount: number };
+    type ReachMap = Map<string, ReachNode>;
+
+    const fetchConns = async (addr: string) => {
+      try {
+        const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/connections?chain=${chain}`);
+        if (!resp.ok) return { nodes: [] as Array<{ address: string }>, edges: [] as Array<{ from: string; to: string; transactionCount: number }> };
+        return resp.json() as Promise<{ nodes: Array<{ address: string }>; edges: Array<{ from: string; to: string; transactionCount: number }> }>;
+      } catch { return { nodes: [], edges: [] }; }
+    };
+
+    const buildReachMap = async (wallet: string, label: string): Promise<ReachMap> => {
+      const reach: ReachMap = new Map();
+
+      setCommingleProgress(`${label}: tier 1…`);
+      const d1 = await fetchConns(wallet);
+      const tier1 = d1.nodes.filter((n) => n.address !== wallet).slice(0, 12);
+      for (const n of tier1) {
+        const edge = d1.edges.find((e) => (e.from === wallet && e.to === n.address) || (e.to === wallet && e.from === n.address));
+        reach.set(n.address, { path: [wallet, n.address], tier: 1, txCount: edge?.transactionCount ?? 0 });
+      }
+
+      setCommingleProgress(`${label}: tier 2…`);
+      const t2expand = tier1.slice(0, 6);
+      const d2results = await Promise.all(t2expand.map((n) => fetchConns(n.address)));
+      for (let i = 0; i < t2expand.length; i++) {
+        const parent = t2expand[i];
+        for (const n of d2results[i].nodes.filter((x) => x.address !== parent.address && x.address !== wallet).slice(0, 8)) {
+          if (!reach.has(n.address)) {
+            const edge = d2results[i].edges.find((e) => (e.from === parent.address && e.to === n.address) || (e.to === parent.address && e.from === n.address));
+            reach.set(n.address, { path: [wallet, parent.address, n.address], tier: 2, txCount: edge?.transactionCount ?? 0 });
+          }
+        }
+      }
+
+      setCommingleProgress(`${label}: tier 3…`);
+      const tier2nodes = Array.from(reach.entries()).filter(([, v]) => v.tier === 2).slice(0, 4);
+      if (tier2nodes.length > 0) {
+        const d3results = await Promise.all(tier2nodes.map(([a]) => fetchConns(a)));
+        for (let i = 0; i < tier2nodes.length; i++) {
+          const [parentAddr, parentData] = tier2nodes[i];
+          for (const n of d3results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet).slice(0, 6)) {
+            if (!reach.has(n.address)) {
+              const edge = d3results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
+              reach.set(n.address, { path: [...parentData.path, n.address], tier: 3, txCount: edge?.transactionCount ?? 0 });
+            }
+          }
+        }
+      }
+
+      setCommingleProgress(`${label}: tier 4…`);
+      const tier3nodes = Array.from(reach.entries()).filter(([, v]) => v.tier === 3).slice(0, 3);
+      if (tier3nodes.length > 0) {
+        const d4results = await Promise.all(tier3nodes.map(([a]) => fetchConns(a)));
+        for (let i = 0; i < tier3nodes.length; i++) {
+          const [parentAddr, parentData] = tier3nodes[i];
+          for (const n of d4results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet).slice(0, 5)) {
+            if (!reach.has(n.address)) {
+              const edge = d4results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
+              reach.set(n.address, { path: [...parentData.path, n.address], tier: 4, txCount: edge?.transactionCount ?? 0 });
+            }
+          }
+        }
+      }
+
+      return reach;
+    };
+
+    try {
+      setCommingleProgress("Scanning target wallet…");
+      const targetReach = await buildReachMap(address, "TARGET");
+
+      const compReachMaps: Array<{ wallet: string; reachMap: ReachMap }> = [];
+      for (let i = 0; i < commingleWallets.length; i++) {
+        const cw = commingleWallets[i];
+        setCommingleProgress(`Scanning comparison wallet ${i + 1}/${commingleWallets.length}…`);
+        compReachMaps.push({ wallet: cw, reachMap: await buildReachMap(cw, `COMP ${i + 1}`) });
+      }
+
+      const findings: CommingleFinding[] = [];
+      for (const [addr, targetData] of targetReach) {
+        const matchingComps = compReachMaps
+          .filter(({ reachMap }) => reachMap.has(addr))
+          .map(({ wallet: cw, reachMap }) => ({ wallet: cw, path: reachMap.get(addr)!.path }));
+        if (matchingComps.length > 0) {
+          findings.push({
+            sharedAddress: addr,
+            knownInfo: KNOWN_LABELS[addr],
+            tier: targetData.tier,
+            targetPath: targetData.path,
+            comparisons: matchingComps,
+            txCountTarget: targetData.txCount,
+          });
+        }
+      }
+
+      findings.sort((a, b) => {
+        if (a.tier !== b.tier) return a.tier - b.tier;
+        const rank = (f: CommingleFinding) => f.knownInfo?.type === "exchange" ? 0 : f.knownInfo ? 1 : 2;
+        if (rank(a) !== rank(b)) return rank(a) - rank(b);
+        return b.txCountTarget - a.txCountTarget;
+      });
+
+      const tieredCounts: [number, number, number, number] = [
+        findings.filter((f) => f.tier === 1).length,
+        findings.filter((f) => f.tier === 2).length,
+        findings.filter((f) => f.tier === 3).length,
+        findings.filter((f) => f.tier === 4).length,
+      ];
+
+      setCommingleResult({
+        targetWallet: address,
+        comparisonWallets: commingleWallets,
+        chain,
+        scannedAt: new Date().toISOString(),
+        findings,
+        tieredCounts,
+        totalScanned: targetReach.size,
+      });
+      setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+    } catch (err) {
+      setCommingleError(err instanceof Error ? err.message : "Analysis failed");
+    } finally {
+      setCommingleLoading(false);
+      setCommingleProgress("");
+    }
+  }, [address, commingleWallets, chain]);
+
   // ── Helpers ──
   const getRiskBadge = (score: number | null) => {
     if (score === null)
@@ -1529,6 +1814,13 @@ export default function WalletDetail() {
               onClick={() => { setShowMultiPanel((v) => !v); if (!showMultiPanel) setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
             >
               <Layers className="w-3.5 h-3.5 mr-1.5" /> MULTI-WALLET ANALYSIS
+            </Button>
+            <Button
+              variant="outline"
+              className={`font-mono text-xs ${showComminglePanel ? "border-amber-500/60 text-amber-300 bg-amber-950/30 hover:bg-amber-950/50" : "border-amber-500/30 text-amber-400 hover:bg-amber-950/30 hover:border-amber-500/60"}`}
+              onClick={() => { setShowComminglePanel((v) => !v); if (!showComminglePanel) setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
+            >
+              <GitMerge className="w-3.5 h-3.5 mr-1.5" /> COMMINGLE CHECK
             </Button>
             <Button
               variant="outline"
@@ -2962,6 +3254,307 @@ export default function WalletDetail() {
                     ))}
                   </div>
                 )}
+              </div>
+
+            </div>
+          )}
+        </Card>
+      )}
+
+      {/* ── Commingle Check Panel ── */}
+      {showComminglePanel && (
+        <Card ref={comminglePanelRef} className="bg-card/40 border-amber-500/30 shadow-lg shadow-amber-500/5">
+          <CardHeader className="border-b border-border/40 pb-4 px-5 pt-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-3">
+                <div className={`w-2 h-2 rounded-full bg-amber-400 ${commingleLoading ? "animate-pulse" : ""}`} />
+                <CardTitle className="text-sm font-mono uppercase tracking-widest text-amber-300">
+                  Commingle Check
+                </CardTitle>
+                {commingleResult && (
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {commingleResult.findings.length} shared node{commingleResult.findings.length !== 1 ? "s" : ""} · {commingleResult.totalScanned} scanned
+                  </span>
+                )}
+              </div>
+              <button onClick={() => setShowComminglePanel(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
+              Scans up to 4 tiers deep from the target and each comparison wallet, then surfaces all shared addresses — direct counterparties, intermediaries, and common endpoints. Generates a police-ready report.
+            </p>
+
+            {/* ── Comparison wallet list ── */}
+            <div className="mt-4 space-y-2.5">
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Target Wallet (fixed)</div>
+              <div className="flex items-center gap-2.5 bg-amber-950/30 border border-amber-500/30 rounded-lg px-3 py-2">
+                <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
+                <span className="text-xs font-mono text-amber-300 flex-1 truncate min-w-0">{address}</span>
+                <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0 uppercase">Target</span>
+                {KNOWN_LABELS[address] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[address])}</span>}
+              </div>
+
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider pt-1">Comparison Wallets</div>
+              {commingleWallets.map((w, i) => (
+                <div key={w} className="flex items-center gap-2.5 bg-muted/20 border border-border/40 rounded-lg px-3 py-2">
+                  <div className="w-2 h-2 rounded-full bg-muted-foreground/60 shrink-0" />
+                  <span className="text-xs font-mono text-foreground flex-1 truncate min-w-0">{w}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">Wallet {i + 1}</span>
+                  {KNOWN_LABELS[w] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[w])}</span>}
+                  <button
+                    onClick={() => setCommingleWallets((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={commingleWalletInput}
+                  onChange={(e) => setCommingleWalletInput(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const trimmed = commingleWalletInput.trim();
+                      if (trimmed && !commingleWallets.includes(trimmed) && trimmed !== address) {
+                        setCommingleWallets((prev) => [...prev, trimmed]);
+                        setCommingleWalletInput("");
+                      }
+                    }
+                  }}
+                  placeholder="Paste comparison wallet address…"
+                  className="flex-1 bg-muted/20 border border-border/40 focus:border-amber-500/50 rounded-lg px-3 py-2 text-xs font-mono text-foreground placeholder:text-muted-foreground/40 outline-none transition-colors"
+                />
+                <button
+                  onClick={() => {
+                    const trimmed = commingleWalletInput.trim();
+                    if (trimmed && !commingleWallets.includes(trimmed) && trimmed !== address) {
+                      setCommingleWallets((prev) => [...prev, trimmed]);
+                      setCommingleWalletInput("");
+                    }
+                  }}
+                  disabled={!commingleWalletInput.trim()}
+                  className="px-3 py-2 rounded-lg bg-amber-900/60 border border-amber-500/40 text-amber-300 hover:bg-amber-900/80 disabled:opacity-40 transition-colors shrink-0"
+                  title="Add wallet"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                </button>
+              </div>
+
+              <button
+                onClick={runCommingleCheck}
+                disabled={commingleLoading || commingleWallets.length === 0}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:bg-muted/30 disabled:text-muted-foreground/60 text-white font-mono text-xs font-bold tracking-widest transition-colors mt-1"
+              >
+                {commingleLoading ? (
+                  <>
+                    <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                    <span>SCANNING…</span>
+                    {commingleProgress && <span className="opacity-60 truncate max-w-[240px] font-normal">{commingleProgress}</span>}
+                  </>
+                ) : (
+                  <><GitMerge className="w-3.5 h-3.5" /> RUN COMMINGLE CHECK (4 TIERS)</>
+                )}
+              </button>
+              {commingleError && (
+                <p className="text-xs font-mono text-red-400 flex items-center gap-1.5 mt-0.5">
+                  <AlertTriangle className="w-3 h-3 shrink-0" /> {commingleError}
+                </p>
+              )}
+            </div>
+          </CardHeader>
+
+          {commingleResult && (
+            <div className="divide-y divide-border/20">
+
+              {/* ── Generate report bar ── */}
+              <div className="px-5 py-3 bg-amber-950/20 border-b border-amber-500/20 flex items-center justify-between gap-3 flex-wrap">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="text-xs font-mono text-amber-300/80">
+                    Scan complete · {commingleResult.findings.length} shared nodes · {commingleResult.totalScanned} addresses mapped
+                  </div>
+                  {commingleResult.tieredCounts[0] > 0 && (
+                    <span className="flex items-center gap-1 text-[10px] font-mono text-red-300 bg-red-950/50 border border-red-500/30 px-2 py-0.5 rounded font-bold">
+                      <AlertTriangle className="w-2.5 h-2.5" /> {commingleResult.tieredCounts[0]} DIRECT MATCH{commingleResult.tieredCounts[0] !== 1 ? "ES" : ""}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => {
+                    const rpt = generateCommingleReport();
+                    setReportContent(rpt);
+                    setShowReportModal(true);
+                  }}
+                  className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-amber-600 hover:bg-amber-500 border border-amber-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
+                >
+                  <FileText className="w-3.5 h-3.5" /> GENERATE REPORT
+                </button>
+              </div>
+
+              {/* ── Tier badges summary ── */}
+              <div className="px-5 py-3 flex items-center gap-4 flex-wrap bg-muted/5">
+                <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Shared nodes by tier:</span>
+                {([
+                  { label: "Tier 1 · Direct", count: commingleResult.tieredCounts[0], color: "text-red-300 border-red-500/30 bg-red-950/30" },
+                  { label: "Tier 2", count: commingleResult.tieredCounts[1], color: "text-orange-300 border-orange-500/30 bg-orange-950/30" },
+                  { label: "Tier 3", count: commingleResult.tieredCounts[2], color: "text-yellow-300 border-yellow-500/30 bg-yellow-950/30" },
+                  { label: "Tier 4", count: commingleResult.tieredCounts[3], color: "text-muted-foreground border-border/30 bg-muted/10" },
+                ] as const).map((t) => (
+                  <div key={t.label} className={`flex items-center gap-1.5 border rounded px-2 py-0.5 text-[10px] font-mono font-bold ${t.color}`}>
+                    {t.label}: {t.count}
+                  </div>
+                ))}
+              </div>
+
+              {/* ── § 1 Tier 1 — Direct Shared Counterparties ── */}
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-red-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-red-300 font-bold tracking-widest uppercase">§ 1 — Tier 1: Direct Shared Counterparties</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">wallets both sides transact with directly</span>
+                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${commingleResult.tieredCounts[0] > 0 ? "bg-red-950/60 text-red-200 border-red-400/40" : "text-muted-foreground border-border/30"}`}>
+                    {commingleResult.tieredCounts[0]} found
+                  </span>
+                </div>
+                {commingleResult.tieredCounts[0] === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
+                    No direct shared counterparties. Check Tier 2+ below for deeper connections.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {commingleResult.findings.filter((f) => f.tier === 1).map((f, i) => (
+                      <div key={f.sharedAddress} className="bg-red-950/15 border border-red-500/25 rounded-lg p-3">
+                        <div className="flex items-center gap-2 flex-wrap mb-2">
+                          <span className="text-[10px] font-mono bg-red-900/70 text-red-200 px-1.5 py-0.5 rounded border border-red-400/40 font-bold shrink-0">#{i + 1}</span>
+                          <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                          </button>
+                          {f.knownInfo && getKnownBadge(f.knownInfo, "md")}
+                          {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                          <span className="ml-auto text-[10px] font-mono text-red-400 font-bold shrink-0">
+                            {f.comparisons.length} wallet{f.comparisons.length !== 1 ? "s" : ""} share this
+                          </span>
+                        </div>
+                        <div className="text-[10px] font-mono text-muted-foreground/70 pl-1 space-y-0.5">
+                          <div><span className="text-muted-foreground/50">Target path: </span>{f.targetPath.map((a) => a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a).join(" → ")}</div>
+                          {f.comparisons.map((c) => (
+                            <div key={c.wallet}><span className="text-muted-foreground/50">Compare: </span>{c.wallet.length > 14 ? `${c.wallet.slice(0, 8)}…${c.wallet.slice(-4)}` : c.wallet} → {f.sharedAddress.length > 12 ? `${f.sharedAddress.slice(0, 6)}…${f.sharedAddress.slice(-4)}` : f.sharedAddress}</div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* ── § 2 Tier 2 ── */}
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-orange-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-orange-300 font-bold tracking-widest uppercase">§ 2 — Tier 2: Second-Degree Shared Nodes</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">shared 2nd-degree connections</span>
+                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${commingleResult.tieredCounts[1] > 0 ? "bg-orange-950/60 text-orange-200 border-orange-400/40" : "text-muted-foreground border-border/30"}`}>
+                    {commingleResult.tieredCounts[1]} found
+                  </span>
+                </div>
+                {commingleResult.tieredCounts[1] === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier-2 shared nodes.</p>
+                ) : (
+                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                    {commingleResult.findings.filter((f) => f.tier === 2).slice(0, 30).map((f, i) => (
+                      <div key={f.sharedAddress} className="bg-orange-950/10 border border-orange-500/20 rounded-lg p-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-mono bg-orange-900/60 text-orange-200 px-1.5 py-0.5 rounded border border-orange-400/40 font-bold shrink-0">#{i + 1}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                          </button>
+                          {f.knownInfo && getKnownBadge(f.knownInfo)}
+                          {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                          <span className="ml-auto text-[10px] font-mono text-muted-foreground shrink-0">
+                            {f.comparisons.length} wallet{f.comparisons.length !== 1 ? "s" : ""} · via {f.targetPath.length > 2 ? (f.targetPath[1].length > 10 ? `${f.targetPath[1].slice(0, 6)}…` : f.targetPath[1]) : "—"}
+                          </span>
+                        </div>
+                      </div>
+                    ))}
+                    {commingleResult.tieredCounts[1] > 30 && (
+                      <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {commingleResult.tieredCounts[1] - 30} more — see full report</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ── § 3 Tier 3–4 ── */}
+              <div className="p-5">
+                <div className="flex items-center gap-2 mb-3 flex-wrap">
+                  <span className="w-1.5 h-4 bg-yellow-500 rounded-sm shrink-0" />
+                  <span className="text-[10px] font-mono text-yellow-300 font-bold tracking-widest uppercase">§ 3 — Tier 3–4: Deep Shared Nodes</span>
+                  <span className="text-[10px] font-mono text-muted-foreground">3rd and 4th degree connections</span>
+                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${(commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3]) > 0 ? "bg-yellow-950/60 text-yellow-200 border-yellow-400/40" : "text-muted-foreground border-border/30"}`}>
+                    {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3]} found
+                  </span>
+                </div>
+                {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier 3–4 shared nodes detected.</p>
+                ) : (
+                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+                    {commingleResult.findings.filter((f) => f.tier >= 3).slice(0, 20).map((f, i) => (
+                      <div key={f.sharedAddress} className="bg-yellow-950/10 border border-yellow-500/15 rounded-lg p-3">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-[10px] font-mono bg-yellow-900/50 text-yellow-200 px-1.5 py-0.5 rounded border border-yellow-400/30 font-bold shrink-0">#{i + 1}</span>
+                          <span className="text-[10px] font-mono text-yellow-400/70 border border-yellow-500/20 px-1 py-0.5 rounded shrink-0">T{f.tier}</span>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                          >
+                            {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                          </button>
+                          {f.knownInfo && getKnownBadge(f.knownInfo)}
+                          {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                        </div>
+                      </div>
+                    ))}
+                    {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] > 20 && (
+                      <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] - 20} more — see full report</p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* ── Copy report inline ── */}
+              <div className="px-5 py-4 bg-muted/5 flex items-center justify-between gap-3 flex-wrap">
+                <div className="space-y-0.5">
+                  <p className="text-[10px] font-mono text-muted-foreground/70">
+                    Scanned at {new Date(commingleResult.scannedAt).toLocaleString()} · {commingleResult.chain.toUpperCase()} · 4 tiers
+                  </p>
+                  <p className="text-[10px] font-mono text-muted-foreground/50">
+                    Comparison wallets: {commingleResult.comparisonWallets.length}
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    const rpt = generateCommingleReport();
+                    navigator.clipboard.writeText(rpt).catch(() => {});
+                    setCommingleReportCopied(true);
+                    setTimeout(() => setCommingleReportCopied(false), 2500);
+                  }}
+                  className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
+                    commingleReportCopied
+                      ? "border-green-500/50 text-green-400 bg-green-950/30"
+                      : "border-amber-500/30 text-amber-300 hover:bg-amber-950/30 hover:border-amber-500/60"
+                  }`}
+                >
+                  {commingleReportCopied ? <><Check className="w-3.5 h-3.5" /> COPIED!</> : <><Copy className="w-3.5 h-3.5" /> COPY REPORT</>}
+                </button>
               </div>
 
             </div>

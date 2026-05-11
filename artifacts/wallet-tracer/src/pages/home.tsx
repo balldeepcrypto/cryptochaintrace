@@ -1,12 +1,12 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
-import { useGetRecentSearches, useGetSearchStats, useSaveSearch } from "@workspace/api-client-react";
-import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy } from "lucide-react";
+import { useSaveSearch } from "@workspace/api-client-react";
+import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { AddressDisplay } from "@/components/address-display";
+import { saveRecentSearch, getRecentSearches, type RecentSearchEntry } from "@/lib/recent-searches";
 
 const CHAINS = [
   { value: "ethereum", label: "Ethereum" },
@@ -18,24 +18,43 @@ const CHAINS = [
   { value: "dag", label: "DAG (Constellation)" },
 ];
 
+const CHAIN_COLORS: Record<string, string> = {
+  ethereum: "text-blue-400 bg-blue-950/40 border-blue-500/30",
+  bitcoin: "text-orange-400 bg-orange-950/40 border-orange-500/30",
+  xrp: "text-cyan-400 bg-cyan-950/40 border-cyan-500/30",
+  xlm: "text-sky-400 bg-sky-950/40 border-sky-500/30",
+  hbar: "text-violet-400 bg-violet-950/40 border-violet-500/30",
+  xdc: "text-green-400 bg-green-950/40 border-green-500/30",
+  dag: "text-pink-400 bg-pink-950/40 border-pink-500/30",
+};
+
+function truncateAddr(addr: string): string {
+  if (addr.length <= 20) return addr;
+  return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
+}
+
 export default function Home() {
   const [, setLocation] = useLocation();
   const [address, setAddress] = useState("");
   const [chain, setChain] = useState("ethereum");
   const [showDonate, setShowDonate] = useState(true);
+  const [recentSearches, setRecentSearches] = useState<RecentSearchEntry[]>(() => getRecentSearches());
 
-  const { data: recentSearches, isLoading: recentLoading } = useGetRecentSearches();
-  const { data: stats, isLoading: statsLoading } = useGetSearchStats();
   const saveSearch = useSaveSearch();
+
+  useEffect(() => {
+    setRecentSearches(getRecentSearches());
+    const handler = () => setRecentSearches(getRecentSearches());
+    window.addEventListener("chaintrace-recent-searches-updated", handler);
+    return () => window.removeEventListener("chaintrace-recent-searches-updated", handler);
+  }, []);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (!address.trim()) return;
 
     const trimmedAddress = address.trim();
-    // Navigate immediately — don't block on the DB write.
-    // saveSearch is fire-and-forget; if DATABASE_URL isn't configured the
-    // search history just won't persist, but the trace still works.
+    saveRecentSearch(trimmedAddress, chain);
     setLocation(`/wallet/${trimmedAddress}?chain=${chain}`);
     saveSearch.mutate({ data: { address: trimmedAddress, chain } });
   };
@@ -134,8 +153,8 @@ export default function Home() {
                 className="pl-9 font-mono bg-background/50 border-input"
               />
             </div>
-            <Button type="submit" disabled={!address.trim() || saveSearch.isPending} className="w-full md:w-32 font-mono">
-              {saveSearch.isPending ? "SCANNING..." : "TRACE"}
+            <Button type="submit" disabled={!address.trim()} className="w-full md:w-32 font-mono">
+              TRACE
             </Button>
           </form>
         </CardContent>
@@ -146,42 +165,40 @@ export default function Home() {
           <CardHeader className="pb-3">
             <div className="flex items-center gap-2">
               <History className="w-4 h-4 text-muted-foreground" />
-              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Recent Traces</CardTitle>
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-muted-foreground">Recent Targets</CardTitle>
             </div>
           </CardHeader>
           <CardContent>
-            {recentLoading ? (
-              <div className="space-y-4 animate-pulse">
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="h-10 bg-muted/50 rounded" />
-                ))}
-              </div>
-            ) : recentSearches?.length ? (
-              <div className="space-y-1">
-                {recentSearches.map((search) => (
-                  <div
-                    key={search.id}
-                    onClick={() => setLocation(`/wallet/${search.address}?chain=${search.chain}`)}
-                    className="flex items-center justify-between p-3 rounded hover:bg-accent/50 cursor-pointer transition-colors group border border-transparent hover:border-border/50"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-2 h-2 rounded-full bg-primary/50 group-hover:bg-primary transition-colors" />
-                      <AddressDisplay address={search.address} className="text-sm" showIcon={false} />
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <span className="text-xs font-mono text-muted-foreground uppercase bg-muted px-2 py-0.5 rounded">
-                        {search.chain}
-                      </span>
-                      <span className="text-xs text-muted-foreground font-mono">
-                        {new Date(search.searchedAt).toLocaleString()}
-                      </span>
-                    </div>
-                  </div>
-                ))}
+            {recentSearches.length === 0 ? (
+              <div className="text-center py-8 text-sm text-muted-foreground font-mono">
+                NO RECENT TARGETS — search a wallet above to begin
               </div>
             ) : (
-              <div className="text-center py-8 text-sm text-muted-foreground font-mono">
-                NO RECENT SEARCHES DETECTED
+              <div className="space-y-1">
+                {recentSearches.map((s, idx) => {
+                  const chainColor = CHAIN_COLORS[s.chain] ?? "text-muted-foreground bg-muted border-border";
+                  return (
+                    <div
+                      key={`${s.address}-${s.chain}-${idx}`}
+                      onClick={() => setLocation(`/wallet/${s.address}?chain=${s.chain}`)}
+                      className="flex items-center justify-between p-3 rounded hover:bg-accent/50 cursor-pointer transition-colors group border border-transparent hover:border-border/50"
+                    >
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className="w-2 h-2 rounded-full bg-primary/50 group-hover:bg-primary transition-colors shrink-0" />
+                        <span className="font-mono text-sm truncate" title={s.address}>{truncateAddr(s.address)}</span>
+                      </div>
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border ${chainColor}`}>
+                          {s.chain}
+                        </span>
+                        <span className="text-xs text-muted-foreground font-mono flex items-center gap-1">
+                          <Clock className="w-3 h-3" />
+                          {new Date(s.searchedAt).toLocaleDateString()}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             )}
           </CardContent>
@@ -196,23 +213,18 @@ export default function Home() {
               </div>
             </CardHeader>
             <CardContent>
-              {statsLoading ? (
-                <div className="space-y-4 animate-pulse">
-                  <div className="h-12 bg-muted/50 rounded" />
-                  <div className="h-12 bg-muted/50 rounded" />
+              <div className="space-y-4">
+                <div className="flex justify-between items-end border-b border-border/50 pb-2">
+                  <span className="text-xs font-mono text-muted-foreground">TOTAL TARGETS</span>
+                  <span className="text-xl font-mono text-primary">{recentSearches.length}</span>
                 </div>
-              ) : (
-                <div className="space-y-4">
-                  <div className="flex justify-between items-end border-b border-border/50 pb-2">
-                    <span className="text-xs font-mono text-muted-foreground">TOTAL TARGETS</span>
-                    <span className="text-xl font-mono text-primary">{stats?.totalSearches || 0}</span>
-                  </div>
-                  <div className="flex justify-between items-end border-b border-border/50 pb-2">
-                    <span className="text-xs font-mono text-muted-foreground">UNIQUE IDENTITIES</span>
-                    <span className="text-xl font-mono text-primary">{stats?.uniqueWallets || 0}</span>
-                  </div>
+                <div className="flex justify-between items-end border-b border-border/50 pb-2">
+                  <span className="text-xs font-mono text-muted-foreground">UNIQUE CHAINS</span>
+                  <span className="text-xl font-mono text-primary">
+                    {new Set(recentSearches.map((s) => s.chain)).size}
+                  </span>
                 </div>
-              )}
+              </div>
             </CardContent>
           </Card>
 
@@ -220,25 +232,30 @@ export default function Home() {
             <CardHeader className="pb-2">
               <div className="flex items-center gap-2">
                 <ShieldAlert className="w-4 h-4 text-destructive" />
-                <CardTitle className="text-sm font-medium uppercase tracking-wider text-destructive">High Interest Targets</CardTitle>
+                <CardTitle className="text-sm font-medium uppercase tracking-wider text-destructive">Most Searched</CardTitle>
               </div>
             </CardHeader>
             <CardContent>
-              {statsLoading ? (
-                <div className="h-20 bg-muted/50 rounded animate-pulse" />
-              ) : stats?.popularWallets?.length ? (
-                <div className="space-y-2">
-                  {stats.popularWallets.slice(0, 3).map((w, idx) => (
-                    <div key={idx} className="flex items-center justify-between text-sm">
-                      <AddressDisplay address={w.address} className="text-xs" showIcon={false} />
-                      <span className="text-xs font-mono bg-destructive/10 text-destructive px-1.5 rounded">
-                        {w.searchCount} HITS
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : (
+              {recentSearches.length === 0 ? (
                 <div className="text-xs text-muted-foreground font-mono">NO DATA</div>
+              ) : (
+                <div className="space-y-2">
+                  {recentSearches.slice(0, 3).map((w, idx) => {
+                    const chainColor = CHAIN_COLORS[w.chain] ?? "text-muted-foreground bg-muted";
+                    return (
+                      <div
+                        key={idx}
+                        onClick={() => setLocation(`/wallet/${w.address}?chain=${w.chain}`)}
+                        className="flex items-center justify-between text-sm cursor-pointer hover:opacity-80 transition-opacity"
+                      >
+                        <span className="font-mono text-xs truncate" title={w.address}>{truncateAddr(w.address)}</span>
+                        <span className={`text-[10px] font-mono uppercase px-1.5 py-0.5 rounded border ${chainColor}`}>
+                          {w.chain}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </CardContent>
           </Card>

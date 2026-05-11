@@ -7,6 +7,7 @@ import {
   getGetWalletTransactionsQueryKey,
 } from "@workspace/api-client-react";
 import { AddressDisplay } from "@/components/address-display";
+import { saveRecentSearch } from "@/lib/recent-searches";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -883,6 +884,7 @@ export default function WalletDetail() {
     setAllTxs([]);
     setMinAmount(1);
     setMinAmountInput("1");
+    if (address && chain) saveRecentSearch(address, chain);
   }, [address, chain, initLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(
@@ -1802,7 +1804,7 @@ export default function WalletDetail() {
 
       {/* ── Header ── */}
       <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-        <div className="space-y-3 min-w-0">
+        <div className="space-y-3 min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
             <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-mono rounded uppercase border border-primary/20">{chain}</span>
             {walletLoading ? <div className="w-28 h-5 bg-muted/50 rounded animate-pulse" /> : getRiskBadge(wallet?.riskScore ?? null)}

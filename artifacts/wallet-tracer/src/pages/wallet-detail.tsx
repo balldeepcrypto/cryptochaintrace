@@ -10,7 +10,7 @@ import { AddressDisplay } from "@/components/address-display";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
-  ArrowLeftRight, ArrowDownLeft, ArrowUpRight,
+  ArrowLeftRight, ArrowDownLeft, ArrowUpRight, ArrowLeft,
   Network, GitFork, FileCode, Tag, ShieldAlert, ShieldCheck, Shield,
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
   AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Check, Heart, MessageSquare,
@@ -231,6 +231,22 @@ interface TrailEntry {
   totalValueUsd: number;
   txCount: number;
   childAddresses: string[];
+}
+
+// ─── Origin Trace hop ─────────────────────────────────────────────────────────
+interface OriginHop {
+  hop: number;
+  address: string;
+  txHash: string | null;
+  txAmount: string;
+  txAsset: string;
+  txTimestamp: string;
+  txMemo?: string | null;
+  txDestinationTag?: number | null;
+  knownInfo?: { label: string; type: string };
+  stopReason?: "exchange" | "dead-end" | "max-hops" | "loop" | null;
+  isLoading: boolean;
+  error?: string | null;
 }
 
 // ─── Transaction type (from API) ──────────────────────────────────────────────
@@ -671,6 +687,15 @@ export default function WalletDetail() {
   const trailPanelRef = useRef<HTMLDivElement>(null);
   const multiPanelRef = useRef<HTMLDivElement>(null);
 
+  // ── Origin Trace (TRACE TO ORIGIN) ──
+  const [showOriginPanel, setShowOriginPanel] = useState(false);
+  const [originHops, setOriginHops] = useState<OriginHop[]>([]);
+  const [originLoading, setOriginLoading] = useState(false);
+  const [originMode, setOriginMode] = useState<"standard" | "deep">("standard");
+  const [originStatus, setOriginStatus] = useState("");
+  const originPanelRef = useRef<HTMLDivElement>(null);
+  const originAbortRef = useRef<boolean>(false);
+
   // (multi-wallet state moved above toggleSavedWallet — see above)
 
   // ── Blocks React Query background-refetches from overwriting accumulated txs ──
@@ -1083,6 +1108,106 @@ export default function WalletDetail() {
     startTrailTrace(addr);
   }, [startTrailTrace]);
 
+  // ── TRACE TO ORIGIN — reverse source tracing ──
+  async function startOriginTrace() {
+    originAbortRef.current = false;
+    setOriginLoading(true);
+    setOriginHops([]);
+    setOriginStatus("Initializing…");
+    setShowOriginPanel(true);
+
+    const maxHops = originMode === "deep" ? 75 : 30;
+    const chainUp = chain.toUpperCase();
+    const visited = new Set<string>();
+    const hops: OriginHop[] = [];
+
+    // Hop 0: the target wallet itself
+    hops.push({
+      hop: 0, address, txHash: null, txAmount: "", txAsset: chainUp,
+      txTimestamp: "", knownInfo: KNOWN_LABELS[address],
+      stopReason: null, isLoading: false,
+    });
+    setOriginHops([...hops]);
+    visited.add(address);
+
+    try {
+      for (let i = 0; i < maxHops; i++) {
+        if (originAbortRef.current) break;
+
+        const current = hops[hops.length - 1].address;
+        setOriginStatus(`Hop ${i + 1}/${maxHops} — scanning ${current.slice(0, 12)}…`);
+
+        // Show loading state on last hop
+        hops[hops.length - 1] = { ...hops[hops.length - 1], isLoading: true };
+        setOriginHops([...hops]);
+
+        // Fetch transactions for current wallet
+        let incoming: Tx[] = [];
+        try {
+          const url = `/api/wallets/${encodeURIComponent(current)}/transactions?chain=${chain}&limit=50`;
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json() as { transactions: Tx[] };
+          incoming = (data.transactions ?? []).filter(
+            (t) => t.direction === "in" && t.from && parseFloat(t.value) > 0
+          );
+        } catch (err) {
+          hops[hops.length - 1] = {
+            ...hops[hops.length - 1],
+            isLoading: false,
+            error: err instanceof Error ? err.message : "Fetch failed",
+          };
+          setOriginHops([...hops]);
+          break;
+        }
+
+        // Clear loading state on current hop
+        hops[hops.length - 1] = { ...hops[hops.length - 1], isLoading: false };
+
+        if (incoming.length === 0) {
+          // Dead end — mark the current last hop
+          hops[hops.length - 1] = { ...hops[hops.length - 1], stopReason: "dead-end" };
+          setOriginHops([...hops]);
+          break;
+        }
+
+        // Pick best sender: highest value incoming tx
+        incoming.sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+        const bestTx = incoming[0];
+        const sender = bestTx.from;
+        const knownSender = KNOWN_LABELS[sender];
+
+        const isExchange = knownSender?.type === "exchange";
+        const isLoop     = visited.has(sender);
+        const isMaxHops  = i === maxHops - 1;
+
+        const stopReason: OriginHop["stopReason"] =
+          isExchange ? "exchange" :
+          isLoop     ? "loop" :
+          isMaxHops  ? "max-hops" :
+          null;
+
+        hops.push({
+          hop: i + 1, address: sender,
+          txHash: bestTx.hash, txAmount: bestTx.value,
+          txAsset: bestTx.tokenSymbol || chainUp,
+          txTimestamp: bestTx.timestamp,
+          txMemo: bestTx.memo, txDestinationTag: bestTx.destinationTag,
+          knownInfo: knownSender, stopReason, isLoading: false,
+        });
+        setOriginHops([...hops]);
+
+        if (stopReason) break;
+
+        visited.add(sender);
+      }
+    } finally {
+      setOriginLoading(false);
+      setOriginStatus("");
+      setTimeout(() => originPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    }
+  }
+
   // ── Multi-wallet commingling analysis ──
   const runMultiAnalysis = useCallback(async () => {
     const allWallets = [address, ...multiWallets].filter(Boolean);
@@ -1404,6 +1529,13 @@ export default function WalletDetail() {
               onClick={() => { setShowMultiPanel((v) => !v); if (!showMultiPanel) setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
             >
               <Layers className="w-3.5 h-3.5 mr-1.5" /> MULTI-WALLET ANALYSIS
+            </Button>
+            <Button
+              variant="outline"
+              className={`font-mono text-xs ${showOriginPanel ? "border-cyan-500/60 text-cyan-300 bg-cyan-950/30 hover:bg-cyan-950/50" : "border-cyan-500/30 text-cyan-400 hover:bg-cyan-950/30 hover:border-cyan-500/60"}`}
+              onClick={() => { setShowOriginPanel((v) => !v); if (!showOriginPanel) setTimeout(() => originPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
+            >
+              <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> TRACE TO ORIGIN
             </Button>
             <Button
               className="font-mono bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
@@ -2265,6 +2397,258 @@ export default function WalletDetail() {
           )}
         </Card>
       )}
+      {/* ── Origin Trace Panel ── */}
+      {showOriginPanel && (
+        <Card ref={originPanelRef} className="bg-card/40 border-border/40 border-cyan-500/20 shadow-lg shadow-cyan-500/5">
+          {/* Header */}
+          <CardHeader className="border-b border-border/40 pb-4 px-5 pt-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className={`w-2 h-2 rounded-full bg-cyan-400 ${originLoading ? "animate-pulse" : ""}`} />
+                <CardTitle className="text-sm font-mono uppercase tracking-widest text-cyan-300">
+                  Trace to Origin
+                </CardTitle>
+                {originHops.length > 1 && (
+                  <span className="text-xs font-mono text-muted-foreground">
+                    {originHops.length - 1} hop{originHops.length !== 2 ? "s" : ""}{!originLoading && " · complete"}
+                  </span>
+                )}
+              </div>
+              <button onClick={() => setShowOriginPanel(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
+              Follows the highest-value incoming transaction at each hop backwards to uncover the original source of funds.
+            </p>
+          </CardHeader>
+
+          {/* Mode selector — shown before trace starts */}
+          {originHops.length === 0 && !originLoading && (
+            <div className="p-5 space-y-4">
+              <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">Select Trace Mode</div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => setOriginMode("standard")}
+                  className={`p-3.5 rounded-lg border text-left transition-colors ${
+                    originMode === "standard"
+                      ? "border-cyan-500/50 bg-cyan-950/30 text-cyan-300"
+                      : "border-border/40 bg-muted/10 text-muted-foreground hover:border-cyan-500/30 hover:text-cyan-400"
+                  }`}
+                >
+                  <div className="text-xs font-mono font-bold mb-1">STANDARD</div>
+                  <div className="text-[10px] font-mono opacity-80">Up to 30 hops · ~5–15 sec</div>
+                </button>
+                <button
+                  onClick={() => setOriginMode("deep")}
+                  className={`p-3.5 rounded-lg border text-left transition-colors ${
+                    originMode === "deep"
+                      ? "border-orange-500/50 bg-orange-950/30 text-orange-300"
+                      : "border-border/40 bg-muted/10 text-muted-foreground hover:border-orange-500/30 hover:text-orange-400"
+                  }`}
+                >
+                  <div className="text-xs font-mono font-bold mb-1 flex items-center gap-1.5">
+                    DEEP ORIGIN TRACE
+                    {originMode === "deep" && <AlertTriangle className="w-3 h-3 text-orange-400 shrink-0" />}
+                  </div>
+                  <div className="text-[10px] font-mono opacity-80">Up to 75 hops</div>
+                  <div className="text-[10px] font-mono text-orange-400/80">⚠ May take 20–60 sec · more resources</div>
+                </button>
+              </div>
+              <button
+                onClick={() => void startOriginTrace()}
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-cyan-700 hover:bg-cyan-600 active:bg-cyan-800 text-white font-mono text-xs font-bold tracking-widest transition-colors"
+              >
+                <ArrowLeft className="w-3.5 h-3.5" /> START ORIGIN TRACE
+              </button>
+            </div>
+          )}
+
+          {/* Status bar — shown while loading */}
+          {originLoading && (
+            <div className="px-5 py-2.5 flex items-center gap-3 border-b border-border/30 bg-cyan-950/10">
+              <Loader2 className="w-3 h-3 text-cyan-400 animate-spin shrink-0" />
+              <span className="text-[11px] font-mono text-cyan-300/80 flex-1 truncate">{originStatus}</span>
+              <button
+                onClick={() => { originAbortRef.current = true; }}
+                className="text-[10px] font-mono text-muted-foreground hover:text-red-400 border border-border/30 hover:border-red-500/40 px-2 py-0.5 rounded transition-colors shrink-0"
+              >
+                STOP
+              </button>
+            </div>
+          )}
+
+          {/* Hop list */}
+          {originHops.length > 0 && (
+            <div className="divide-y divide-border/20">
+              {originHops.map((hop) => {
+                const isRoot     = hop.hop === 0;
+                const isExchange = hop.stopReason === "exchange";
+                const isDeadEnd  = hop.stopReason === "dead-end";
+                const isLoop     = hop.stopReason === "loop";
+                const isMaxHops  = hop.stopReason === "max-hops";
+                const fmtTs = (ts: string) => {
+                  if (!ts) return "";
+                  const d = new Date(ts);
+                  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                    + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
+                };
+                const shortA = (a: string) => a.length > 20 ? `${a.slice(0, 10)}…${a.slice(-4)}` : a;
+                let rowBg = "hover:bg-muted/5";
+                if (isRoot)     rowBg = "bg-cyan-950/10";
+                if (isExchange) rowBg = "bg-blue-950/20 border-l-2 border-blue-400/50";
+                if (isDeadEnd)  rowBg = "bg-yellow-950/10 border-l-2 border-yellow-500/20";
+                if (isLoop)     rowBg = "bg-orange-950/10 border-l-2 border-orange-500/20";
+                return (
+                  <div key={hop.hop} className={`px-5 py-3 transition-colors ${rowBg}`}>
+                    {/* Main row */}
+                    <div className="flex items-start gap-2.5 flex-wrap">
+                      {/* Hop number */}
+                      <span className="text-[10px] font-mono text-muted-foreground/40 w-11 shrink-0 pt-0.5 tabular-nums">
+                        {String(hop.hop).padStart(2, "0")}
+                      </span>
+                      {/* Direction badge */}
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border shrink-0 ${
+                        isRoot
+                          ? "bg-cyan-950/50 text-cyan-300 border-cyan-500/40"
+                          : "bg-green-950/40 text-green-400 border-green-500/20"
+                      }`}>
+                        {isRoot ? "TARGET" : "← IN"}
+                      </span>
+                      {/* Address + badges + amount + date */}
+                      <div className="flex items-center gap-2 flex-wrap flex-1 min-w-0">
+                        {hop.isLoading ? (
+                          <span className="text-[11px] font-mono text-muted-foreground animate-pulse">scanning…</span>
+                        ) : (
+                          <>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                setActiveMenu({ addr: hop.address, x: rect.left, y: rect.bottom + 4 });
+                              }}
+                              className="text-xs font-mono text-primary/80 hover:text-primary hover:underline transition-colors"
+                              title={hop.address}
+                            >
+                              {shortA(hop.address)}
+                            </button>
+                            {hop.knownInfo && getKnownBadge(hop.knownInfo)}
+                            {savedWallets.has(hop.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                            {WALLET_EXPLORER_MAP[chain] && (
+                              <a
+                                href={WALLET_EXPLORER_MAP[chain](hop.address)}
+                                target="_blank" rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-muted-foreground hover:text-primary transition-colors"
+                              >
+                                <ExternalLink className="w-2.5 h-2.5" />
+                              </a>
+                            )}
+                          </>
+                        )}
+                        {!isRoot && hop.txAmount && (
+                          <span className="text-green-400 text-xs font-mono font-bold ml-1">
+                            +{parseFloat(hop.txAmount).toFixed(4)} {hop.txAsset}
+                          </span>
+                        )}
+                        {!isRoot && hop.txTimestamp && (
+                          <span className="text-muted-foreground text-[10px] font-mono">{fmtTs(hop.txTimestamp)}</span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* TX hash + memo/tag sub-line */}
+                    {!isRoot && !hop.isLoading && (hop.txHash || hop.txMemo || hop.txDestinationTag != null) && (
+                      <div className="flex flex-wrap gap-x-4 gap-y-0.5 mt-1 pl-[3.5rem] text-[10px] font-mono text-muted-foreground/50">
+                        {hop.txHash && (
+                          <span className="flex items-center gap-1">
+                            TA: {hop.txHash.length > 12 ? `${hop.txHash.slice(0, 10)}…` : hop.txHash}
+                            {explorerTxUrl && (
+                              <a href={explorerTxUrl(hop.txHash)} target="_blank" rel="noopener noreferrer"
+                                onClick={(e) => e.stopPropagation()}
+                                className="text-muted-foreground hover:text-primary transition-colors ml-0.5">
+                                <ExternalLink className="w-2 h-2" />
+                              </a>
+                            )}
+                          </span>
+                        )}
+                        {hop.txDestinationTag != null && (
+                          <span className="text-cyan-300/60">Destination Tag: {hop.txDestinationTag}</span>
+                        )}
+                        {hop.txMemo && (
+                          <span className="text-amber-300/60">Memo: {hop.txMemo}</span>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Error */}
+                    {hop.error && (
+                      <div className="mt-1.5 pl-[3.5rem] flex items-center gap-1.5 text-[10px] font-mono text-red-400">
+                        <AlertTriangle className="w-2.5 h-2.5 shrink-0" /> {hop.error}
+                      </div>
+                    )}
+
+                    {/* Stop-reason banners */}
+                    {isExchange && (
+                      <div className="mt-2 pl-[3.5rem]">
+                        <span className="inline-flex items-center gap-2 text-[11px] font-mono text-blue-100 bg-blue-900/50 border border-blue-400/40 px-3 py-1.5 rounded-lg font-bold shadow-sm">
+                          🏦 EXCHANGE REACHED — Funds entered the network via a custodial exchange. Origin tracing complete.
+                        </span>
+                      </div>
+                    )}
+                    {isDeadEnd && (
+                      <div className="mt-2 pl-[3.5rem]">
+                        <span className="inline-flex items-center gap-2 text-[11px] font-mono text-yellow-200 bg-yellow-950/40 border border-yellow-500/30 px-3 py-1.5 rounded-lg">
+                          ⚠ DEAD END — No incoming transactions found. This may be the original source wallet.
+                        </span>
+                      </div>
+                    )}
+                    {isLoop && (
+                      <div className="mt-2 pl-[3.5rem]">
+                        <span className="inline-flex items-center gap-2 text-[11px] font-mono text-orange-200 bg-orange-950/40 border border-orange-500/30 px-3 py-1.5 rounded-lg">
+                          🔄 CIRCULAR — This address already appeared earlier in the chain. Stopping to prevent loop.
+                        </span>
+                      </div>
+                    )}
+                    {isMaxHops && (
+                      <div className="mt-2 pl-[3.5rem]">
+                        <span className="inline-flex items-center gap-2 text-[11px] font-mono text-muted-foreground bg-muted/20 border border-border/40 px-3 py-1.5 rounded-lg">
+                          ⏹ MAX DEPTH REACHED ({originMode === "deep" ? "75" : "30"} hops){originMode === "standard" ? " — switch to Deep Origin Trace for deeper analysis" : ""}.
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Footer: reconfigure / retrace */}
+              {!originLoading && originHops.length > 0 && (
+                <div className="px-5 py-3 flex items-center justify-between gap-3 bg-muted/5">
+                  <span className="text-[10px] font-mono text-muted-foreground/50 shrink-0">
+                    {originHops.length - 1} hop{originHops.length !== 2 ? "s" : ""} · {originMode === "deep" ? "DEEP (75 max)" : "STANDARD (30 max)"}
+                  </span>
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setOriginHops([])}
+                      className="text-[10px] font-mono text-muted-foreground hover:text-foreground border border-border/30 hover:border-border/60 px-2.5 py-1 rounded transition-colors whitespace-nowrap"
+                    >
+                      RECONFIGURE
+                    </button>
+                    <button
+                      onClick={() => void startOriginTrace()}
+                      disabled={originLoading}
+                      className="text-[10px] font-mono text-cyan-400 hover:text-cyan-300 border border-cyan-500/30 hover:border-cyan-500/60 bg-cyan-950/20 hover:bg-cyan-950/40 px-2.5 py-1 rounded transition-colors whitespace-nowrap disabled:opacity-50"
+                    >
+                      RETRACE
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+      )}
+
       {/* ── Multi-Wallet Commingling Analysis Panel ── */}
       {showMultiPanel && (
         <Card ref={multiPanelRef} className="bg-card/40 border-violet-500/30 shadow-lg shadow-violet-500/5">

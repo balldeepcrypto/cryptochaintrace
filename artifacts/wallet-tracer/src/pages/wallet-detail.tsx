@@ -648,9 +648,15 @@ export default function WalletDetail() {
       try { localStorage.setItem("chaintrace-saved-wallets", JSON.stringify([...next])); } catch { /* noop */ }
       return next;
     });
-    // Also sync into selectedWallets (shows SELECTED state) and multiWallets (Analysis pool)
-    setSelectedWallets((prev) => { const s = new Set(prev); if (s.has(addr)) s.delete(addr); else s.add(addr); return s; });
-    setMultiWallets((prev) => prev.includes(addr) ? prev.filter(a => a !== addr) : [...prev, addr]);
+  }, []);
+
+  // TRACKED: adds counterparty to Multi-Wallet Analysis pool only (not to watchlist/selectedWallets)
+  const toggleTracked = useCallback((addr: string) => {
+    setMultiWallets((prev) => {
+      const removing = prev.includes(addr);
+      if (!removing) setShowMultiPanel(true);
+      return removing ? prev.filter(a => a !== addr) : [...prev, addr];
+    });
   }, []);
 
   // ── Counterparty context menu ──
@@ -1725,15 +1731,15 @@ export default function WalletDetail() {
                         <td className="px-5 py-3 text-right">
                           <div className="flex items-center gap-1.5 justify-end">
                             <button
-                              onClick={(e) => { e.stopPropagation(); toggleSavedWallet(row.address); }}
+                              onClick={(e) => { e.stopPropagation(); toggleTracked(row.address); }}
                               className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap flex items-center gap-1 ${
-                                savedWallets.has(row.address)
+                                multiWallets.includes(row.address)
                                   ? "text-yellow-400 border-yellow-500/40 bg-yellow-950/20 hover:bg-yellow-950/40"
                                   : "text-muted-foreground border-border/30 hover:text-yellow-400 hover:border-yellow-500/40"
                               }`}
-                              title={savedWallets.has(row.address) ? "Remove from Analysis pool & watchlist" : "Add to Multi-Wallet Analysis pool"}
+                              title={multiWallets.includes(row.address) ? "Remove from Multi-Wallet Analysis" : "Add to Multi-Wallet Analysis"}
                             >
-                              {savedWallets.has(row.address)
+                              {multiWallets.includes(row.address)
                                 ? <><BookmarkCheck className="w-3 h-3" /> TRACKED</>
                                 : <><Bookmark className="w-3 h-3" /> TRACK</>}
                             </button>
@@ -2279,7 +2285,9 @@ export default function WalletDetail() {
               </button>
             </div>
             <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
-              Map depth-2 connections for multiple wallets and surface shared counterparties, common endpoints, and commingling paths. Select counterparties in the ledger below to auto-populate — or paste addresses manually. No limit.
+              Map depth-2 connections for multiple wallets and surface shared counterparties, common endpoints, and commingling paths. Click{" "}
+              <span className="text-yellow-400 font-bold">TRACK</span>
+              {" "}on any counterparty row to add wallets here — or paste addresses manually.
             </p>
 
             {/* ── Tracked Wallet List ── */}
@@ -2306,15 +2314,7 @@ export default function WalletDetail() {
                     <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">Wallet {i + 2}</span>
                     {KNOWN_LABELS[w] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[w])}</span>}
                     <button
-                      onClick={() => {
-                        setMultiWallets((prev) => prev.filter((_, j) => j !== i));
-                        setSelectedWallets((prev) => { const s = new Set(prev); s.delete(w); return s; });
-                        setSavedWallets((prev) => {
-                          const next = new Set(prev); next.delete(w);
-                          try { localStorage.setItem("chaintrace-saved-wallets", JSON.stringify([...next])); } catch { /* noop */ }
-                          return next;
-                        });
-                      }}
+                      onClick={() => setMultiWallets((prev) => prev.filter((_, j) => j !== i))}
                       className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"
                     >
                       <X className="w-3 h-3" />

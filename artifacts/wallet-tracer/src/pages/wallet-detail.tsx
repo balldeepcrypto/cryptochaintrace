@@ -503,7 +503,7 @@ export default function WalletDetail() {
           const dir   = tx.direction === "in" ? "IN " : "OUT";
           const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
           const asset = tx.tokenSymbol || chainUp;
-          lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${shortHash(tx.hash)})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
+          lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${tx.hash || "(none)"})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
           if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}     ↳ Destination Tag : ${tx.destinationTag}`);
           if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}     ↳ Memo            : ${tx.memo}`);
         });
@@ -557,7 +557,7 @@ export default function WalletDetail() {
         lines.push(`  ├── ${addr}`);
         lines.push(`  │       ◄ OFFICIAL ${known.label.toUpperCase()} COLDWALLET`);
         lines.push(`  │       Txs: ${totalTxs.toLocaleString("en-US")}  |  Total: ${fmtVal(totalVal)} ${chainUp}`);
-        if (sampleTx) lines.push(`  │       Sample TX : ${shortHash(sampleTx.hash)}`);
+        if (sampleTx) lines.push(`  │       Sample TX : ${sampleTx.hash}`);
         if (destTags.length > 0) lines.push(`  │       ↳ Destination Tags (subpoena): ${destTags.join("  |  ")}`);
         if (memos.length > 0)    lines.push(`  │       ↳ Memos         (subpoena): ${memos.join("  |  ")}`);
       }
@@ -646,7 +646,7 @@ export default function WalletDetail() {
         lines.push(`  ├── ${e.address}`);
         lines.push(`  │       ◄ OFFICIAL ${known.label.toUpperCase()}`);
         lines.push(`  │       Depth: ${e.depth}   Txs: ${e.txCount}   USD: $${e.totalValueUsd.toLocaleString()}`);
-        if (e.parentAddress) lines.push(`  │       Reached via: ${short(e.parentAddress)}`);
+        if (e.parentAddress) lines.push(`  │       Reached via: ${e.parentAddress}`);
       }
       lines.push("");
     }
@@ -708,8 +708,8 @@ export default function WalletDetail() {
           const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
           lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
           if (f.knownInfo?.type === "exchange") lines.push(`       ⚠ EXCHANGE — funds may have passed through custodial service`);
-          lines.push(`       Shared with: ${f.comparisons.map((c) => short(c.wallet)).join(", ")}`);
-          lines.push(`       Path: ${f.targetPath.map(short).join(" → ")}`);
+          lines.push(`       Shared with: ${f.comparisons.map((c) => c.wallet).join(", ")}`);
+          lines.push(`       Path: ${f.targetPath.join(" → ")}`);
         });
       }
       lines.push("");
@@ -723,8 +723,8 @@ export default function WalletDetail() {
         t2.slice(0, 20).forEach((f, i) => {
           const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
           lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
-          lines.push(`       Path from target: ${f.targetPath.map(short).join(" → ")}`);
-          lines.push(`       Shared with: ${f.comparisons.map((c) => short(c.wallet)).join(", ")}`);
+          lines.push(`       Path from target: ${f.targetPath.join(" → ")}`);
+          lines.push(`       Shared with: ${f.comparisons.map((c) => c.wallet).join(", ")}`);
         });
         if (t2.length > 20) lines.push(`  … and ${t2.length - 20} more`);
       }
@@ -738,8 +738,8 @@ export default function WalletDetail() {
         [...t3.slice(0, 10), ...t4.slice(0, 10)].forEach((f, i) => {
           const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
           lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${label}`);
-          lines.push(`       Path: ${f.targetPath.map(short).join(" → ")}`);
-          lines.push(`       Shared with: ${f.comparisons.map((c) => short(c.wallet)).join(", ")}`);
+          lines.push(`       Path: ${f.targetPath.join(" → ")}`);
+          lines.push(`       Shared with: ${f.comparisons.map((c) => c.wallet).join(", ")}`);
         });
         if (t3.length + t4.length > 20) lines.push(`  … and ${t3.length + t4.length - 20} more`);
         lines.push("");
@@ -3724,7 +3724,7 @@ export default function WalletDetail() {
 
             {/* Report body */}
             <div className="overflow-y-auto flex-1 p-5">
-              <pre className="font-mono text-[11px] leading-relaxed text-green-300/90 whitespace-pre bg-transparent select-all">
+              <pre className="font-mono text-[11px] leading-relaxed text-green-300/90 whitespace-pre-wrap break-all bg-transparent select-all">
                 {reportContent}
               </pre>
             </div>

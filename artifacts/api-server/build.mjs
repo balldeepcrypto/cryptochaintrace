@@ -112,6 +112,7 @@ const SHARED_OPTIONS = {
 
 async function buildAll() {
   const distDir = path.resolve(artifactDir, "dist");
+  const apiDir = path.resolve(artifactDir, "../../api");
   await rm(distDir, { recursive: true, force: true });
 
   // Build the long-running server (used by Replit dev/prod workflows)
@@ -130,12 +131,7 @@ async function buildAll() {
     outExtension: { ".js": ".mjs" },
   });
 
-  // Build the CJS serverless handler for Vercel.
-  // Vercel's @vercel/node compiles functions as CommonJS by default and converts
-  // static ESM `import` statements to `require()` calls.  Importing an .mjs file
-  // via require() throws [ERR_REQUIRE_ESM].  Building handler.cjs with esbuild's
-  // CJS format avoids that entirely — esbuild bundles all ESM deps inline as CJS.
-  // CJS has native __dirname / __filename / require so no ESM banner is needed.
+  // Build the CJS serverless handler for dist/ (kept for reference)
   await esbuild({
     platform: "node",
     bundle: true,
@@ -147,6 +143,31 @@ async function buildAll() {
     entryPoints: [path.resolve(artifactDir, "src/handler.ts")],
     outdir: distDir,
     outExtension: { ".js": ".cjs" },
+  });
+
+  // Build api/_handler.js — the ACTUAL Vercel serverless bundle.
+  //
+  // Why this approach solves ERR_REQUIRE_ESM once and for all:
+  //   1. Built directly into api/ so api/[...route].ts does require('./_handler.js')
+  //      — a same-directory path that is ALWAYS correct in Vercel's Lambda regardless
+  //      of where the Lambda places __dirname (no path-traversal ambiguity).
+  //   2. CJS format: esbuild inlines every ESM dep. require() on a .js file never
+  //      hits Node.js's ESM guard (only .mjs / "type":"module" trigger it).
+  //   3. No esbuild-plugin-pino: we don't configure pino transports so no worker
+  //      threads are spawned. Skipping the plugin means no pino-worker.js / pino-file.js
+  //      side-files that Vercel would mistake for additional API routes.
+  //   4. Files starting with _ are excluded from Vercel's route discovery.
+  //   5. outfile (not outdir) = single self-contained bundle, nothing extra to ship.
+  await esbuild({
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    logLevel: "info",
+    external: EXTERNALS,
+    sourcemap: false,
+    define: { "process.env.NODE_ENV": '"production"' },
+    entryPoints: [path.resolve(artifactDir, "src/handler.ts")],
+    outfile: path.resolve(apiDir, "_handler.js"),
   });
 }
 

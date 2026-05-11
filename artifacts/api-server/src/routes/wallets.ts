@@ -38,7 +38,10 @@ const COIN_ID_MAP: Record<string, string> = {
 
 // XRP uses XRPL JSON-RPC; DAG uses Constellation Network API; XDC uses its own RPC+BlocksScan; HBAR uses Hedera Mirror Node
 const COINSTATS_CHAINS: string[] = [];
-const DAG_API = "https://be-mainnet.constellationnetwork.io";
+const DAG_BASES = [
+  "https://be-mainnet.constellationnetwork.io",  // primary block explorer API
+  "https://be2-mainnet.constellationnetwork.io", // secondary (parallel infra)
+];
 
 function weiToEth(wei: string): string {
   const val = BigInt(wei);
@@ -82,9 +85,11 @@ const BLOCKSCOUT_BASES: Record<string, string> = {
 async function blockscoutFetchAddress(address: string, chain: string): Promise<Record<string, unknown>> {
   const base = BLOCKSCOUT_BASES[chain];
   if (!base) throw new Error(`No Blockscout endpoint for chain: ${chain}`);
-  const resp = await fetchWithTimeout(`${base}/api/v2/addresses/${address}`, {}, 10000);
-  if (!resp.ok) throw new Error(`Blockscout address ${resp.status}`);
-  return resp.json() as Promise<Record<string, unknown>>;
+  return withRetry(`Blockscout:${chain}:addr`, async () => {
+    const resp = await fetchWithTimeout(`${base}/api/v2/addresses/${address}`, {}, 10000);
+    if (!resp.ok) throw new Error(`Blockscout address HTTP ${resp.status} (${chain})`);
+    return await resp.json() as Record<string, unknown>;
+  });
 }
 
 interface BlockscoutTxsResult {
@@ -100,10 +105,12 @@ async function blockscoutFetchTxs(address: string, chain: string, cursor?: strin
     const params = JSON.parse(Buffer.from(cursor, "base64url").toString("utf8")) as Record<string, unknown>;
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, String(v));
   }
-  const resp = await fetchWithTimeout(url.toString(), {}, 10000);
-  if (!resp.ok) throw new Error(`Blockscout txs ${resp.status}`);
-  const data = await resp.json() as { items?: Record<string, unknown>[]; next_page_params?: Record<string, unknown> | null };
-  return { items: data.items ?? [], nextPageParams: data.next_page_params ?? null };
+  return withRetry(`Blockscout:${chain}:txs`, async () => {
+    const resp = await fetchWithTimeout(url.toString(), {}, 10000);
+    if (!resp.ok) throw new Error(`Blockscout txs HTTP ${resp.status} (${chain})`);
+    const data = await resp.json() as { items?: Record<string, unknown>[]; next_page_params?: Record<string, unknown> | null };
+    return { items: data.items ?? [], nextPageParams: data.next_page_params ?? null };
+  });
 }
 
 function parseBlockscoutTx(tx: Record<string, unknown>, address: string, priceUsd: number) {
@@ -151,10 +158,15 @@ async function btcFetchAddress(address: string): Promise<Record<string, unknown>
   let lastErr: Error = new Error("BTC explorer unavailable");
   for (const base of BTC_BASES) {
     try {
-      const resp = await fetchWithTimeout(`${base}/api/address/${address}`, {}, 10000);
-      if (!resp.ok) { lastErr = new Error(`BTC address ${resp.status} (${base})`); continue; }
-      return resp.json() as Promise<Record<string, unknown>>;
-    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+      return await withRetry(`BTC:addr:${base.slice(8, 22)}`, async () => {
+        const resp = await fetchWithTimeout(`${base}/api/address/${address}`, {}, 10000);
+        if (!resp.ok) throw new Error(`BTC address HTTP ${resp.status} (${base})`);
+        return await resp.json() as Record<string, unknown>;
+      });
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[BTC] Address fetch failed on ${base}: ${lastErr.message}`);
+    }
   }
   throw lastErr;
 }
@@ -166,10 +178,15 @@ async function btcFetchTxs(address: string, afterTxid?: string): Promise<Array<R
   let lastErr: Error = new Error("BTC txs API unavailable");
   for (const base of BTC_BASES) {
     try {
-      const resp = await fetchWithTimeout(`${base}${path}`, {}, 10000);
-      if (!resp.ok) { lastErr = new Error(`BTC txs ${resp.status} (${base})`); continue; }
-      return resp.json() as Promise<Array<Record<string, unknown>>>;
-    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+      return await withRetry(`BTC:txs:${base.slice(8, 22)}`, async () => {
+        const resp = await fetchWithTimeout(`${base}${path}`, {}, 10000);
+        if (!resp.ok) throw new Error(`BTC txs HTTP ${resp.status} (${base})`);
+        return await resp.json() as Array<Record<string, unknown>>;
+      });
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[BTC] Txs fetch failed on ${base}: ${lastErr.message}`);
+    }
   }
   throw lastErr;
 }
@@ -224,6 +241,35 @@ async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs = 8
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+/**
+ * Retry fn up to `attempts` times with linear backoff.
+ * Only retries on thrown errors — functions that return sentinel values
+ * (like { _empty: true }) should NOT throw for expected negatives.
+ */
+async function withRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  attempts = 2,
+  baseDelayMs = 400,
+): Promise<T> {
+  let lastErr: Error = new Error(`[${label}] exhausted`);
+  for (let i = 0; i < attempts; i++) {
+    try { return await fn(); }
+    catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      if (i < attempts - 1) {
+        console.warn(`[${label}] attempt ${i + 1}/${attempts} failed — retrying in ${baseDelayMs}ms: ${lastErr.message}`);
+        await sleep(baseDelayMs);
+      }
+    }
+  }
+  throw lastErr;
+}
+
 // XRPL cluster JSON-RPC — multiple public nodes, tried in order on failure
 const XRPL_ENDPOINTS = [
   "https://xrplcluster.com/",      // community cluster (primary)
@@ -236,25 +282,27 @@ async function xrplRpc(method: string, params: Record<string, unknown>): Promise
   let lastErr: Error = new Error("No XRPL endpoints available");
   for (const endpoint of XRPL_ENDPOINTS) {
     try {
-      const resp = await fetchWithTimeout(
-        endpoint,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ method, params: [params] }),
-        },
-        10000,
-      );
-      if (!resp.ok) { lastErr = new Error(`XRPL request failed (${endpoint}): ${resp.status}`); continue; }
-      const data = await resp.json() as Record<string, unknown>;
-      const result = data["result"] as Record<string, unknown>;
-      if (result?.["status"] === "error") {
-        lastErr = new Error(`XRPL error: ${result["error_message"] ?? result["error"]}`);
-        continue;
-      }
-      return result;
+      return await withRetry(`XRP:${endpoint.slice(8, 24)}`, async () => {
+        const resp = await fetchWithTimeout(
+          endpoint,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ method, params: [params] }),
+          },
+          10000,
+        );
+        if (!resp.ok) throw new Error(`XRPL HTTP ${resp.status} (${endpoint})`);
+        const data = await resp.json() as Record<string, unknown>;
+        const result = data["result"] as Record<string, unknown>;
+        if (result?.["status"] === "error") {
+          throw new Error(`XRPL error: ${result["error_message"] ?? result["error"]}`);
+        }
+        return result;
+      });
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[XRP] Endpoint ${endpoint.slice(8, 28)} failed: ${lastErr.message}`);
     }
   }
   throw lastErr;
@@ -289,12 +337,17 @@ async function hbarFetch(path: string): Promise<Record<string, unknown>> {
   let lastErr: Error = new Error("HBAR mirror node unavailable");
   for (const base of HBAR_MIRROR_NODES) {
     try {
-      const resp = await fetchWithTimeout(`${base}${path}`, {
-        headers: { Accept: "application/json" },
-      }, 8000);
-      if (!resp.ok) { lastErr = new Error(`HBAR mirror ${resp.status} (${base}): ${path}`); continue; }
-      return resp.json() as Promise<Record<string, unknown>>;
-    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+      return await withRetry(`HBAR:${base.slice(8, 24)}`, async () => {
+        const resp = await fetchWithTimeout(`${base}${path}`, {
+          headers: { Accept: "application/json" },
+        }, 8000);
+        if (!resp.ok) throw new Error(`HBAR mirror HTTP ${resp.status} (${base}): ${path.slice(0, 60)}`);
+        return await resp.json() as Record<string, unknown>;
+      });
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[HBAR] Mirror node ${base.slice(8, 30)} failed: ${lastErr.message}`);
+    }
   }
   throw lastErr;
 }
@@ -330,17 +383,20 @@ async function xdcRpc(method: string, params: unknown[]): Promise<unknown> {
   let lastErr: Error = new Error("XDC RPC unavailable");
   for (const ep of XDC_RPC_ENDPOINTS) {
     try {
-      const resp = await fetchWithTimeout(ep, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
-      }, 8000);
-      if (!resp.ok) { lastErr = new Error(`XDC RPC ${resp.status} at ${ep}`); continue; }
-      const data = await resp.json() as { result?: unknown; error?: { message: string } };
-      if (data.error) { lastErr = new Error(data.error.message); continue; }
-      return data.result;
+      return await withRetry(`XDC:rpc:${ep.slice(8, 22)}`, async () => {
+        const resp = await fetchWithTimeout(ep, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", method, params, id: 1 }),
+        }, 8000);
+        if (!resp.ok) throw new Error(`XDC RPC HTTP ${resp.status} at ${ep}`);
+        const data = await resp.json() as { result?: unknown; error?: { message: string } };
+        if (data.error) throw new Error(`XDC RPC error: ${data.error.message}`);
+        return data.result;
+      });
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[XDC] RPC ${ep.slice(8, 28)} failed: ${lastErr.message}`);
     }
   }
   throw lastErr;
@@ -348,25 +404,38 @@ async function xdcRpc(method: string, params: unknown[]): Promise<unknown> {
 
 async function xdcBlocksScanFetch(params: Record<string, string>): Promise<Record<string, unknown>> {
   const qs = new URLSearchParams(params).toString();
-  const resp = await fetchWithTimeout(`${XDC_BLOCKSSCAN}?${qs}`, {
-    headers: { "User-Agent": "CryptoChainTrace/1.0", "Accept": "application/json" },
-  }, 12000);
-  if (!resp.ok) throw new Error(`BlocksScan HTTP ${resp.status}`);
-  const data = await resp.json() as Record<string, unknown>;
-  const msg = String(data["message"] ?? "");
-  if (msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("error")) {
-    throw new Error(`BlocksScan error: ${msg}`);
-  }
-  return data;
+  return withRetry("XDC:blocksscan", async () => {
+    const resp = await fetchWithTimeout(`${XDC_BLOCKSSCAN}?${qs}`, {
+      headers: { "User-Agent": "CryptoChainTrace/1.0", "Accept": "application/json" },
+    }, 12000);
+    if (!resp.ok) throw new Error(`BlocksScan HTTP ${resp.status}`);
+    const data = await resp.json() as Record<string, unknown>;
+    const msg = String(data["message"] ?? "");
+    if (msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("error")) {
+      throw new Error(`BlocksScan error: ${msg}`);
+    }
+    return data;
+  });
 }
 
-// Constellation Network DAG public explorer API
+// Constellation Network DAG public explorer API — primary + fallback
 async function dagFetch(path: string): Promise<Record<string, unknown>> {
-  const resp = await fetchWithTimeout(`${DAG_API}${path}`, {
-    headers: { accept: "application/json" },
-  }, 25000);
-  if (!resp.ok) throw new Error(`DAG API request failed: ${resp.status}`);
-  return resp.json() as Promise<Record<string, unknown>>;
+  let lastErr: Error = new Error("DAG API unavailable");
+  for (const base of DAG_BASES) {
+    try {
+      return await withRetry(`DAG:${base.slice(8, 22)}`, async () => {
+        const resp = await fetchWithTimeout(`${base}${path}`, {
+          headers: { accept: "application/json" },
+        }, 25000);
+        if (!resp.ok) throw new Error(`DAG API HTTP ${resp.status} (${base})`);
+        return await resp.json() as Record<string, unknown>;
+      });
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[DAG] Endpoint ${base.slice(8, 30)} failed: ${lastErr.message}`);
+    }
+  }
+  throw lastErr;
 }
 
 function datumToDag(datum: number | string): string {
@@ -384,27 +453,29 @@ async function stellarFetch(path: string): Promise<Record<string, unknown>> {
   let lastErr: Error = new Error("Stellar Horizon unavailable");
   for (const base of STELLAR_BASES) {
     try {
-      const resp = await fetchWithTimeout(`${base}${path}`, {
-        headers: { accept: "application/json" },
-      }, 12000);
-      // 400 = invalid address / bad params, 404 = account not found — return empty gracefully
-      if (resp.status === 400 || resp.status === 404) {
-        const errBody = await resp.json().catch(() => ({})) as Record<string, unknown>;
-        const extras = errBody["extras"] as Record<string, unknown> | undefined;
-        const reason = String(extras?.["reason"] ?? errBody["detail"] ?? errBody["title"] ?? resp.status);
-        console.warn(`[XLM] Horizon ${resp.status} ${base}${path.slice(0, 80)} — ${reason}`);
-        return { _empty: true, _status: resp.status, _reason: reason };
-      }
-      if (!resp.ok) {
-        const errText = await resp.text().catch(() => "");
-        lastErr = new Error(`Stellar Horizon ${resp.status} (${base}): ${errText.slice(0, 200)}`);
-        console.error(`[XLM] Horizon ${resp.status} ${base}${path.slice(0, 80)} — ${errText.slice(0, 200)}`);
-        continue;
-      }
-      return resp.json() as Promise<Record<string, unknown>>;
+      // withRetry handles transient network/5xx failures; 400/404 return sentinel (no retry)
+      const result = await withRetry(`XLM:${base.slice(8, 26)}`, async () => {
+        const resp = await fetchWithTimeout(`${base}${path}`, {
+          headers: { accept: "application/json" },
+        }, 12000);
+        // 400 = invalid address / bad params, 404 = account not found — return empty gracefully
+        if (resp.status === 400 || resp.status === 404) {
+          const errBody = await resp.json().catch(() => ({})) as Record<string, unknown>;
+          const extras = errBody["extras"] as Record<string, unknown> | undefined;
+          const reason = String(extras?.["reason"] ?? errBody["detail"] ?? errBody["title"] ?? resp.status);
+          console.warn(`[XLM] Horizon ${resp.status} ${base}${path.slice(0, 80)} — ${reason}`);
+          // Return sentinel — do NOT throw (withRetry would retry, but 400/404 is definitive)
+          return { _empty: true, _status: resp.status, _reason: reason } as Record<string, unknown>;
+        }
+        if (!resp.ok) throw new Error(`Stellar Horizon HTTP ${resp.status} (${base})`);
+        return await resp.json() as Record<string, unknown>;
+      });
+      // _empty from 400/404 — stop trying other nodes; it's the same invalid address everywhere
+      if (result["_empty"]) return result;
+      return result;
     } catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
-      console.error(`[XLM] Horizon fetch error ${base}${path.slice(0, 80)} — ${lastErr.message}`);
+      console.error(`[XLM] All retries exhausted for ${base}${path.slice(0, 60)} — ${lastErr.message}`);
     }
   }
   throw lastErr;
@@ -697,13 +768,14 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
           if (txsArr.length > 0) {
             lastSeen = new Date(Number(String(txsArr[0]["consensus_timestamp"]).split(".")[0]) * 1000).toISOString();
           }
-        } catch { /* no tx data available */ }
+        } catch (txErr) { console.warn(`[HBAR] tx count fetch failed for ${address}: ${txErr instanceof Error ? txErr.message : String(txErr)}`); }
         const tags = guessTags(false, txCount);
         res.json(GetWalletResponse.parse({
           address, chain, balance, balanceUsd, transactionCount: txCount,
           firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
         }));
-      } catch {
+      } catch (err) {
+        req.log.error({ err, address, chain: "hbar" }, "[HBAR] wallet info fetch failed");
         res.json(GetWalletResponse.parse({
           address, chain, balance: "0.000000", balanceUsd: 0, transactionCount: 0,
           firstSeen: null, lastSeen: null, tags: [], riskScore: null, isContract: false,
@@ -740,7 +812,8 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
           address, chain, balance, balanceUsd, transactionCount: txCount,
           firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract: false,
         }));
-      } catch {
+      } catch (err) {
+        req.log.error({ err, address, chain }, "[CoinStats] wallet info fetch failed");
         res.json(GetWalletResponse.parse({
           address, chain, balance: "0.000000", balanceUsd: 0, transactionCount: 0,
           firstSeen: null, lastSeen: null, tags: [], riskScore: null, isContract: false,
@@ -998,7 +1071,8 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         const startIdx = (xdcPageNum - 1) * limit;
         rawTxs = allTxs.slice(startIdx, startIdx + limit);
         usedBlocksScan = true;
-      } catch {
+      } catch (xdcErr) {
+        console.warn(`[XDC] BlocksScan txlist failed: ${xdcErr instanceof Error ? xdcErr.message : String(xdcErr)}`);
         if (COINSTATS_KEY) {
           try {
             const data = await coinstatsFetch(
@@ -1183,7 +1257,8 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           total: transactions.length + (hasMore ? 1 : 0),
           page, limit, nextCursor: nextCursorVal, hasMore,
         }));
-      } catch {
+      } catch (err) {
+        req.log.error({ err, address, chain: "hbar" }, "[HBAR] transactions fetch failed");
         res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit, nextCursor: null, hasMore: false }));
       }
       return;
@@ -1425,7 +1500,8 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
           address: rpcAddr, page: "1", offset: "50", sort: "desc",
         });
         txData = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
-      } catch {
+      } catch (xdcErr) {
+        console.warn(`[XDC] BlocksScan connections failed: ${xdcErr instanceof Error ? xdcErr.message : String(xdcErr)}`);
         if (COINSTATS_KEY) {
           try {
             const data = await coinstatsFetch(`/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=xdce-crowd-sale&limit=30`);
@@ -1499,7 +1575,8 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         }
         const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
         res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
-      } catch {
+      } catch (err) {
+        req.log.error({ err, address, chain: "hbar" }, "[HBAR] connections fetch failed");
         res.json(GetWalletConnectionsResponse.parse(buildGraph([], new Map(), address, 0)));
       }
       return;

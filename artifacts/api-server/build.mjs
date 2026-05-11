@@ -122,13 +122,31 @@ async function buildAll() {
     outExtension: { ".js": ".mjs" },
   });
 
-  // Build the serverless handler (exports Express app, used by Vercel)
-  // Must use outdir (not outfile) because esbuild-plugin-pino emits multiple worker files
+  // Build the ESM serverless handler (kept for reference / future use)
   await esbuild({
     ...SHARED_OPTIONS,
     entryPoints: [path.resolve(artifactDir, "src/handler.ts")],
     outdir: distDir,
     outExtension: { ".js": ".mjs" },
+  });
+
+  // Build the CJS serverless handler for Vercel.
+  // Vercel's @vercel/node compiles functions as CommonJS by default and converts
+  // static ESM `import` statements to `require()` calls.  Importing an .mjs file
+  // via require() throws [ERR_REQUIRE_ESM].  Building handler.cjs with esbuild's
+  // CJS format avoids that entirely — esbuild bundles all ESM deps inline as CJS.
+  // CJS has native __dirname / __filename / require so no ESM banner is needed.
+  await esbuild({
+    platform: "node",
+    bundle: true,
+    format: "cjs",
+    logLevel: "info",
+    external: EXTERNALS,
+    sourcemap: "linked",
+    plugins: [esbuildPluginPino({ transports: ["pino-pretty"] })],
+    entryPoints: [path.resolve(artifactDir, "src/handler.ts")],
+    outdir: distDir,
+    outExtension: { ".js": ".cjs" },
   });
 }
 

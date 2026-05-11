@@ -280,7 +280,8 @@ const XDC_BLOCKSSCAN = "https://api.xdcscan.io/api";
 // CRITICAL: order=desc is broken on the public mirror node for ALL accounts.
 // Only order=asc&timestamp=gte:{created_ts} works reliably.
 const HBAR_MIRROR_NODES = [
-  "https://mainnet-public.mirrornode.hedera.com",  // Hedera official (primary)
+  "https://mainnet.hashio.io",                      // HashIO (Hedera-funded, most reliable)
+  "https://mainnet-public.mirrornode.hedera.com",   // Hedera official public
   "https://mainnet.mirrornode.hedera.com",          // Hedera official alternate
 ];
 

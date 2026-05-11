@@ -660,11 +660,39 @@ export default function WalletDetail() {
     if (!commingleResult) return "";
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = commingleResult.chain.toUpperCase();
-    const short = (a: string) => a.length > 20 ? `${a.slice(0, 10)}...${a.slice(-6)}` : a;
     const sep = (label = "") => label
       ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
       : "─".repeat(64);
+    const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
+    const fmtAmt = (v: string, dir: "in" | "out") => {
+      const n = parseFloat(v);
+      const sign = dir === "in" ? "+" : "−";
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+    };
     const lines: string[] = [];
+
+    // Return up to `limit` txs from allTxs where counterparty == addr
+    const sampleTxsFor = (addr: string, limit = 3) =>
+      allTxs
+        .filter((t) => (t.direction === "in" ? t.from : t.to) === addr)
+        .slice(0, limit);
+
+    // Emit a mini TX tree indented by `pad`
+    const emitTxs = (txs: Tx[], pad: string) => {
+      if (txs.length === 0) return;
+      lines.push(`${pad}│`);
+      txs.forEach((tx, ti) => {
+        const isLast = ti === txs.length - 1;
+        const conn     = isLast ? "└──" : "├──";
+        const childPfx = isLast ? "   " : "│  ";
+        const dir   = tx.direction === "in" ? "IN " : "OUT";
+        const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
+        const asset = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
+        lines.push(`${pad}${conn} ${dir}  (TX: ${tx.hash || "(none)"})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
+        if (tx.destinationTag != null) lines.push(`${pad}${childPfx}   ↳ Destination Tag : ${tx.destinationTag}`);
+        if (tx.memo)                   lines.push(`${pad}${childPfx}   ↳ Memo            : ${tx.memo}`);
+      });
+    };
 
     lines.push(`╔══════════════════════════════════════════════════════════════╗`);
     lines.push(`║        COMMINGLING CHECK REPORT — CryptoChainTrace          ║`);
@@ -698,6 +726,7 @@ export default function WalletDetail() {
       lines.push("  No shared nodes found within 4 tiers. Wallets appear unconnected.");
       lines.push("");
     } else {
+      // ── Tier 1: direct shared counterparties ──────────────────────────────
       const t1 = findings.filter((f) => f.tier === 1);
       lines.push(sep("TIER 1 — DIRECT SHARED COUNTERPARTIES"));
       lines.push("");
@@ -707,13 +736,22 @@ export default function WalletDetail() {
         t1.forEach((f, i) => {
           const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
           lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
-          if (f.knownInfo?.type === "exchange") lines.push(`       ⚠ EXCHANGE — funds may have passed through custodial service`);
-          lines.push(`       Shared with: ${f.comparisons.map((c) => c.wallet).join(", ")}`);
-          lines.push(`       Path: ${f.targetPath.join(" → ")}`);
+          if (f.knownInfo?.type === "exchange")
+            lines.push(`       ⚠ EXCHANGE — funds may have passed through custodial service`);
+          lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+          lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
+          lines.push(`       TX Count      : ${f.txCountTarget}`);
+          const txs = sampleTxsFor(f.sharedAddress, 3);
+          if (txs.length > 0) {
+            lines.push(`       Sample TXs (target wallet ↔ shared node):`);
+            emitTxs(txs, "       ");
+          }
+          lines.push("");
         });
       }
       lines.push("");
 
+      // ── Tier 2: second-degree shared nodes ────────────────────────────────
       const t2 = findings.filter((f) => f.tier === 2);
       lines.push(sep("TIER 2 — SECOND-DEGREE SHARED NODES"));
       lines.push("");
@@ -724,12 +762,23 @@ export default function WalletDetail() {
           const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
           lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
           lines.push(`       Path from target: ${f.targetPath.join(" → ")}`);
-          lines.push(`       Shared with: ${f.comparisons.map((c) => c.wallet).join(", ")}`);
+          lines.push(`       Shared with     : ${f.comparisons.map((c) => c.wallet).join("\n                       ")}`);
+          // Show sample txs to the first hop (targetPath[1]) as entry evidence
+          const firstHop = f.targetPath[1];
+          if (firstHop) {
+            const txs = sampleTxsFor(firstHop, 2);
+            if (txs.length > 0) {
+              lines.push(`       Entry TXs (target → first hop):`);
+              emitTxs(txs, "       ");
+            }
+          }
+          lines.push("");
         });
         if (t2.length > 20) lines.push(`  … and ${t2.length - 20} more`);
       }
       lines.push("");
 
+      // ── Tier 3–4: deep shared nodes ────────────────────────────────────────
       const t3 = findings.filter((f) => f.tier === 3);
       const t4 = findings.filter((f) => f.tier === 4);
       if (t3.length > 0 || t4.length > 0) {
@@ -738,8 +787,9 @@ export default function WalletDetail() {
         [...t3.slice(0, 10), ...t4.slice(0, 10)].forEach((f, i) => {
           const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
           lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${label}`);
-          lines.push(`       Path: ${f.targetPath.join(" → ")}`);
-          lines.push(`       Shared with: ${f.comparisons.map((c) => c.wallet).join(", ")}`);
+          lines.push(`       Path        : ${f.targetPath.join(" → ")}`);
+          lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+          lines.push("");
         });
         if (t3.length + t4.length > 20) lines.push(`  … and ${t3.length + t4.length - 20} more`);
         lines.push("");
@@ -3488,7 +3538,21 @@ export default function WalletDetail() {
                     const title = `Commingle Check Report — ${(commingleResult?.chain ?? chain).toUpperCase()} — ${(commingleResult?.targetWallet ?? address).slice(0, 12)}`;
                     setReportContent(rpt);
                     setReportTitle(title);
-                    setReportJsonData({ reportType: "commingle", generatedAt: new Date().toISOString(), ...commingleResult, reportText: rpt });
+                    const enrichedFindings = (commingleResult?.findings ?? []).map((f) => ({
+                      ...f,
+                      sampleTransactions: allTxs
+                        .filter((t) => (t.direction === "in" ? t.from : t.to) === f.sharedAddress)
+                        .slice(0, 5)
+                        .map((t) => ({
+                          hash: t.hash,
+                          direction: t.direction,
+                          value: t.value,
+                          timestamp: t.timestamp,
+                          memo: t.memo ?? null,
+                          destinationTag: t.destinationTag ?? null,
+                        })),
+                    }));
+                    setReportJsonData({ reportType: "commingle", generatedAt: new Date().toISOString(), ...commingleResult, findings: enrichedFindings, reportText: rpt });
                     setShowReportModal(true);
                   }}
                   className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-amber-600 hover:bg-amber-500 border border-amber-500/50 rounded px-3 py-1.5 transition-colors shrink-0"

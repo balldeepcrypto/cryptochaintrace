@@ -387,11 +387,25 @@ async function stellarFetch(path: string): Promise<Record<string, unknown>> {
       const resp = await fetchWithTimeout(`${base}${path}`, {
         headers: { accept: "application/json" },
       }, 12000);
-      // 400 = invalid address format, 404 = account not found — return empty gracefully
-      if (resp.status === 400 || resp.status === 404) return { _empty: true, _status: resp.status };
-      if (!resp.ok) { lastErr = new Error(`Stellar Horizon ${resp.status} (${base})`); continue; }
+      // 400 = invalid address / bad params, 404 = account not found — return empty gracefully
+      if (resp.status === 400 || resp.status === 404) {
+        const errBody = await resp.json().catch(() => ({})) as Record<string, unknown>;
+        const extras = errBody["extras"] as Record<string, unknown> | undefined;
+        const reason = String(extras?.["reason"] ?? errBody["detail"] ?? errBody["title"] ?? resp.status);
+        console.warn(`[XLM] Horizon ${resp.status} ${base}${path.slice(0, 80)} — ${reason}`);
+        return { _empty: true, _status: resp.status, _reason: reason };
+      }
+      if (!resp.ok) {
+        const errText = await resp.text().catch(() => "");
+        lastErr = new Error(`Stellar Horizon ${resp.status} (${base}): ${errText.slice(0, 200)}`);
+        console.error(`[XLM] Horizon ${resp.status} ${base}${path.slice(0, 80)} — ${errText.slice(0, 200)}`);
+        continue;
+      }
       return resp.json() as Promise<Record<string, unknown>>;
-    } catch (e) { lastErr = e instanceof Error ? e : new Error(String(e)); }
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      console.error(`[XLM] Horizon fetch error ${base}${path.slice(0, 80)} — ${lastErr.message}`);
+    }
   }
   throw lastErr;
 }
@@ -420,7 +434,7 @@ function parseStellarOp(
   hash: string; from: string; to: string | null; value: string; valueUsd: number;
   fee: string; feeUsd: number; timestamp: string; blockNumber: number;
   status: "success" | "failed"; direction: "in" | "out" | "self";
-  tokenSymbol: string; tokenName: null;
+  tokenSymbol: string; tokenName: null; memo: string | null;
 } | null {
   const type = String(rec["type"] ?? "payment");
   if (!STELLAR_VALUE_OPS.has(type)) return null; // skip non-value ops
@@ -468,13 +482,18 @@ function parseStellarOp(
   const isSelf = from === address && (to === null || to === address);
   const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
 
+  // Extract memo from the transaction embedded by join=transactions
+  const txEmbed = rec["transaction"] as Record<string, unknown> | undefined;
+  const memoType = String(txEmbed?.["memo_type"] ?? "none");
+  const memo = (memoType !== "none" && txEmbed?.["memo"]) ? String(txEmbed["memo"]) : null;
+
   return {
     hash: String(rec["transaction_hash"] ?? ""),
     from, to, value, valueUsd,
     fee: "0.000001", feeUsd: parseFloat((0.000001 * priceUsd).toFixed(6)),
     timestamp: String(rec["created_at"] ?? new Date().toISOString()),
     blockNumber: 0, status: "success" as const,
-    direction, tokenSymbol, tokenName: null,
+    direction, tokenSymbol, tokenName: null, memo,
   };
 }
 
@@ -938,7 +957,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       // Stellar Horizon /operations endpoint — one record per operation, real amounts
       // (The /transactions envelope endpoint always has value=0; only /operations has actual amounts)
       const stellarLimit = Math.min(limit, 200);
-      const path = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
+      const path = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
       const data = await stellarFetch(path);
       if (data["_empty"]) {
         res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit: stellarLimit, nextCursor: null, hasMore: false }));
@@ -1378,7 +1397,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     }
 
     if (chain === "xlm") {
-      const data = await stellarFetch(`/accounts/${address}/operations?limit=30&order=desc`);
+      const data = await stellarFetch(`/accounts/${address}/operations?limit=30&order=desc&join=transactions`);
       const records = ((data["_empty"] ? [] : (data["_embedded"] as Record<string, unknown> | undefined)?.["records"]) as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();

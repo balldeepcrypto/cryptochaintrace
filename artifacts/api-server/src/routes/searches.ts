@@ -11,23 +11,28 @@ import {
 const router: IRouter = Router();
 
 router.get("/searches", async (req, res): Promise<void> => {
-  const rows = await db
-    .select()
-    .from(searchesTable)
-    .orderBy(desc(searchesTable.searchedAt))
-    .limit(20);
+  try {
+    const rows = await db
+      .select()
+      .from(searchesTable)
+      .orderBy(desc(searchesTable.searchedAt))
+      .limit(20);
 
-  res.json(
-    GetRecentSearchesResponse.parse(
-      rows.map((r) => ({
-        id: r.id,
-        address: r.address,
-        chain: r.chain,
-        searchedAt: r.searchedAt.toISOString(),
-        label: r.label ?? null,
-      })),
-    ),
-  );
+    res.json(
+      GetRecentSearchesResponse.parse(
+        rows.map((r) => ({
+          id: r.id,
+          address: r.address,
+          chain: r.chain,
+          searchedAt: r.searchedAt.toISOString(),
+          label: r.label ?? null,
+        })),
+      ),
+    );
+  } catch (err) {
+    req.log.warn({ err }, "GET /searches failed — DB unavailable?");
+    res.json(GetRecentSearchesResponse.parse([]));
+  }
 });
 
 router.post("/searches", async (req, res): Promise<void> => {
@@ -37,73 +42,90 @@ router.post("/searches", async (req, res): Promise<void> => {
     return;
   }
 
-  const [row] = await db
-    .insert(searchesTable)
-    .values({
-      address: parsed.data.address,
-      chain: parsed.data.chain,
-      label: parsed.data.label ?? null,
-    })
-    .returning();
+  try {
+    const [row] = await db
+      .insert(searchesTable)
+      .values({
+        address: parsed.data.address,
+        chain: parsed.data.chain,
+        label: parsed.data.label ?? null,
+      })
+      .returning();
 
-  res.status(201).json(
-    GetRecentSearchesResponseItem.parse({
-      id: row.id,
-      address: row.address,
-      chain: row.chain,
-      searchedAt: row.searchedAt.toISOString(),
-      label: row.label ?? null,
-    }),
-  );
+    res.status(201).json(
+      GetRecentSearchesResponseItem.parse({
+        id: row.id,
+        address: row.address,
+        chain: row.chain,
+        searchedAt: row.searchedAt.toISOString(),
+        label: row.label ?? null,
+      }),
+    );
+  } catch (err) {
+    req.log.warn({ err }, "POST /searches failed — DB unavailable?");
+    res.status(503).json({ error: "db_unavailable", message: "Search history unavailable — DATABASE_URL not configured." });
+  }
 });
 
 router.get("/searches/stats", async (req, res): Promise<void> => {
-  const [{ total }] = await db
-    .select({ total: sql<number>`count(*)::int` })
-    .from(searchesTable);
+  try {
+    const [{ total }] = await db
+      .select({ total: sql<number>`count(*)::int` })
+      .from(searchesTable);
 
-  const [{ unique }] = await db
-    .select({ unique: sql<number>`count(distinct address)::int` })
-    .from(searchesTable);
+    const [{ unique }] = await db
+      .select({ unique: sql<number>`count(distinct address)::int` })
+      .from(searchesTable);
 
-  const popularRows = await db
-    .select({
-      address: searchesTable.address,
-      chain: searchesTable.chain,
-      label: searchesTable.label,
-      searchCount: sql<number>`count(*)::int`,
-    })
-    .from(searchesTable)
-    .groupBy(searchesTable.address, searchesTable.chain, searchesTable.label)
-    .orderBy(desc(sql`count(*)`))
-    .limit(5);
+    const popularRows = await db
+      .select({
+        address: searchesTable.address,
+        chain: searchesTable.chain,
+        label: searchesTable.label,
+        searchCount: sql<number>`count(*)::int`,
+      })
+      .from(searchesTable)
+      .groupBy(searchesTable.address, searchesTable.chain, searchesTable.label)
+      .orderBy(desc(sql`count(*)`))
+      .limit(5);
 
-  const recentRows = await db
-    .select({
-      date: sql<string>`date_trunc('day', searched_at)::date::text`,
-      count: sql<number>`count(*)::int`,
-    })
-    .from(searchesTable)
-    .groupBy(sql`date_trunc('day', searched_at)`)
-    .orderBy(desc(sql`date_trunc('day', searched_at)`))
-    .limit(7);
+    const recentRows = await db
+      .select({
+        date: sql<string>`date_trunc('day', searched_at)::date::text`,
+        count: sql<number>`count(*)::int`,
+      })
+      .from(searchesTable)
+      .groupBy(sql`date_trunc('day', searched_at)`)
+      .orderBy(desc(sql`date_trunc('day', searched_at)`))
+      .limit(7);
 
-  res.json(
-    GetSearchStatsResponse.parse({
-      totalSearches: total ?? 0,
-      uniqueWallets: unique ?? 0,
-      popularWallets: popularRows.map((r) => ({
-        address: r.address,
-        chain: r.chain,
-        searchCount: r.searchCount,
-        label: r.label ?? null,
-      })),
-      recentActivity: recentRows.map((r) => ({
-        date: r.date,
-        count: r.count,
-      })),
-    }),
-  );
+    res.json(
+      GetSearchStatsResponse.parse({
+        totalSearches: total ?? 0,
+        uniqueWallets: unique ?? 0,
+        popularWallets: popularRows.map((r) => ({
+          address: r.address,
+          chain: r.chain,
+          searchCount: r.searchCount,
+          label: r.label ?? null,
+        })),
+        recentActivity: recentRows.map((r) => ({
+          date: r.date,
+          count: r.count,
+        })),
+      }),
+    );
+  } catch (err) {
+    req.log.warn({ err }, "GET /searches/stats failed — DB unavailable?");
+    res.json(
+      GetSearchStatsResponse.parse({
+        totalSearches: 0,
+        uniqueWallets: 0,
+        popularWallets: [],
+        recentActivity: [],
+      }),
+    );
+  }
 });
 
 export default router;

@@ -11,11 +11,22 @@
 import app from "../artifacts/api-server/dist/handler.mjs";
 
 export default function handler(req, res) {
-  console.log(`[api] ${req.method} ${req.url}`);
+  const start = Date.now();
+  const { method, url, headers } = req;
+
+  console.log(`[api] --> ${method} ${url}`);
+  console.log(`[api]     host=${headers.host} origin=${headers.origin ?? "-"}`);
+
+  const originalEnd = res.end.bind(res);
+  res.end = function (...args) {
+    console.log(`[api] <-- ${method} ${url} ${res.statusCode} (${Date.now() - start}ms)`);
+    return originalEnd(...args);
+  };
+
   try {
     app(req, res);
   } catch (err) {
-    console.error("[api] Unhandled error:", err);
+    console.error(`[api] CRASH ${method} ${url}:`, err);
     if (!res.headersSent) {
       res.status(500).json({ error: "Internal server error", detail: String(err) });
     }

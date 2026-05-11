@@ -33,14 +33,11 @@ export default function Home() {
     if (!address.trim()) return;
 
     const trimmedAddress = address.trim();
-    saveSearch.mutate(
-      { data: { address: trimmedAddress, chain } },
-      {
-        onSuccess: () => {
-          setLocation(`/wallet/${trimmedAddress}?chain=${chain}`);
-        },
-      }
-    );
+    // Navigate immediately — don't block on the DB write.
+    // saveSearch is fire-and-forget; if DATABASE_URL isn't configured the
+    // search history just won't persist, but the trace still works.
+    setLocation(`/wallet/${trimmedAddress}?chain=${chain}`);
+    saveSearch.mutate({ data: { address: trimmedAddress, chain } });
   };
 
   const DONATE_ADDRESSES = [

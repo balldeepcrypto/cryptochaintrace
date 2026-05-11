@@ -8,6 +8,7 @@ import {
 } from "@workspace/api-client-react";
 import { AddressDisplay } from "@/components/address-display";
 import { saveRecentSearch } from "@/lib/recent-searches";
+import { exportAsPdf, exportAsJson, reportFilename } from "@/lib/report-export";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -15,7 +16,7 @@ import {
   Network, GitFork, FileCode, Tag, ShieldAlert, ShieldCheck, Shield,
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
   AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Check, Heart, MessageSquare,
-  Plus, GitMerge, Layers, Flag, FileText, MousePointer2,
+  Plus, GitMerge, Layers, Flag, FileText, MousePointer2, Download, FileJson,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -414,6 +415,8 @@ export default function WalletDetail() {
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportCopied, setReportCopied] = useState(false);
   const [reportContent, setReportContent] = useState("");
+  const [reportTitle, setReportTitle] = useState("");
+  const [reportJsonData, setReportJsonData] = useState<unknown>(null);
 
   function generateReport(): string {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
@@ -1909,7 +1912,14 @@ export default function WalletDetail() {
               </div>
               <Button
                 className="font-mono text-xs bg-orange-600 hover:bg-orange-500 text-white border-0"
-                onClick={() => { setReportContent(generateReport()); setShowReportModal(true); }}
+                onClick={() => {
+                  const rpt = generateReport();
+                  const title = `Investigative Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
+                  setReportContent(rpt);
+                  setReportTitle(title);
+                  setReportJsonData({ reportType: "investigative", generatedAt: new Date().toISOString(), chain, subjectAddress: address, walletInfo: wallet, selectedAddresses: [...selectedWallets], reportText: rpt });
+                  setShowReportModal(true);
+                }}
               >
                 <FileText className="w-3.5 h-3.5 mr-1.5" /> GENERATE INVESTIGATIVE REPORT
               </Button>
@@ -2462,7 +2472,14 @@ export default function WalletDetail() {
                 )}
               </div>
               <button
-                onClick={() => { setReportContent(generateTrailReport()); setShowReportModal(true); }}
+                onClick={() => {
+                  const rpt = generateTrailReport();
+                  const title = `Trail Trace Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
+                  setReportContent(rpt);
+                  setReportTitle(title);
+                  setReportJsonData({ reportType: "trail", generatedAt: new Date().toISOString(), chain, subjectAddress: address, trailEntries, comminglingAddresses: [...comminglingAddresses], reportText: rpt });
+                  setShowReportModal(true);
+                }}
                 className="flex items-center gap-1 text-[11px] font-mono text-orange-400 hover:text-orange-300 bg-orange-950/30 hover:bg-orange-950/60 border border-orange-500/30 rounded px-2 py-1 transition-colors"
               >
                 <FileText className="w-3 h-3" /> TRAIL REPORT
@@ -3139,7 +3156,14 @@ export default function WalletDetail() {
                   Analysis complete · {multiResult.trackedWallets.length} wallets · {multiResult.sharedCounterparties.length + multiResult.commonEndpoints.length} shared nodes found
                 </div>
                 <button
-                  onClick={() => { setReportContent(generateReport()); setShowReportModal(true); }}
+                  onClick={() => {
+                    const rpt = generateReport();
+                    const title = `Investigative Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
+                    setReportContent(rpt);
+                    setReportTitle(title);
+                    setReportJsonData({ reportType: "investigative", generatedAt: new Date().toISOString(), chain, subjectAddress: address, walletInfo: wallet, selectedAddresses: [...selectedWallets], reportText: rpt });
+                    setShowReportModal(true);
+                  }}
                   className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-orange-600 hover:bg-orange-500 border border-orange-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
                 >
                   <FileText className="w-3.5 h-3.5" /> GENERATE INVESTIGATIVE REPORT
@@ -3458,7 +3482,10 @@ export default function WalletDetail() {
                 <button
                   onClick={() => {
                     const rpt = generateCommingleReport();
+                    const title = `Commingle Check Report — ${(commingleResult?.chain ?? chain).toUpperCase()} — ${(commingleResult?.targetWallet ?? address).slice(0, 12)}`;
                     setReportContent(rpt);
+                    setReportTitle(title);
+                    setReportJsonData({ reportType: "commingle", generatedAt: new Date().toISOString(), ...commingleResult, reportText: rpt });
                     setShowReportModal(true);
                   }}
                   className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-amber-600 hover:bg-amber-500 border border-amber-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
@@ -3656,7 +3683,19 @@ export default function WalletDetail() {
                   {selectedWallets.size} selected wallet{selectedWallets.size !== 1 ? "s" : ""} · {chain.toUpperCase()}
                 </span>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  onClick={() => exportAsPdf(reportTitle, reportContent)}
+                  className="flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border border-blue-500/30 text-blue-300 hover:bg-blue-950/30 hover:border-blue-500/60 transition-colors"
+                >
+                  <Download className="w-3.5 h-3.5" /> EXPORT PDF
+                </button>
+                <button
+                  onClick={() => exportAsJson(reportFilename(reportTitle, "json"), reportJsonData)}
+                  className="flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/30 hover:border-cyan-500/60 transition-colors"
+                >
+                  <FileJson className="w-3.5 h-3.5" /> EXPORT JSON
+                </button>
                 <button
                   onClick={() => {
                     navigator.clipboard.writeText(reportContent).catch(() => {});
@@ -3669,7 +3708,7 @@ export default function WalletDetail() {
                       : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30 hover:border-orange-500/60"
                   }`}
                 >
-                  {reportCopied ? <><Check className="w-3.5 h-3.5" /> COPIED!</> : <><Copy className="w-3.5 h-3.5" /> COPY TO CLIPBOARD</>}
+                  {reportCopied ? <><Check className="w-3.5 h-3.5" /> COPIED!</> : <><Copy className="w-3.5 h-3.5" /> COPY</>}
                 </button>
                 <button
                   onClick={() => setShowReportModal(false)}
@@ -3688,24 +3727,38 @@ export default function WalletDetail() {
             </div>
 
             {/* Footer */}
-            <div className="px-5 py-3 border-t border-border/30 shrink-0 flex items-center justify-between bg-muted/5">
+            <div className="px-5 py-3 border-t border-border/30 shrink-0 flex items-center justify-between gap-3 flex-wrap bg-muted/5">
               <span className="text-[10px] font-mono text-muted-foreground/50">
-                Click anywhere outside to close · Select text to copy manually
+                Click outside to close · Select text to copy manually
               </span>
-              <button
-                onClick={() => {
-                  navigator.clipboard.writeText(reportContent).catch(() => {});
-                  setReportCopied(true);
-                  setTimeout(() => setReportCopied(false), 2500);
-                }}
-                className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
-                  reportCopied
-                    ? "border-green-500/50 text-green-400 bg-green-950/30"
-                    : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30"
-                }`}
-              >
-                {reportCopied ? <><Check className="w-3 h-3" /> COPIED!</> : <><Copy className="w-3 h-3" /> COPY TO CLIPBOARD</>}
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => exportAsPdf(reportTitle, reportContent)}
+                  className="flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border border-blue-500/30 text-blue-300 hover:bg-blue-950/30 transition-colors"
+                >
+                  <Download className="w-3 h-3" /> EXPORT PDF
+                </button>
+                <button
+                  onClick={() => exportAsJson(reportFilename(reportTitle, "json"), reportJsonData)}
+                  className="flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/30 transition-colors"
+                >
+                  <FileJson className="w-3 h-3" /> EXPORT JSON
+                </button>
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(reportContent).catch(() => {});
+                    setReportCopied(true);
+                    setTimeout(() => setReportCopied(false), 2500);
+                  }}
+                  className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
+                    reportCopied
+                      ? "border-green-500/50 text-green-400 bg-green-950/30"
+                      : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30"
+                  }`}
+                >
+                  {reportCopied ? <><Check className="w-3 h-3" /> COPIED!</> : <><Copy className="w-3 h-3" /> COPY</>}
+                </button>
+              </div>
             </div>
           </div>
         </div>

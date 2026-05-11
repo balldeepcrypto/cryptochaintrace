@@ -429,6 +429,7 @@ export default function WalletDetail() {
       return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
     };
     const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
+    const fmtVal  = (v: number)  => v.toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 6 });
     const sep = (label = "") => label
       ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
       : "─".repeat(64);
@@ -484,7 +485,7 @@ export default function WalletDetail() {
 
       lines.push(`  ${connector} ${dirLabel}  →  ${short(addr)}${labelStr}`);
       lines.push(`  ${indent}   Full  : ${addr}`);
-      lines.push(`  ${indent}   Total : ${totalTxs} tx${totalTxs !== 1 ? "s" : ""}  |  ${totalVal.toFixed(4)} ${chainUp}  |  Last: ${lastTs || "—"}`);
+      lines.push(`  ${indent}   Total : ${totalTxs.toLocaleString("en-US")} tx${totalTxs !== 1 ? "s" : ""}  |  ${fmtVal(totalVal)} ${chainUp}  |  Last: ${lastTs || "—"}`);
 
       // Individual transactions for this counterparty
       const txsForAddr = allTxs
@@ -503,8 +504,8 @@ export default function WalletDetail() {
           const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
           const asset = tx.tokenSymbol || chainUp;
           lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${shortHash(tx.hash)})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
-          if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}     Destination Tag: ${tx.destinationTag}`);
-          if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}     Memo: ${tx.memo}`);
+          if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}     ↳ Destination Tag : ${tx.destinationTag}`);
+          if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}     ↳ Memo            : ${tx.memo}`);
         });
         const remaining = totalTxs - txsForAddr.length;
         if (remaining > 0) lines.push(`  ${indent}       (+ ${remaining} more transactions not shown)`);
@@ -524,7 +525,7 @@ export default function WalletDetail() {
         lines.push(`  OUTBOUND  (${address.slice(0, 8)}...  →  selected wallets)`);
         for (const r of outRows.slice(0, 10)) {
           const kn = KNOWN_LABELS[r.address];
-          lines.push(`    → ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount} tx  |  ${r.totalValue.toFixed(4)} ${chainUp}`);
+          lines.push(`    → ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount.toLocaleString("en-US")} tx  |  ${fmtVal(r.totalValue)} ${chainUp}`);
         }
         lines.push("");
       }
@@ -532,7 +533,7 @@ export default function WalletDetail() {
         lines.push(`  INBOUND   (selected wallets  →  ${address.slice(0, 8)}...)`);
         for (const r of inRows.slice(0, 10)) {
           const kn = KNOWN_LABELS[r.address];
-          lines.push(`    ← ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount} tx  |  ${r.totalValue.toFixed(4)} ${chainUp}`);
+          lines.push(`    ← ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount.toLocaleString("en-US")} tx  |  ${fmtVal(r.totalValue)} ${chainUp}`);
         }
         lines.push("");
       }
@@ -550,13 +551,15 @@ export default function WalletDetail() {
         const totalTxs = rows.reduce((s, r) => s + r.txCount, 0);
         const totalVal = rows.reduce((s, r) => s + r.totalValue, 0);
         const sampleTx = allTxs.find(t => (t.direction === "in" ? t.from : t.to) === addr);
-        const memos = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.memo).map(t => t.memo!).slice(0, 3);
+        const memos    = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.memo).map(t => t.memo!).slice(0, 5);
+        const destTags = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.destinationTag != null).map(t => t.destinationTag!).slice(0, 5);
         lines.push("");
         lines.push(`  ├── ${addr}`);
         lines.push(`  │       ◄ OFFICIAL ${known.label.toUpperCase()} COLDWALLET`);
-        lines.push(`  │       Txs: ${totalTxs}  |  Total: ${totalVal.toFixed(4)} ${chainUp}`);
+        lines.push(`  │       Txs: ${totalTxs.toLocaleString("en-US")}  |  Total: ${fmtVal(totalVal)} ${chainUp}`);
         if (sampleTx) lines.push(`  │       Sample TX : ${shortHash(sampleTx.hash)}`);
-        if (memos.length > 0) lines.push(`  │       Memos (subpoena targets): ${memos.join("  |  ")}`);
+        if (destTags.length > 0) lines.push(`  │       ↳ Destination Tags (subpoena): ${destTags.join("  |  ")}`);
+        if (memos.length > 0)    lines.push(`  │       ↳ Memos         (subpoena): ${memos.join("  |  ")}`);
       }
       lines.push("");
     }

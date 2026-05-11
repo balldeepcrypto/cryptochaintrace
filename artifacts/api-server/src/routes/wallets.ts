@@ -1,4 +1,4 @@
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Response as ExpressResponse } from "express";
 import {
   GetWalletParams,
   GetWalletQueryParams,
@@ -10,6 +10,7 @@ import {
   GetWalletTransactionsResponse,
   GetWalletConnectionsResponse,
 } from "@workspace/api-zod";
+import { walletCache, txCache, connCache, WALLET_TTL, TX_TTL, CONN_TTL } from "../lib/cache";
 
 const router: IRouter = Router();
 
@@ -74,6 +75,32 @@ function guessTags(isContract: boolean, txCount: number): string[] {
   if (txCount > 50000) tags.push("exchange");
   if (txCount === 0) tags.push("dormant");
   return tags;
+}
+
+/**
+ * Strip characters that could cause injection or unexpected API behaviour.
+ * Allow: alphanumeric, dots, dashes, underscores, colons (for HBAR 0.0.xxx format).
+ * Returns null if the address looks malformed (too short, too long, bad chars).
+ */
+function sanitizeAddress(raw: string): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (trimmed.length < 5 || trimmed.length > 200) return null;
+  const cleaned = trimmed.replace(/[^\w.\-:]/g, "");
+  if (cleaned !== trimmed) return null; // reject if any suspicious chars were stripped
+  return cleaned;
+}
+
+/**
+ * Intercept res.json to write a successful (2xx) response body to `cache`
+ * under `key` with TTL `ttlMs`. Must be called before any res.json in the handler.
+ */
+function interceptCache(res: ExpressResponse, cache: typeof walletCache, key: string, ttlMs: number): void {
+  const orig = res.json.bind(res) as (body: unknown) => ExpressResponse;
+  (res as unknown as { json: (body: unknown) => ExpressResponse }).json = (body: unknown) => {
+    if (res.statusCode < 400 && body !== undefined) cache.set(key, body, ttlMs);
+    return orig(body);
+  };
 }
 
 // ── Blockscout v2 — free, no API key, covers ETH and Polygon ──────────────
@@ -145,9 +172,21 @@ async function etherscanFetch(params: Record<string, string>, chain: string): Pr
   const url = new URL(baseUrl);
   url.searchParams.set("apikey", ETHERSCAN_KEY);
   for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const resp = await fetch(url.toString());
-  if (!resp.ok) throw new Error(`Etherscan request failed: ${resp.status}`);
-  return resp.json() as Promise<Record<string, unknown>>;
+  return withRetry(`Etherscan:${chain}`, async () => {
+    const resp = await fetchWithTimeout(url.toString(), {}, 10000);
+    if (resp.status === 429) throw new Error(`Etherscan 429 rate-limit (${chain})`);
+    if (!resp.ok) throw new Error(`Etherscan HTTP ${resp.status} (${chain})`);
+    const data = await resp.json() as Record<string, unknown>;
+    // Etherscan returns status:"0" with message:"NOTOK" for API errors
+    if (data["status"] === "0" && data["message"] === "NOTOK") {
+      const result = String(data["result"] ?? "");
+      // Rate-limit is retryable; "No transactions found" is a valid empty response
+      if (result.toLowerCase().includes("rate limit") || result.toLowerCase().includes("max rate")) {
+        throw new Error(`Etherscan rate-limit (${chain}): ${result}`);
+      }
+    }
+    return data;
+  });
 }
 
 // ── BTC Explorer APIs: blockstream.info (primary) → mempool.space (fallback) ─
@@ -246,15 +285,15 @@ function sleep(ms: number): Promise<void> {
 }
 
 /**
- * Retry fn up to `attempts` times with linear backoff.
- * Only retries on thrown errors — functions that return sentinel values
- * (like { _empty: true }) should NOT throw for expected negatives.
+ * Retry fn up to `attempts` times with exponential backoff.
+ * - Detects HTTP 429 / "rate limit" errors and applies an extended jitter delay.
+ * - Only retries on thrown errors; sentinel-value functions should never throw.
  */
 async function withRetry<T>(
   label: string,
   fn: () => Promise<T>,
-  attempts = 2,
-  baseDelayMs = 400,
+  attempts = 3,
+  baseDelayMs = 500,
 ): Promise<T> {
   let lastErr: Error = new Error(`[${label}] exhausted`);
   for (let i = 0; i < attempts; i++) {
@@ -262,11 +301,17 @@ async function withRetry<T>(
     catch (e) {
       lastErr = e instanceof Error ? e : new Error(String(e));
       if (i < attempts - 1) {
-        console.warn(`[${label}] attempt ${i + 1}/${attempts} failed — retrying in ${baseDelayMs}ms: ${lastErr.message}`);
-        await sleep(baseDelayMs);
+        const isRateLimit = /429|rate.?limit/i.test(lastErr.message);
+        // Exponential: 500ms → 1000ms; rate-limit: 3–4 s with jitter
+        const delay = isRateLimit
+          ? 3000 + Math.random() * 1000
+          : baseDelayMs * Math.pow(2, i);
+        console.warn(`[${label}] attempt ${i + 1}/${attempts} failed — retry in ${Math.round(delay)}ms: ${lastErr.message}`);
+        await sleep(delay);
       }
     }
   }
+  console.error(`[${label}] all ${attempts} attempts failed: ${lastErr.message}`);
   throw lastErr;
 }
 
@@ -580,8 +625,22 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
 
   const query = GetWalletQueryParams.safeParse(req.query);
   const chain = query.success ? query.data.chain : "ethereum";
-  const address = params.data.address;
+  const rawAddress = params.data.address;
+
+  const address = sanitizeAddress(rawAddress);
+  if (!address) {
+    res.status(400).json({ error: "invalid_address", message: "Address contains invalid characters or is out of range" });
+    return;
+  }
+
   const priceUsd = PRICE_MAP[chain] ?? 1;
+
+  // ── Cache check ────────────────────────────────────────────────────────────
+  const wCacheKey = `w:${chain}:${address}`;
+  const wCacheHit = walletCache.get(wCacheKey);
+  if (wCacheHit) { res.setHeader("X-Cache", "HIT"); res.json(wCacheHit); return; }
+  interceptCache(res, walletCache, wCacheKey, WALLET_TTL);
+  // ──────────────────────────────────────────────────────────────────────────
 
   try {
     if (chain === "xrp") {
@@ -872,8 +931,11 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       firstSeen, lastSeen, tags, riskScore: computeRiskScore(txCount, tags), isContract,
     }));
   } catch (err) {
-    req.log.error({ err, address, chain }, "Failed to fetch wallet info");
-    res.status(404).json({ error: "not_found", message: "Could not retrieve wallet data" });
+    req.log.error({ err, address, chain }, `[${chain.toUpperCase()}] wallet info fetch failed — returning empty profile`);
+    res.json(GetWalletResponse.parse({
+      address, chain, balance: "0.000000", balanceUsd: 0, transactionCount: 0,
+      firstSeen: null, lastSeen: null, tags: [], riskScore: null, isContract: false,
+    }));
   }
 });
 
@@ -893,9 +955,24 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
   const cursorParam = query.success ? query.data.cursor : undefined;
   // XRP, XLM, HBAR, XDC, DAG addresses are case-sensitive — never lowercase them
   const evmChains = ["ethereum", "polygon", "bsc"];
-  const rawAddress = params.data.address;
-  const address = evmChains.includes(chain) ? rawAddress.toLowerCase() : rawAddress;
+  const rawAddressTx = params.data.address;
+
+  const sanitized = sanitizeAddress(rawAddressTx);
+  if (!sanitized) {
+    res.status(400).json({ error: "invalid_address", message: "Address contains invalid characters or is out of range" });
+    return;
+  }
+  const address = evmChains.includes(chain) ? sanitized.toLowerCase() : sanitized;
   const priceUsd = PRICE_MAP[chain] ?? 1;
+
+  // ── Cache check (first page only — cursor pages are too varied to cache usefully) ──
+  const txCacheKey = !cursorParam ? `tx:${chain}:${address}:${limit}` : null;
+  if (txCacheKey) {
+    const txHit = txCache.get(txCacheKey);
+    if (txHit) { res.setHeader("X-Cache", "HIT"); res.json(txHit); return; }
+    interceptCache(res, txCache, txCacheKey, TX_TTL);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
 
   try {
     if (chain === "xrp") {
@@ -1357,8 +1434,8 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     const total = evmHasMore ? page * limit + 1 : (page - 1) * limit + transactions.length;
     res.json(GetWalletTransactionsResponse.parse({ transactions, total, page, limit, nextCursor: evmNextCursor, hasMore: evmHasMore }));
   } catch (err) {
-    req.log.error({ err }, "Failed to fetch transactions");
-    res.status(500).json({ error: "fetch_error", message: "Could not retrieve transactions" });
+    req.log.error({ err, address, chain }, `[${chain.toUpperCase()}] transactions fetch failed — returning empty list`);
+    res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit, nextCursor: null, hasMore: false }));
   }
 });
 
@@ -1375,8 +1452,21 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
   const chain = query.success ? query.data.chain : "ethereum";
   const evmChainsConn = ["ethereum", "polygon", "bsc"];
   const rawAddressConn = params.data.address;
-  const address = evmChainsConn.includes(chain) ? rawAddressConn.toLowerCase() : rawAddressConn;
+
+  const sanitizedConn = sanitizeAddress(rawAddressConn);
+  if (!sanitizedConn) {
+    res.status(400).json({ error: "invalid_address", message: "Address contains invalid characters or is out of range" });
+    return;
+  }
+  const address = evmChainsConn.includes(chain) ? sanitizedConn.toLowerCase() : sanitizedConn;
   const priceUsd = PRICE_MAP[chain] ?? 1;
+
+  // ── Cache check ────────────────────────────────────────────────────────────
+  const cCacheKey = `c:${chain}:${address}`;
+  const cCacheHit = connCache.get(cCacheKey);
+  if (cCacheHit) { res.setHeader("X-Cache", "HIT"); res.json(cCacheHit); return; }
+  interceptCache(res, connCache, cCacheKey, CONN_TTL);
+  // ──────────────────────────────────────────────────────────────────────────
 
   const buildGraph = (
     peers: string[],
@@ -1661,8 +1751,8 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
     res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, txData.length)));
   } catch (err) {
-    req.log.error({ err }, "Failed to fetch connections");
-    res.status(500).json({ error: "fetch_error", message: "Could not retrieve connections" });
+    req.log.error({ err, address, chain }, `[${chain.toUpperCase()}] connections fetch failed — returning empty graph`);
+    res.json(GetWalletConnectionsResponse.parse(buildGraph([], new Map(), address, 0)));
   }
 });
 

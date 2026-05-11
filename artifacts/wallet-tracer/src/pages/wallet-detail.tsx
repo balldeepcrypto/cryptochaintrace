@@ -8,7 +8,7 @@ import {
 } from "@workspace/api-client-react";
 import { AddressDisplay } from "@/components/address-display";
 import { saveRecentSearch } from "@/lib/recent-searches";
-import { exportAsPdf, exportAsJson, reportFilename } from "@/lib/report-export";
+import { exportAsPdf, exportAsJson, reportFilename, encodeReportForUrl } from "@/lib/report-export";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -414,6 +414,7 @@ export default function WalletDetail() {
   // ── Investigative report modal ─────────────────────────────────────────────
   const [showReportModal, setShowReportModal] = useState(false);
   const [reportCopied, setReportCopied] = useState(false);
+  const [reportLinkCopied, setReportLinkCopied] = useState(false);
   const [reportContent, setReportContent] = useState("");
   const [reportTitle, setReportTitle] = useState("");
   const [reportJsonData, setReportJsonData] = useState<unknown>(null);
@@ -3764,6 +3765,25 @@ export default function WalletDetail() {
                   <FileJson className="w-3.5 h-3.5" /> EXPORT JSON
                 </button>
                 <button
+                  onClick={async () => {
+                    try {
+                      const encoded = await encodeReportForUrl(reportTitle, reportContent);
+                      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+                      const url = `${window.location.origin}${base}/report-view?d=${encoded}`;
+                      await navigator.clipboard.writeText(url);
+                      setReportLinkCopied(true);
+                      setTimeout(() => setReportLinkCopied(false), 2500);
+                    } catch { /* noop */ }
+                  }}
+                  className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
+                    reportLinkCopied
+                      ? "border-green-500/50 text-green-400 bg-green-950/30"
+                      : "border-purple-500/30 text-purple-300 hover:bg-purple-950/30 hover:border-purple-500/60"
+                  }`}
+                >
+                  {reportLinkCopied ? <><Check className="w-3.5 h-3.5" /> LINK COPIED!</> : <><ExternalLink className="w-3.5 h-3.5" /> COPY LINK</>}
+                </button>
+                <button
                   onClick={() => {
                     navigator.clipboard.writeText(reportContent).catch(() => {});
                     setReportCopied(true);
@@ -3775,7 +3795,7 @@ export default function WalletDetail() {
                       : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30 hover:border-orange-500/60"
                   }`}
                 >
-                  {reportCopied ? <><Check className="w-3.5 h-3.5" /> COPIED!</> : <><Copy className="w-3.5 h-3.5" /> COPY</>}
+                  {reportCopied ? <><Check className="w-3.5 h-3.5" /> COPIED!</> : <><Copy className="w-3.5 h-3.5" /> COPY TEXT</>}
                 </button>
                 <button
                   onClick={() => setShowReportModal(false)}
@@ -3796,7 +3816,7 @@ export default function WalletDetail() {
             {/* Footer */}
             <div className="px-5 py-3 border-t border-border/30 shrink-0 flex items-center justify-between gap-3 flex-wrap bg-muted/5">
               <span className="text-[10px] font-mono text-muted-foreground/50">
-                Click outside to close · Select text to copy manually
+                Click outside to close · PDF opens a print dialog — choose "Save as PDF"
               </span>
               <div className="flex items-center gap-2">
                 <button
@@ -3812,6 +3832,25 @@ export default function WalletDetail() {
                   <FileJson className="w-3 h-3" /> EXPORT JSON
                 </button>
                 <button
+                  onClick={async () => {
+                    try {
+                      const encoded = await encodeReportForUrl(reportTitle, reportContent);
+                      const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+                      const url = `${window.location.origin}${base}/report-view?d=${encoded}`;
+                      await navigator.clipboard.writeText(url);
+                      setReportLinkCopied(true);
+                      setTimeout(() => setReportLinkCopied(false), 2500);
+                    } catch { /* noop */ }
+                  }}
+                  className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
+                    reportLinkCopied
+                      ? "border-green-500/50 text-green-400 bg-green-950/30"
+                      : "border-purple-500/30 text-purple-300 hover:bg-purple-950/30"
+                  }`}
+                >
+                  {reportLinkCopied ? <><Check className="w-3 h-3" /> LINK COPIED!</> : <><ExternalLink className="w-3 h-3" /> COPY LINK</>}
+                </button>
+                <button
                   onClick={() => {
                     navigator.clipboard.writeText(reportContent).catch(() => {});
                     setReportCopied(true);
@@ -3823,7 +3862,7 @@ export default function WalletDetail() {
                       : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30"
                   }`}
                 >
-                  {reportCopied ? <><Check className="w-3 h-3" /> COPIED!</> : <><Copy className="w-3 h-3" /> COPY</>}
+                  {reportCopied ? <><Check className="w-3 h-3" /> COPIED!</> : <><Copy className="w-3 h-3" /> COPY TEXT</>}
                 </button>
               </div>
             </div>

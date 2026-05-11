@@ -9,6 +9,7 @@ import { Layout } from "@/components/layout";
 import Home from "@/pages/home";
 import WalletDetail from "@/pages/wallet-detail";
 import TraceGraph from "@/pages/trace-graph";
+import ReportView from "@/pages/report-view";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -21,14 +22,22 @@ const queryClient = new QueryClient({
 
 function Router() {
   return (
-    <Layout>
-      <Switch>
-        <Route path="/" component={Home} />
-        <Route path="/wallet/:address" component={WalletDetail} />
-        <Route path="/trace/:address" component={TraceGraph} />
-        <Route component={NotFound} />
-      </Switch>
-    </Layout>
+    <Switch>
+      {/* Standalone report viewer — no chrome/layout */}
+      <Route path="/report-view" component={ReportView} />
+
+      {/* Main app with layout */}
+      <Route>
+        <Layout>
+          <Switch>
+            <Route path="/" component={Home} />
+            <Route path="/wallet/:address" component={WalletDetail} />
+            <Route path="/trace/:address" component={TraceGraph} />
+            <Route component={NotFound} />
+          </Switch>
+        </Layout>
+      </Route>
+    </Switch>
   );
 }
 

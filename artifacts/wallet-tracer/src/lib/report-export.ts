@@ -40,13 +40,15 @@ function renderReportHtml(content: string): string {
         return `<div class="risk-high">${esc}</div>`;
       if (line.includes("MEDIUM RISK"))
         return `<div class="risk-med">${esc}</div>`;
-      if (line.includes("LOW RISK"))
+      if (line.includes("LOW RISK") || line.includes("LOW-MEDIUM RISK"))
         return `<div class="risk-low">${esc}</div>`;
 
-      if (line.includes(" IN ") && line.includes("TA:"))
+      if ((line.includes(" IN ") || line.includes(" IN  ")) && line.includes("TX:") || line.includes("TA:") && line.includes(" IN "))
         return `<div class="tx-in">${esc}</div>`;
-      if (line.includes("OUT") && line.includes("TA:"))
+      if (line.includes("OUT") && (line.includes("TX:") || line.includes("TA:")))
         return `<div class="tx-out">${esc}</div>`;
+      if (line.includes(" IN ") && (line.includes("TX:") || line.includes("TA:")))
+        return `<div class="tx-in">${esc}</div>`;
 
       if (/^(Generated|Chain|Target|Comparison\s*\d|Depth)\s*[:\|]/.test(tr))
         return `<div class="meta-line">${esc}</div>`;
@@ -59,21 +61,7 @@ function renderReportHtml(content: string): string {
     .join("");
 }
 
-export function exportAsPdf(title: string, content: string): void {
-  const w = window.open("", "_blank");
-  if (!w) {
-    alert("Please allow pop-ups for this site, then click Export PDF again.");
-    return;
-  }
-  const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
-  const body = renderReportHtml(content);
-
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<title>${escHtml(title)}</title>
-<style>
+const PDF_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   @media print {
@@ -83,9 +71,7 @@ export function exportAsPdf(title: string, content: string): void {
     .running-hdr { display: block !important; }
     .section-sep { page-break-after: avoid; }
     .title-border, .title-inner { page-break-inside: avoid; }
-    .tx-in, .tx-out, .memo-line, .exchange-line, .warn-line {
-      page-break-inside: avoid;
-    }
+    .tx-in, .tx-out, .memo-line, .exchange-line, .warn-line { page-break-inside: avoid; }
   }
 
   body {
@@ -97,7 +83,6 @@ export function exportAsPdf(title: string, content: string): void {
     padding: 0 2mm;
   }
 
-  /* Fixed header printed on every page */
   .running-hdr {
     display: none;
     position: fixed;
@@ -109,16 +94,45 @@ export function exportAsPdf(title: string, content: string): void {
     font-size: 7pt;
     color: #666;
   }
-  .running-hdr-inner {
+  .running-hdr-inner { display: flex; justify-content: space-between; }
+
+  /* Save-as-PDF bar (no-print) */
+  .save-bar {
+    position: sticky;
+    top: 0;
+    background: #1a1a2e;
+    color: #e2e8f0;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 11pt;
+    padding: 10pt 16pt;
     display: flex;
+    align-items: center;
     justify-content: space-between;
+    gap: 12pt;
+    z-index: 100;
+    border-bottom: 2pt solid #3b82f6;
   }
+  .save-bar-text { font-size: 9.5pt; color: #94a3b8; }
+  .save-btn {
+    background: #3b82f6;
+    color: #fff;
+    border: none;
+    border-radius: 4pt;
+    padding: 7pt 18pt;
+    font-size: 10pt;
+    font-weight: bold;
+    cursor: pointer;
+    letter-spacing: 0.03em;
+    white-space: nowrap;
+  }
+  .save-btn:hover { background: #2563eb; }
 
   /* Cover block */
   .cover {
     border: 2pt solid #111;
     padding: 14pt 18pt 14pt;
     margin-bottom: 22pt;
+    margin-top: 14pt;
     page-break-inside: avoid;
   }
   .cover h1 {
@@ -137,14 +151,8 @@ export function exportAsPdf(title: string, content: string): void {
     font-family: 'Courier New', Courier, monospace;
     font-size: 8.5pt;
   }
-  .cover-label {
-    font-weight: bold;
-    color: #000;
-  }
-  .cover-val {
-    color: #222;
-    word-break: break-all;
-  }
+  .cover-label { font-weight: bold; color: #000; }
+  .cover-val { color: #222; word-break: break-all; }
 
   /* Base line styles */
   .line, .blank, .meta-line, .footer-line,
@@ -159,15 +167,9 @@ export function exportAsPdf(title: string, content: string): void {
   }
 
   .blank { height: 5pt; }
-
-  /* Title box */
-  .title-border, .title-inner {
-    font-size: 9.5pt;
-    font-weight: bold;
-  }
+  .title-border, .title-inner { font-size: 9.5pt; font-weight: bold; }
   .title-border { margin-top: 2pt; }
 
-  /* Section separator */
   .section-sep {
     font-weight: bold;
     font-size: 9pt;
@@ -176,15 +178,8 @@ export function exportAsPdf(title: string, content: string): void {
     padding-top: 4pt;
     border-top: 1pt solid #bbb;
   }
+  .end-rule { height: 1.5pt; background: #333; margin: 14pt 0 6pt; }
 
-  /* End rule */
-  .end-rule {
-    height: 1.5pt;
-    background: #333;
-    margin: 14pt 0 6pt;
-  }
-
-  /* Memo / Destination Tag — gold highlight */
   .memo-line {
     background: #fffbe6;
     border-left: 3.5pt solid #b8860b;
@@ -193,8 +188,6 @@ export function exportAsPdf(title: string, content: string): void {
     color: #4a2e00;
     margin: 1.5pt 0;
   }
-
-  /* Exchange / official wallet — blue highlight */
   .exchange-line {
     background: #e8f4fd;
     border-left: 3.5pt solid #1a6fa0;
@@ -203,8 +196,6 @@ export function exportAsPdf(title: string, content: string): void {
     color: #0c2f4a;
     margin: 1.5pt 0;
   }
-
-  /* Commingling / warning — amber highlight */
   .warn-line {
     background: #fff3cd;
     border-left: 3.5pt solid #d97706;
@@ -214,19 +205,32 @@ export function exportAsPdf(title: string, content: string): void {
     margin: 1.5pt 0;
   }
 
-  /* Risk assessment labels */
   .risk-high { font-weight: bold; color: #8b0000; font-size: 9pt; }
   .risk-med  { font-weight: bold; color: #b45309; font-size: 9pt; }
   .risk-low  { font-weight: bold; color: #166534; font-size: 9pt; }
 
-  /* IN / OUT transaction lines */
   .tx-in  { color: #145a14; font-weight: bold; }
   .tx-out { color: #8b0000; font-weight: bold; }
 
-  /* Meta / footer */
   .meta-line   { color: #444; }
   .footer-line { color: #999; font-size: 7.5pt; margin-top: 8pt; }
-</style>
+`;
+
+export function exportAsPdf(title: string, content: string): void {
+  const w = window.open("", "_blank");
+  if (!w) {
+    alert("Please allow pop-ups for this site, then click Export PDF again.");
+    return;
+  }
+  const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+  const body = renderReportHtml(content);
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>${escHtml(title)}</title>
+<style>${PDF_CSS}</style>
 </head>
 <body>
 
@@ -235,6 +239,14 @@ export function exportAsPdf(title: string, content: string): void {
     <span>CryptoChainTrace — Blockchain Intelligence Platform</span>
     <span>CONFIDENTIAL — LAW ENFORCEMENT USE</span>
   </div>
+</div>
+
+<div class="save-bar no-print">
+  <div>
+    <div style="font-weight:bold;font-size:11pt;">CryptoChainTrace — ${escHtml(title)}</div>
+    <div class="save-bar-text">Click the button to save as PDF &nbsp;→&nbsp; choose "Save as PDF" in the print dialog</div>
+  </div>
+  <button class="save-btn" onclick="window.print()">&#8964; Save as PDF</button>
 </div>
 
 <div class="cover">
@@ -253,7 +265,7 @@ export function exportAsPdf(title: string, content: string): void {
 
 <script>
   window.addEventListener('load', function () {
-    setTimeout(function () { window.print(); }, 300);
+    setTimeout(function () { window.print(); }, 400);
   });
 </script>
 </body>
@@ -283,4 +295,32 @@ export function reportFilename(title: string, ext: "pdf" | "json"): string {
     .replace(/-+/g, "-")
     .replace(/^-|-$/, "");
   return `${slug}-${dateStr}.${ext}`;
+}
+
+// ── URL-based report sharing ──────────────────────────────────────────────────
+
+export async function encodeReportForUrl(title: string, content: string): Promise<string> {
+  const json = JSON.stringify({ title, content });
+  const bytes = new TextEncoder().encode(json);
+  const cs = new CompressionStream("gzip");
+  const writer = cs.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const buf = await new Response(cs.readable).arrayBuffer();
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return b64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "");
+}
+
+export async function decodeReportFromUrl(encoded: string): Promise<{ title: string; content: string }> {
+  const b64 = encoded.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = b64 + "=".repeat((4 - (b64.length % 4)) % 4);
+  const binary = atob(padded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  const ds = new DecompressionStream("gzip");
+  const writer = ds.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const buf = await new Response(ds.readable).arrayBuffer();
+  return JSON.parse(new TextDecoder().decode(buf));
 }

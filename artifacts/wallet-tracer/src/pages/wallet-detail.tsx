@@ -457,13 +457,14 @@ export default function WalletDetail() {
       if (txsForAddr.length > 0) {
         lines.push(`  ${indent}   │`);
         txsForAddr.forEach((tx, ti) => {
-          const txConn = ti === txsForAddr.length - 1 ? "└──" : "├──";
+          const txConn     = ti === txsForAddr.length - 1 ? "└──" : "├──";
+          const txChildPfx = ti === txsForAddr.length - 1 ? "   " : "│  ";
           const dir   = tx.direction === "in" ? "IN " : "OUT";
           const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
           const asset = tx.tokenSymbol || chainUp;
-          const memoStr = tx.memo ? `  [memo: "${tx.memo}"]` : "";
-          const dtStr   = tx.destinationTag ? `  [DT: ${tx.destinationTag}]` : "";
-          lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${shortHash(tx.hash)})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}${memoStr}${dtStr}`);
+          lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${shortHash(tx.hash)})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
+          if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}     Destination Tag: ${tx.destinationTag}`);
+          if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}     Memo: ${tx.memo}`);
         });
         const remaining = totalTxs - txsForAddr.length;
         if (remaining > 0) lines.push(`  ${indent}       (+ ${remaining} more transactions not shown)`);

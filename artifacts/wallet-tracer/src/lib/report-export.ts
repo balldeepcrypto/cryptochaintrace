@@ -30,8 +30,12 @@ function renderReportHtml(content: string): string {
           line.includes("↳ Memos") || line.includes("↳ Destination Tags"))
         return `<div class="memo-line">${esc}</div>`;
 
-      if (line.includes("◄ OFFICIAL") || line.includes("COLDWALLET"))
+      if (line.includes("◄ OFFICIAL") || line.includes("COLDWALLET") ||
+          line.includes("◄ EXCHANGE FLOW") || line.includes("EXCHANGE / CUSTODIAL"))
         return `<div class="exchange-line">${esc}</div>`;
+
+      if (line.includes("★ PRIVATE") || line.includes("PRIVATE WALLET CONNECTIONS"))
+        return `<div class="private-line">${esc}</div>`;
 
       if (line.includes("⚠") || line.includes("COMMINGLING"))
         return `<div class="warn-line">${esc}</div>`;
@@ -220,6 +224,14 @@ const PDF_CSS = `
     font-weight: bold;
     color: #0c2f4a;
     margin: 1.5pt 0;
+  }
+  .private-line {
+    background: #e8f5e9;
+    border-left: 3.5pt solid #2e7d32;
+    padding-left: 6pt;
+    font-weight: bold;
+    color: #1b3a1d;
+    margin: 2pt 0;
   }
   .warn-line {
     background: #fff3cd;

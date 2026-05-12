@@ -719,93 +719,129 @@ export default function WalletDetail() {
     lines.push(`Min Tx Amount: ${commingleMinAmount <= 0 ? "None (all transactions included)" : `${commingleMinAmount} ${chainUp} (dust/spam/fees filtered out)`}`);
     lines.push("");
 
-    const { findings, tieredCounts } = commingleResult;
+    const { findings } = commingleResult;
+    // Separate private wallets from exchange/custodial nodes
+    const isExch = (f: CommingleFinding) => f.knownInfo?.type === "exchange";
+    const privFindings = findings.filter((f) => !isExch(f));
+    const exchFindings = findings.filter((f) => isExch(f));
+    const t1priv = findings.filter((f) => f.tier === 1 && !isExch(f));
+    const t1exch = findings.filter((f) => f.tier === 1 && isExch(f));
+    const t2priv = findings.filter((f) => f.tier === 2 && !isExch(f));
+    const t2exch = findings.filter((f) => f.tier === 2 && isExch(f));
+    const t3priv = findings.filter((f) => f.tier === 3 && !isExch(f));
+    const t3exch = findings.filter((f) => f.tier === 3 && isExch(f));
+    const t4priv = findings.filter((f) => f.tier === 4 && !isExch(f));
+    const t4exch = findings.filter((f) => f.tier === 4 && isExch(f));
+
     lines.push(sep("SUMMARY"));
     lines.push("");
     lines.push(`  Total Shared Nodes : ${findings.length}`);
-    lines.push(`    Tier 1 (direct)  : ${tieredCounts[0]}`);
-    lines.push(`    Tier 2 (depth 2) : ${tieredCounts[1]}`);
-    lines.push(`    Tier 3 (depth 3) : ${tieredCounts[2]}`);
-    lines.push(`    Tier 4 (depth 4) : ${tieredCounts[3]}`);
+    lines.push(`    ► Private wallets  : ${privFindings.length}  ← wallet-to-wallet commingling (key evidence)`);
+    lines.push(`    ► Exchange / CEX   : ${exchFindings.length}  ← on-ramp / off-ramp flows (normal activity)`);
     lines.push("");
-
-    const exchangeFindings = findings.filter((f) => f.knownInfo?.type === "exchange");
-    if (exchangeFindings.length > 0) {
-      lines.push(`  ⚠  ${exchangeFindings.length} shared exchange(s) — possible commingling via custodial service`);
-      lines.push("");
-    }
+    lines.push(`  Tier breakdown:`);
+    lines.push(`    Tier 1 (direct)  : ${t1priv.length} private  +  ${t1exch.length} exchange`);
+    lines.push(`    Tier 2 (depth 2) : ${t2priv.length} private  +  ${t2exch.length} exchange`);
+    lines.push(`    Tier 3 (depth 3) : ${t3priv.length} private  +  ${t3exch.length} exchange`);
+    lines.push(`    Tier 4 (depth 4) : ${t4priv.length} private  +  ${t4exch.length} exchange`);
+    lines.push("");
 
     if (findings.length === 0) {
       lines.push("  No shared nodes found within 4 tiers. Wallets appear unconnected.");
       lines.push("");
     } else {
-      // ── Tier 1: direct shared counterparties ──────────────────────────────
-      const t1 = findings.filter((f) => f.tier === 1);
+      // Helper: render private then exchange sub-sections within a tier
+      const renderPrivExch = (
+        priv: CommingleFinding[], exch: CommingleFinding[],
+        showSample: boolean, showHop: boolean, maxShow: number
+      ) => {
+        if (priv.length > 0) {
+          lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${priv.length}) — INVESTIGATE FIRST`);
+          lines.push("");
+          priv.slice(0, maxShow).forEach((f, i) => {
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : ""}`);
+            lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+            lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
+            lines.push(`       TX Count      : ${f.txCountTarget}`);
+            if (showSample) {
+              const txs = sampleTxsFor(f.sharedAddress, 3);
+              if (txs.length > 0) {
+                lines.push(`       Sample TXs (target wallet ↔ shared node):`);
+                emitTxs(txs, "       ");
+              }
+            }
+            if (showHop && f.targetPath[1]) {
+              const hopTxs = sampleTxsFor(f.targetPath[1], 2);
+              if (hopTxs.length > 0) {
+                lines.push(`       Entry TXs (target → first hop):`);
+                emitTxs(hopTxs, "       ");
+              }
+            }
+            lines.push("");
+          });
+          if (priv.length > maxShow) lines.push(`  … and ${priv.length - maxShow} more private connections`);
+          lines.push("");
+        }
+        if (exch.length > 0) {
+          lines.push(`  ── EXCHANGE / CUSTODIAL FLOWS (${exch.length}) — On-ramp / Off-ramp activity ──`);
+          lines.push("");
+          exch.slice(0, maxShow).forEach((f, i) => {
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  [${(f.knownInfo?.label ?? "").toUpperCase()}] ◄ EXCHANGE FLOW`);
+            lines.push(`       Type          : Exchange Hot Wallet — funds routed through custodian`);
+            lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+            lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
+            lines.push(`       TX Count      : ${f.txCountTarget}`);
+            lines.push("");
+          });
+          if (exch.length > maxShow) lines.push(`  … and ${exch.length - maxShow} more exchange connections`);
+          lines.push("");
+        }
+        if (priv.length === 0 && exch.length === 0) {
+          lines.push("  None found.");
+          lines.push("");
+        }
+      };
+
+      // ── Tier 1 ──────────────────────────────────────────────────────────────
       lines.push(sep("TIER 1 — DIRECT SHARED COUNTERPARTIES"));
       lines.push("");
-      if (t1.length === 0) {
-        lines.push("  None found.");
-      } else {
-        t1.forEach((f, i) => {
-          const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
-          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
-          if (f.knownInfo?.type === "exchange")
-            lines.push(`       ⚠ EXCHANGE — funds may have passed through custodial service`);
-          lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
-          lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
-          lines.push(`       TX Count      : ${f.txCountTarget}`);
-          const txs = sampleTxsFor(f.sharedAddress, 3);
-          if (txs.length > 0) {
-            lines.push(`       Sample TXs (target wallet ↔ shared node):`);
-            emitTxs(txs, "       ");
-          }
-          lines.push("");
-        });
-      }
-      lines.push("");
+      renderPrivExch(t1priv, t1exch, true, false, 20);
 
-      // ── Tier 2: second-degree shared nodes ────────────────────────────────
-      const t2 = findings.filter((f) => f.tier === 2);
+      // ── Tier 2 ──────────────────────────────────────────────────────────────
       lines.push(sep("TIER 2 — SECOND-DEGREE SHARED NODES"));
       lines.push("");
-      if (t2.length === 0) {
-        lines.push("  None found.");
-      } else {
-        t2.slice(0, 20).forEach((f, i) => {
-          const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
-          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${label}`);
-          lines.push(`       Path from target: ${f.targetPath.join(" → ")}`);
-          lines.push(`       Shared with     : ${f.comparisons.map((c) => c.wallet).join("\n                       ")}`);
-          // Show sample txs to the first hop (targetPath[1]) as entry evidence
-          const firstHop = f.targetPath[1];
-          if (firstHop) {
-            const txs = sampleTxsFor(firstHop, 2);
-            if (txs.length > 0) {
-              lines.push(`       Entry TXs (target → first hop):`);
-              emitTxs(txs, "       ");
-            }
-          }
-          lines.push("");
-        });
-        if (t2.length > 20) lines.push(`  … and ${t2.length - 20} more`);
-      }
-      lines.push("");
+      renderPrivExch(t2priv, t2exch, false, true, 20);
 
-      // ── Tier 3–4: deep shared nodes ────────────────────────────────────────
-      const t3 = findings.filter((f) => f.tier === 3);
-      const t4 = findings.filter((f) => f.tier === 4);
-      if (t3.length > 0 || t4.length > 0) {
+      // ── Tier 3–4 ────────────────────────────────────────────────────────────
+      const t34priv = [...t3priv.slice(0, 10), ...t4priv.slice(0, 10)];
+      const t34exch = [...t3exch.slice(0, 10), ...t4exch.slice(0, 10)];
+      if (t34priv.length > 0 || t34exch.length > 0) {
         lines.push(sep("TIER 3–4 — DEEP SHARED NODES"));
         lines.push("");
-        [...t3.slice(0, 10), ...t4.slice(0, 10)].forEach((f, i) => {
-          const label = f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : "";
-          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${label}`);
-          lines.push(`       Path        : ${f.targetPath.join(" → ")}`);
-          lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+        if (t34priv.length > 0) {
+          lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${t3priv.length + t4priv.length}) — INVESTIGATE`);
           lines.push("");
-        });
-        if (t3.length + t4.length > 20) lines.push(`  … and ${t3.length + t4.length - 20} more`);
-        lines.push("");
+          t34priv.forEach((f, i) => {
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : ""}`);
+            lines.push(`       Path        : ${f.targetPath.join(" → ")}`);
+            lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+            lines.push("");
+          });
+          if (t3priv.length + t4priv.length > 20) lines.push(`  … and ${t3priv.length + t4priv.length - 20} more`);
+          lines.push("");
+        }
+        if (t34exch.length > 0) {
+          lines.push(`  ── EXCHANGE / CUSTODIAL FLOWS (${t3exch.length + t4exch.length}) ──`);
+          lines.push("");
+          t34exch.forEach((f, i) => {
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})  [${(f.knownInfo?.label ?? "").toUpperCase()}] ◄ EXCHANGE FLOW`);
+            lines.push(`       Path        : ${f.targetPath.join(" → ")}`);
+            lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+            lines.push("");
+          });
+          if (t3exch.length + t4exch.length > 20) lines.push(`  … and ${t3exch.length + t4exch.length - 20} more`);
+          lines.push("");
+        }
       }
     }
 
@@ -815,18 +851,29 @@ export default function WalletDetail() {
       lines.push("  LOW RISK — No shared nodes found within 4 tiers of separation.");
       lines.push("  The wallets under analysis do not appear to share any common");
       lines.push("  counterparties, intermediaries, or endpoints.");
-    } else if (tieredCounts[0] > 0) {
-      lines.push("  HIGH RISK — Direct shared counterparties detected (Tier 1).");
-      lines.push("  The target and comparison wallet(s) transact with the same");
+    } else if (t1priv.length > 0) {
+      lines.push("  HIGH RISK — Direct private wallet connections detected (Tier 1).");
+      lines.push("  The target and comparison wallet(s) transact with the same private");
       lines.push("  addresses directly. This is a strong commingling indicator.");
-    } else if (tieredCounts[1] > 0) {
-      lines.push("  MEDIUM RISK — Shared nodes at Tier 2 detected.");
-      lines.push("  Wallets share common 2nd-degree connections. May indicate");
-      lines.push("  indirect fund commingling or use of common intermediaries.");
+      if (t1exch.length > 0)
+        lines.push(`  NOTE: ${t1exch.length} shared exchange(s) also present — normal on-ramp/off-ramp use.`);
+    } else if (t1exch.length > 0 && privFindings.length === 0) {
+      lines.push("  EXCHANGE EXPOSURE ONLY — No private wallet commingling detected.");
+      lines.push("  Both wallets route funds through common exchange(s). This is");
+      lines.push("  expected for exchange users and is not itself commingling evidence.");
+      lines.push(`  Shared exchange(s): ${exchFindings.slice(0, 5).map((f) => f.knownInfo?.label ?? f.sharedAddress).join(", ")}`);
+    } else if (t1exch.length > 0 && privFindings.length > 0) {
+      lines.push("  MEDIUM RISK — Exchange flows at Tier 1, private connections at deeper tiers.");
+      lines.push("  No direct private commingling. Shared exchange flows are normal.");
+      lines.push("  Investigate the private connections found at deeper tiers.");
+    } else if (t2priv.length > 0) {
+      lines.push("  MEDIUM RISK — Shared private nodes at Tier 2 detected.");
+      lines.push("  Wallets share common 2nd-degree private connections. May indicate");
+      lines.push("  indirect fund commingling or use of shared intermediaries.");
     } else {
-      lines.push("  LOW-MEDIUM RISK — Shared nodes at Tier 3–4 only.");
+      lines.push("  LOW-MEDIUM RISK — Shared nodes at Tier 3–4 or exchange-only.");
       lines.push("  Connections are distal and may reflect shared service usage");
-      lines.push("  (e.g. common exchanges) rather than direct commingling.");
+      lines.push("  rather than direct commingling.");
     }
     lines.push("");
     lines.push("═".repeat(64));
@@ -3438,7 +3485,10 @@ export default function WalletDetail() {
                 </CardTitle>
                 {commingleResult && (
                   <span className="text-xs font-mono text-muted-foreground">
-                    {commingleResult.findings.length} shared node{commingleResult.findings.length !== 1 ? "s" : ""} · {commingleResult.totalScanned} scanned
+                    <span className="text-green-400/80">{commingleResult.findings.filter((f) => f.knownInfo?.type !== "exchange").length} private</span>
+                    {" + "}
+                    <span className="text-blue-400/70">{commingleResult.findings.filter((f) => f.knownInfo?.type === "exchange").length} exchange</span>
+                    {" · "}{commingleResult.totalScanned} scanned
                   </span>
                 )}
               </div>
@@ -3541,7 +3591,7 @@ export default function WalletDetail() {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-3 flex-wrap">
                     <div className="text-xs font-mono text-amber-300/80">
-                      Scan complete · {commingleResult.findings.length} shared nodes · {commingleResult.totalScanned} addresses mapped
+                      Scan complete · <span className="text-green-400/80">{commingleResult.findings.filter((f) => f.knownInfo?.type !== "exchange").length} private</span> + <span className="text-blue-400/70">{commingleResult.findings.filter((f) => f.knownInfo?.type === "exchange").length} exchange</span> · {commingleResult.totalScanned} addresses mapped
                     </div>
                     {commingleResult.tieredCounts[0] > 0 && (
                       <span className="flex items-center gap-1 text-[10px] font-mono text-red-300 bg-red-950/50 border border-red-500/30 px-2 py-0.5 rounded font-bold">
@@ -3635,35 +3685,77 @@ export default function WalletDetail() {
                   <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
                     No direct shared counterparties. Check Tier 2+ below for deeper connections.
                   </p>
-                ) : (
-                  <div className="space-y-2">
-                    {commingleResult.findings.filter((f) => f.tier === 1).map((f, i) => (
-                      <div key={f.sharedAddress} className="bg-red-950/15 border border-red-500/25 rounded-lg p-3">
-                        <div className="flex items-center gap-2 flex-wrap mb-2">
-                          <span className="text-[10px] font-mono bg-red-900/70 text-red-200 px-1.5 py-0.5 rounded border border-red-400/40 font-bold shrink-0">#{i + 1}</span>
-                          <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />
-                          <button
-                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
-                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
-                          >
-                            {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
-                          </button>
-                          {f.knownInfo && getKnownBadge(f.knownInfo, "md")}
-                          {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
-                          <span className="ml-auto text-[10px] font-mono text-red-400 font-bold shrink-0">
-                            {f.comparisons.length} wallet{f.comparisons.length !== 1 ? "s" : ""} share this
-                          </span>
+                ) : (() => {
+                  const t1priv = commingleResult.findings.filter((f) => f.tier === 1 && f.knownInfo?.type !== "exchange");
+                  const t1exch = commingleResult.findings.filter((f) => f.tier === 1 && f.knownInfo?.type === "exchange");
+                  return (
+                    <div className="space-y-3">
+                      {t1priv.length > 0 && (
+                        <div>
+                          <div className="text-[10px] font-mono text-green-400/80 font-bold tracking-wider mb-2 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-green-400/80 shrink-0" />
+                            Private Wallet Connections ({t1priv.length}) — Investigate First
+                          </div>
+                          <div className="space-y-2">
+                            {t1priv.map((f, i) => (
+                              <div key={f.sharedAddress} className="bg-red-950/15 border border-red-500/25 rounded-lg p-3">
+                                <div className="flex items-center gap-2 flex-wrap mb-2">
+                                  <span className="text-[10px] font-mono bg-red-900/70 text-red-200 px-1.5 py-0.5 rounded border border-red-400/40 font-bold shrink-0">#{i + 1}</span>
+                                  <AlertTriangle className="w-3 h-3 text-red-400 shrink-0" />
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                                    className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                                  >
+                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                                  </button>
+                                  {f.knownInfo && getKnownBadge(f.knownInfo, "md")}
+                                  {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                                  <span className="ml-auto text-[10px] font-mono text-red-400 font-bold shrink-0">
+                                    {f.comparisons.length} wallet{f.comparisons.length !== 1 ? "s" : ""} share this
+                                  </span>
+                                </div>
+                                <div className="text-[10px] font-mono text-muted-foreground/70 pl-1 space-y-0.5">
+                                  <div><span className="text-muted-foreground/50">Target path: </span>{f.targetPath.map((a) => a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a).join(" → ")}</div>
+                                  {f.comparisons.map((c) => (
+                                    <div key={c.wallet}><span className="text-muted-foreground/50">Compare: </span>{c.wallet.length > 14 ? `${c.wallet.slice(0, 8)}…${c.wallet.slice(-4)}` : c.wallet} → {f.sharedAddress.length > 12 ? `${f.sharedAddress.slice(0, 6)}…${f.sharedAddress.slice(-4)}` : f.sharedAddress}</div>
+                                  ))}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                        <div className="text-[10px] font-mono text-muted-foreground/70 pl-1 space-y-0.5">
-                          <div><span className="text-muted-foreground/50">Target path: </span>{f.targetPath.map((a) => a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a).join(" → ")}</div>
-                          {f.comparisons.map((c) => (
-                            <div key={c.wallet}><span className="text-muted-foreground/50">Compare: </span>{c.wallet.length > 14 ? `${c.wallet.slice(0, 8)}…${c.wallet.slice(-4)}` : c.wallet} → {f.sharedAddress.length > 12 ? `${f.sharedAddress.slice(0, 6)}…${f.sharedAddress.slice(-4)}` : f.sharedAddress}</div>
-                          ))}
+                      )}
+                      {t1exch.length > 0 && (
+                        <div className={t1priv.length > 0 ? "pt-2 border-t border-border/30" : ""}>
+                          <div className="text-[10px] font-mono text-blue-400/70 font-bold tracking-wider mb-2 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-400/70 shrink-0" />
+                            Exchange / Custodial Flows ({t1exch.length}) — On-ramp / Off-ramp
+                          </div>
+                          <div className="space-y-1.5">
+                            {t1exch.map((f, i) => (
+                              <div key={f.sharedAddress} className="bg-blue-950/15 border border-blue-500/20 rounded-lg p-3">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] font-mono bg-blue-900/60 text-blue-200 px-1.5 py-0.5 rounded border border-blue-400/40 font-bold shrink-0">#{i + 1}</span>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                                    className="text-blue-300/70 hover:text-blue-200 text-xs font-mono hover:underline transition-colors"
+                                  >
+                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                                  </button>
+                                  {f.knownInfo && getKnownBadge(f.knownInfo, "md")}
+                                  <span className="ml-auto text-[10px] font-mono text-blue-400/60 font-bold shrink-0">Exchange Flow</span>
+                                </div>
+                                <div className="text-[10px] font-mono text-muted-foreground/50 pl-1 mt-1">
+                                  <span className="text-muted-foreground/40">Path: </span>{f.targetPath.map((a) => a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a).join(" → ")}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* ── § 2 Tier 2 ── */}
@@ -3678,31 +3770,73 @@ export default function WalletDetail() {
                 </div>
                 {commingleResult.tieredCounts[1] === 0 ? (
                   <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier-2 shared nodes.</p>
-                ) : (
-                  <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                    {commingleResult.findings.filter((f) => f.tier === 2).slice(0, 30).map((f, i) => (
-                      <div key={f.sharedAddress} className="bg-orange-950/10 border border-orange-500/20 rounded-lg p-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] font-mono bg-orange-900/60 text-orange-200 px-1.5 py-0.5 rounded border border-orange-400/40 font-bold shrink-0">#{i + 1}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
-                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
-                          >
-                            {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
-                          </button>
-                          {f.knownInfo && getKnownBadge(f.knownInfo)}
-                          {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
-                          <span className="ml-auto text-[10px] font-mono text-muted-foreground shrink-0">
-                            {f.comparisons.length} wallet{f.comparisons.length !== 1 ? "s" : ""} · via {f.targetPath.length > 2 ? (f.targetPath[1].length > 10 ? `${f.targetPath[1].slice(0, 6)}…` : f.targetPath[1]) : "—"}
-                          </span>
+                ) : (() => {
+                  const t2priv = commingleResult.findings.filter((f) => f.tier === 2 && f.knownInfo?.type !== "exchange");
+                  const t2exch = commingleResult.findings.filter((f) => f.tier === 2 && f.knownInfo?.type === "exchange");
+                  return (
+                    <div className="space-y-3">
+                      {t2priv.length > 0 && (
+                        <div>
+                          <div className="text-[10px] font-mono text-green-400/70 font-bold tracking-wider mb-1.5 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-green-400/70 shrink-0" />
+                            Private ({t2priv.length})
+                          </div>
+                          <div className="space-y-1.5 max-h-52 overflow-y-auto pr-1">
+                            {t2priv.slice(0, 30).map((f, i) => (
+                              <div key={f.sharedAddress} className="bg-orange-950/10 border border-orange-500/20 rounded-lg p-3">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] font-mono bg-orange-900/60 text-orange-200 px-1.5 py-0.5 rounded border border-orange-400/40 font-bold shrink-0">#{i + 1}</span>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                                    className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                                  >
+                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                                  </button>
+                                  {f.knownInfo && getKnownBadge(f.knownInfo)}
+                                  {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                                  <span className="ml-auto text-[10px] font-mono text-muted-foreground shrink-0">
+                                    {f.comparisons.length} wallet{f.comparisons.length !== 1 ? "s" : ""} · via {f.targetPath.length > 2 ? (f.targetPath[1].length > 10 ? `${f.targetPath[1].slice(0, 6)}…` : f.targetPath[1]) : "—"}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                            {t2priv.length > 30 && (
+                              <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {t2priv.length - 30} more — see full report</p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                    {commingleResult.tieredCounts[1] > 30 && (
-                      <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {commingleResult.tieredCounts[1] - 30} more — see full report</p>
-                    )}
-                  </div>
-                )}
+                      )}
+                      {t2exch.length > 0 && (
+                        <div className={t2priv.length > 0 ? "pt-2 border-t border-border/30" : ""}>
+                          <div className="text-[10px] font-mono text-blue-400/60 font-bold tracking-wider mb-1.5 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-400/60 shrink-0" />
+                            Exchange / Custodial ({t2exch.length}) — On-ramp / Off-ramp
+                          </div>
+                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
+                            {t2exch.slice(0, 20).map((f, i) => (
+                              <div key={f.sharedAddress} className="bg-blue-950/10 border border-blue-500/15 rounded-lg p-2.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] font-mono text-blue-400/50 shrink-0">#{i + 1}</span>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                                    className="text-blue-300/60 hover:text-blue-200 text-xs font-mono hover:underline transition-colors"
+                                  >
+                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                                  </button>
+                                  {f.knownInfo && getKnownBadge(f.knownInfo)}
+                                  <span className="ml-auto text-[10px] font-mono text-blue-400/50 shrink-0">Exchange</span>
+                                </div>
+                              </div>
+                            ))}
+                            {t2exch.length > 20 && (
+                              <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {t2exch.length - 20} more</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* ── § 3 Tier 3–4 ── */}
@@ -3717,29 +3851,71 @@ export default function WalletDetail() {
                 </div>
                 {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] === 0 ? (
                   <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier 3–4 shared nodes detected.</p>
-                ) : (
-                  <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-                    {commingleResult.findings.filter((f) => f.tier >= 3).slice(0, 20).map((f, i) => (
-                      <div key={f.sharedAddress} className="bg-yellow-950/10 border border-yellow-500/15 rounded-lg p-3">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-[10px] font-mono bg-yellow-900/50 text-yellow-200 px-1.5 py-0.5 rounded border border-yellow-400/30 font-bold shrink-0">#{i + 1}</span>
-                          <span className="text-[10px] font-mono text-yellow-400/70 border border-yellow-500/20 px-1 py-0.5 rounded shrink-0">T{f.tier}</span>
-                          <button
-                            onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
-                            className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
-                          >
-                            {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
-                          </button>
-                          {f.knownInfo && getKnownBadge(f.knownInfo)}
-                          {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                ) : (() => {
+                  const t34priv = commingleResult.findings.filter((f) => f.tier >= 3 && f.knownInfo?.type !== "exchange");
+                  const t34exch = commingleResult.findings.filter((f) => f.tier >= 3 && f.knownInfo?.type === "exchange");
+                  return (
+                    <div className="space-y-3">
+                      {t34priv.length > 0 && (
+                        <div>
+                          <div className="text-[10px] font-mono text-green-400/60 font-bold tracking-wider mb-1.5 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-green-400/60 shrink-0" />
+                            Private ({t34priv.length})
+                          </div>
+                          <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                            {t34priv.slice(0, 20).map((f, i) => (
+                              <div key={f.sharedAddress} className="bg-yellow-950/10 border border-yellow-500/15 rounded-lg p-3">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] font-mono bg-yellow-900/50 text-yellow-200 px-1.5 py-0.5 rounded border border-yellow-400/30 font-bold shrink-0">#{i + 1}</span>
+                                  <span className="text-[10px] font-mono text-yellow-400/70 border border-yellow-500/20 px-1 py-0.5 rounded shrink-0">T{f.tier}</span>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                                    className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
+                                  >
+                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                                  </button>
+                                  {f.knownInfo && getKnownBadge(f.knownInfo)}
+                                  {savedWallets.has(f.sharedAddress) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
+                                </div>
+                              </div>
+                            ))}
+                            {t34priv.length > 20 && (
+                              <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {t34priv.length - 20} more — see full report</p>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                    {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] > 20 && (
-                      <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] - 20} more — see full report</p>
-                    )}
-                  </div>
-                )}
+                      )}
+                      {t34exch.length > 0 && (
+                        <div className={t34priv.length > 0 ? "pt-2 border-t border-border/30" : ""}>
+                          <div className="text-[10px] font-mono text-blue-400/50 font-bold tracking-wider mb-1.5 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-blue-400/50 shrink-0" />
+                            Exchange / Custodial ({t34exch.length})
+                          </div>
+                          <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
+                            {t34exch.slice(0, 15).map((f, i) => (
+                              <div key={f.sharedAddress} className="bg-blue-950/8 border border-blue-500/10 rounded-lg p-2.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[10px] font-mono text-blue-400/40 shrink-0">#{i + 1}</span>
+                                  <span className="text-[10px] font-mono text-blue-400/50 border border-blue-500/15 px-1 py-0.5 rounded shrink-0">T{f.tier}</span>
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
+                                    className="text-blue-300/50 hover:text-blue-200 text-xs font-mono hover:underline transition-colors"
+                                  >
+                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
+                                  </button>
+                                  {f.knownInfo && getKnownBadge(f.knownInfo)}
+                                </div>
+                              </div>
+                            ))}
+                            {t34exch.length > 15 && (
+                              <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {t34exch.length - 15} more</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
 
               {/* ── Copy report inline ── */}

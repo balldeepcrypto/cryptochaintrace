@@ -507,6 +507,12 @@ export default function WalletDetail() {
       ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
       : "─".repeat(64);
     const lines: string[] = [];
+    // ── Private-only filtering — same rule as Commingle Check ──────────────────
+    // exchange/bridge/genesis = infrastructure flows → Exchange section only.
+    // DAG5KmHp9gFS... = genesis/reward wallet, hard-excluded from all private sections.
+    const REPORT_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
+    const isExchAddr  = (a: string) => ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[a]?.type ?? "");
+    const isPrivAddr  = (a: string) => !isExchAddr(a) && !REPORT_EXCL.has(a);
 
     lines.push(`╔══════════════════════════════════════════════════════════════╗`);
     lines.push(`║        INVESTIGATIVE REPORT — CryptoChainTrace              ║`);
@@ -536,61 +542,70 @@ export default function WalletDetail() {
     // Ensure every selected wallet appears even if filtered out by minAmount
     for (const a of selectedWallets) if (!byAddr.has(a)) byAddr.set(a, []);
 
-    lines.push(sep(`TRANSACTION TREE  (${address.slice(0, 10)}...)  →  ${selectedWallets.size} selected`));
+    // Private-only tree: exchanges, bridges, genesis, and hard-excluded wallets are
+    // stripped here and appear exclusively in the Exchange section below.
+    const addrs     = Array.from(byAddr.keys());
+    const privAddrs = addrs.filter(isPrivAddr);
+    lines.push(sep(`TRANSACTION TREE — PRIVATE WALLETS  (${address.slice(0, 10)}...)  →  ${privAddrs.length} private`));
     lines.push("");
-    lines.push(`  ${address}${KNOWN_LABELS[address] ? `  ← ${KNOWN_LABELS[address].label.toUpperCase()}` : ""}`);
-    lines.push(`  │`);
+    if (privAddrs.length === 0) {
+      lines.push("  No private wallet counterparties selected.");
+      lines.push("  All selected counterparties are exchange / bridge / official wallets.");
+      lines.push("  See the Exchange / Custodial / Bridge / Official Flows section below.");
+      lines.push("");
+    } else {
+      lines.push(`  ${address}${KNOWN_LABELS[address] ? `  ← ${KNOWN_LABELS[address].label.toUpperCase()}` : ""}`);
+      lines.push(`  │`);
+      privAddrs.forEach((addr, i) => {
+        const rows = byAddr.get(addr)!;
+        const known = KNOWN_LABELS[addr];
+        const isLast = i === privAddrs.length - 1;
+        const connector = isLast ? "└──" : "├──";
+        const indent    = isLast ? "   " : "│  ";
+        const inRow  = rows.find(r => r.direction === "in");
+        const outRow = rows.find(r => r.direction === "out");
+        const dirLabel = inRow && outRow ? "IN+OUT" : outRow ? "OUT" : "IN";
+        const totalTxs = rows.reduce((s, r) => s + r.txCount, 0);
+        const totalVal = rows.reduce((s, r) => s + r.totalValue, 0);
+        const lastTs = rows.reduce((l, r) => r.latestTs > l ? r.latestTs : l, "").slice(0, 10);
+        const labelStr = known ? `  ← ${known.label.toUpperCase()}` : "";
 
-    const addrs = Array.from(byAddr.keys());
-    addrs.forEach((addr, i) => {
-      const rows = byAddr.get(addr)!;
-      const known = KNOWN_LABELS[addr];
-      const isLast = i === addrs.length - 1;
-      const connector = isLast ? "└──" : "├──";
-      const indent    = isLast ? "   " : "│  ";
-      const inRow  = rows.find(r => r.direction === "in");
-      const outRow = rows.find(r => r.direction === "out");
-      const dirLabel = inRow && outRow ? "IN+OUT" : outRow ? "OUT" : "IN";
-      const totalTxs = rows.reduce((s, r) => s + r.txCount, 0);
-      const totalVal = rows.reduce((s, r) => s + r.totalValue, 0);
-      const lastTs = rows.reduce((l, r) => r.latestTs > l ? r.latestTs : l, "").slice(0, 10);
-      const labelStr = known ? `  ← ${known.label.toUpperCase()}` : "";
+        lines.push(`  ${connector} ${dirLabel}  →  ${short(addr)}${labelStr}`);
+        lines.push(`  ${indent}   Full  : ${addr}`);
+        lines.push(`  ${indent}   Total : ${totalTxs.toLocaleString("en-US")} tx${totalTxs !== 1 ? "s" : ""}  |  ${fmtVal(totalVal)} ${chainUp}  |  Last: ${lastTs || "—"}`);
 
-      lines.push(`  ${connector} ${dirLabel}  →  ${short(addr)}${labelStr}`);
-      lines.push(`  ${indent}   Full  : ${addr}`);
-      lines.push(`  ${indent}   Total : ${totalTxs.toLocaleString("en-US")} tx${totalTxs !== 1 ? "s" : ""}  |  ${fmtVal(totalVal)} ${chainUp}  |  Last: ${lastTs || "—"}`);
+        // Individual transactions for this counterparty
+        const txsForAddr = allTxs
+          .filter(t => {
+            const cp = t.direction === "in" ? t.from : t.to;
+            return cp === addr && parseFloat(t.value) >= minAmount;
+          })
+          .slice(0, 12);
 
-      // Individual transactions for this counterparty
-      const txsForAddr = allTxs
-        .filter(t => {
-          const cp = t.direction === "in" ? t.from : t.to;
-          return cp === addr && parseFloat(t.value) >= minAmount;
-        })
-        .slice(0, 12);
+        if (txsForAddr.length > 0) {
+          lines.push(`  ${indent}   │`);
+          txsForAddr.forEach((tx, ti) => {
+            const txConn     = ti === txsForAddr.length - 1 ? "└──" : "├──";
+            const txChildPfx = ti === txsForAddr.length - 1 ? "   " : "│  ";
+            const dir   = tx.direction === "in" ? "IN " : "OUT";
+            const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
+            const asset = tx.tokenSymbol || chainUp;
+            lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${tx.hash || "(none)"})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
+            if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}     ↳ Destination Tag : ${tx.destinationTag}`);
+            if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}     ↳ Memo            : ${tx.memo}`);
+          });
+          const remaining = totalTxs - txsForAddr.length;
+          if (remaining > 0) lines.push(`  ${indent}       (+ ${remaining} more transactions not shown)`);
+        }
 
-      if (txsForAddr.length > 0) {
-        lines.push(`  ${indent}   │`);
-        txsForAddr.forEach((tx, ti) => {
-          const txConn     = ti === txsForAddr.length - 1 ? "└──" : "├──";
-          const txChildPfx = ti === txsForAddr.length - 1 ? "   " : "│  ";
-          const dir   = tx.direction === "in" ? "IN " : "OUT";
-          const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
-          const asset = tx.tokenSymbol || chainUp;
-          lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${tx.hash || "(none)"})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
-          if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}     ↳ Destination Tag : ${tx.destinationTag}`);
-          if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}     ↳ Memo            : ${tx.memo}`);
-        });
-        const remaining = totalTxs - txsForAddr.length;
-        if (remaining > 0) lines.push(`  ${indent}       (+ ${remaining} more transactions not shown)`);
-      }
+        if (!isLast) lines.push(`  │`);
+      });
+      lines.push("");
+    }
 
-      if (!isLast) lines.push(`  │`);
-    });
-    lines.push("");
-
-    // Flow summary
-    const outRows = groupedRows.filter(r => selectedWallets.has(r.address) && r.direction === "out");
-    const inRows  = groupedRows.filter(r => selectedWallets.has(r.address) && r.direction === "in");
+    // Flow summary — private wallets only; exchanges appear in the Exchange section below.
+    const outRows = groupedRows.filter(r => selectedWallets.has(r.address) && r.direction === "out" && isPrivAddr(r.address));
+    const inRows  = groupedRows.filter(r => selectedWallets.has(r.address) && r.direction === "in"  && isPrivAddr(r.address));
     if (outRows.length > 0 || inRows.length > 0) {
       lines.push(sep("TRANSACTION FLOW SUMMARY"));
       lines.push("");

@@ -183,6 +183,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "DAG Treasury 2", type: "genesis" },
   // Bridge / Infrastructure (DAG only)
   DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Base / Bridge Wallet (Official Constellation)", type: "bridge" },
+  DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz: { label: "DAG Reward / Team Wallet",                     type: "genesis" },
   // DAG Exchanges
   DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf: { label: "MEXC DAG",        type: "exchange" },
   DAG4TETUwraLYX1mYdC8ymUxxWsoNZPffUpDf4Ar: { label: "Gate.io DAG",      type: "exchange" },
@@ -692,6 +693,13 @@ export default function WalletDetail() {
         .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
         .slice(0, limit);
 
+    // Format a path array, annotating each hop with its known label
+    const fmtPath = (path: string[]) =>
+      path.map(addr => {
+        const kn = KNOWN_LABELS[addr];
+        return kn ? `${addr}  [${kn.label}]` : addr;
+      }).join(" → ");
+
     // Emit a detailed TX block — each TX shows explicit From → To addresses,
     // then Amount / full TX hash / Date on separate indented lines.
     const emitTxs = (txs: Tx[], pad: string) => {
@@ -735,7 +743,12 @@ export default function WalletDetail() {
 
     const { findings } = commingleResult;
     // Separate private wallets from exchange/custodial nodes
-    const isExch = (f: CommingleFinding) => f.knownInfo?.type === "exchange" || f.knownInfo?.type === "bridge";
+    // Exchange, bridge, AND genesis (official/team/foundation) are all excluded from
+    // private commingling — only unknown private wallets count as commingling evidence
+    const isExch = (f: CommingleFinding) =>
+      f.knownInfo?.type === "exchange" ||
+      f.knownInfo?.type === "bridge" ||
+      f.knownInfo?.type === "genesis";
     const privFindings = findings.filter((f) => !isExch(f));
     const exchFindings = findings.filter((f) => isExch(f));
     const t1priv = findings.filter((f) => f.tier === 1 && !isExch(f));
@@ -750,14 +763,14 @@ export default function WalletDetail() {
     lines.push(sep("SUMMARY"));
     lines.push("");
     lines.push(`  Total Shared Nodes : ${findings.length}`);
-    lines.push(`    ► Private wallets  : ${privFindings.length}  ← wallet-to-wallet commingling (key evidence)`);
-    lines.push(`    ► Exchange / CEX   : ${exchFindings.length}  ← on-ramp / off-ramp flows (normal activity)`);
+    lines.push(`    ► Private wallets      : ${privFindings.length}  ← wallet-to-wallet commingling (key evidence)`);
+    lines.push(`    ► Exchange/Bridge/Offcl: ${exchFindings.length}  ← on-ramp / off-ramp / infrastructure flows`);
     lines.push("");
     lines.push(`  Tier breakdown:`);
-    lines.push(`    Tier 1 (direct)  : ${t1priv.length} private  +  ${t1exch.length} exchange`);
-    lines.push(`    Tier 2 (depth 2) : ${t2priv.length} private  +  ${t2exch.length} exchange`);
-    lines.push(`    Tier 3 (depth 3) : ${t3priv.length} private  +  ${t3exch.length} exchange`);
-    lines.push(`    Tier 4 (depth 4) : ${t4priv.length} private  +  ${t4exch.length} exchange`);
+    lines.push(`    Tier 1 (direct)  : ${t1priv.length} private  +  ${t1exch.length} exchange/official`);
+    lines.push(`    Tier 2 (depth 2) : ${t2priv.length} private  +  ${t2exch.length} exchange/official`);
+    lines.push(`    Tier 3 (depth 3) : ${t3priv.length} private  +  ${t3exch.length} exchange/official`);
+    lines.push(`    Tier 4 (depth 4) : ${t4priv.length} private  +  ${t4exch.length} exchange/official`);
     lines.push("");
 
     if (findings.length === 0) {
@@ -780,7 +793,7 @@ export default function WalletDetail() {
           priv.slice(0, maxShow).forEach((f, i) => {
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : ""}`);
             lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
-            lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
+            lines.push(`       Path          : ${fmtPath(f.targetPath)}`);
             lines.push(`       TX Count      : ${f.txCountTarget}`);
             if (directLimit > 0) {
               const txs = keyTxsFor(f.sharedAddress, directLimit);
@@ -809,15 +822,15 @@ export default function WalletDetail() {
           lines.push("");
         }
         if (exch.length > 0) {
-          lines.push(`  ── EXCHANGE / CUSTODIAL / BRIDGE FLOWS (${exch.length}) — On-ramp / Off-ramp / Bridge activity ──`);
+          lines.push(`  ── EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS (${exch.length}) — See consolidated section below ──`);
           lines.push("");
           exch.slice(0, maxShow).forEach((f, i) => {
-            const isBridge = f.knownInfo?.type === "bridge";
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  [${(f.knownInfo?.label ?? "").toUpperCase()}] ◄ ${isBridge ? "BRIDGE FLOW" : "EXCHANGE FLOW"}`);
-            lines.push(`       Type          : ${isBridge ? "Bridge / Infrastructure Node — funds pass through official protocol" : "Exchange Hot Wallet — funds routed through custodian"}`);
+            const isBridge  = f.knownInfo?.type === "bridge";
+            const isGenesis = f.knownInfo?.type === "genesis";
+            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  [${(f.knownInfo?.label ?? "").toUpperCase()}] ${flowTag}`);
             lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
-            lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
-            lines.push(`       TX Count      : ${f.txCountTarget}`);
+            lines.push(`       Path          : ${fmtPath(f.targetPath)}`);
             if (exchDirectLimit > 0) {
               const txs = keyTxsFor(f.sharedAddress, exchDirectLimit);
               if (txs.length > 0) {
@@ -848,14 +861,14 @@ export default function WalletDetail() {
       // ── Tier 1 ──────────────────────────────────────────────────────────────
       lines.push(sep("TIER 1 — DIRECT SHARED COUNTERPARTIES"));
       lines.push("");
-      // T1: 5 key txs direct to shared wallet; 3 key txs to exchange; no hop needed
-      renderPrivExch(t1priv, t1exch, 5, 0, 3, 0, 20);
+      // T1: 5 key txs direct to shared wallet; exchange TX detail shown in consolidated section
+      renderPrivExch(t1priv, t1exch, 5, 0, 0, 0, 20);
 
       // ── Tier 2 ──────────────────────────────────────────────────────────────
       lines.push(sep("TIER 2 — SECOND-DEGREE SHARED NODES"));
       lines.push("");
-      // T2: no direct txs (shared wallet is a hop away); 3 entry txs to first hop (private), 2 (exchange)
-      renderPrivExch(t2priv, t2exch, 0, 3, 0, 2, 20);
+      // T2: no direct txs (shared wallet is a hop away); 3 entry txs to first hop (private); exchange TX detail in consolidated section
+      renderPrivExch(t2priv, t2exch, 0, 3, 0, 0, 20);
 
       // ── Tier 3–4 ────────────────────────────────────────────────────────────
       const t34priv = [...t3priv.slice(0, 10), ...t4priv.slice(0, 10)];
@@ -868,7 +881,7 @@ export default function WalletDetail() {
           lines.push("");
           t34priv.forEach((f, i) => {
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : ""}`);
-            lines.push(`       Path        : ${f.targetPath.join(" → ")}`);
+            lines.push(`       Path        : ${fmtPath(f.targetPath)}`);
             lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
             if (f.targetPath[1]) {
               const hop1 = f.targetPath[1];
@@ -885,17 +898,62 @@ export default function WalletDetail() {
           lines.push("");
         }
         if (t34exch.length > 0) {
-          lines.push(`  ── EXCHANGE / CUSTODIAL FLOWS (${t3exch.length + t4exch.length}) ──`);
+          lines.push(`  ── EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS (${t3exch.length + t4exch.length}) — See consolidated section below ──`);
           lines.push("");
           t34exch.forEach((f, i) => {
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})  [${(f.knownInfo?.label ?? "").toUpperCase()}] ◄ EXCHANGE FLOW`);
-            lines.push(`       Path        : ${f.targetPath.join(" → ")}`);
+            const isBridge  = f.knownInfo?.type === "bridge";
+            const isGenesis = f.knownInfo?.type === "genesis";
+            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})  [${(f.knownInfo?.label ?? "").toUpperCase()}] ${flowTag}`);
+            lines.push(`       Path        : ${fmtPath(f.targetPath)}`);
             lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
             lines.push("");
           });
           if (t3exch.length + t4exch.length > 20) lines.push(`  … and ${t3exch.length + t4exch.length - 20} more`);
           lines.push("");
         }
+      }
+
+      // ── Consolidated Exchange / Bridge / Official flows ──────────────────────
+      // One dedicated section with full TX detail for every exchange/bridge/official
+      // shared node across all tiers — sorted by tier for a clean chronological trail.
+      const allExchFindings = [...t1exch, ...t2exch, ...t3exch, ...t4exch];
+      if (allExchFindings.length > 0) {
+        lines.push(sep("EXCHANGE FLOWS & ON/OFF RAMPS"));
+        lines.push("  All exchange, bridge, and official shared nodes — full transaction detail:");
+        lines.push("");
+        allExchFindings.slice(0, 30).forEach((f, i) => {
+          const isBridge  = f.knownInfo?.type === "bridge";
+          const isGenesis = f.knownInfo?.type === "genesis";
+          const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
+          const typeDesc  = isBridge
+            ? "Bridge / Infrastructure Node — funds pass through official protocol"
+            : isGenesis
+            ? "Official / Team / Foundation Wallet — not private commingling"
+            : "Exchange Hot Wallet — funds routed through custodian (on-ramp / off-ramp)";
+          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}`);
+          lines.push(`       Label   : ${(f.knownInfo?.label ?? "UNKNOWN").toUpperCase()}  ${flowTag}`);
+          lines.push(`       Type    : ${typeDesc}`);
+          lines.push(`       Tier    : ${f.tier}  (depth ${f.tier} from target wallet)`);
+          lines.push(`       Path    : ${fmtPath(f.targetPath)}`);
+          lines.push(`       Shared  : ${f.comparisons.map((c) => c.wallet).join(", ")}`);
+          // Key transactions: T1 → txs direct to/from the shared node; T2+ → txs to first hop
+          const txAddr = f.tier === 1 ? f.sharedAddress : (f.targetPath[1] ?? null);
+          if (txAddr) {
+            const txs = keyTxsFor(txAddr, 3);
+            if (txs.length > 0) {
+              const addrShort = txAddr.length > 16 ? `${txAddr.slice(0, 8)}…${txAddr.slice(-4)}` : txAddr;
+              const txLabel   = f.tier === 1
+                ? `Key Transactions (target ↔ ${addrShort}):`
+                : `Key Entry Transactions (target → ${addrShort}):`;
+              lines.push(`       ${txLabel}`);
+              emitTxs(txs, "       ");
+            }
+          }
+          lines.push("");
+        });
+        if (allExchFindings.length > 30) lines.push(`  … and ${allExchFindings.length - 30} more`);
+        lines.push("");
       }
     }
 

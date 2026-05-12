@@ -801,16 +801,19 @@ export default function WalletDetail() {
     };
 
     // Emit one intermediate hop row: addresses + best cached TX (or fallback note).
+    // Uses the "↓  Hop N" and "Transactions — Hop N" text patterns so the PDF
+    // renderer applies hop-arrow-line / hop-tx-label CSS classes automatically.
     const emitHopSegment = (fa: string, ta: string, hopNum: number) => {
       const fKn = KNOWN_LABELS[fa]; const tKn = KNOWN_LABELS[ta];
-      lines.push(`       Hop ${hopNum}:  ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
-      lines.push(`              →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
+      lines.push(`       ↓  Hop ${hopNum}`);
+      lines.push(`         ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
+      lines.push(`         →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
       const segTx = commingleResult.segmentTxs?.[`${fa}::${ta}`] ?? null;
       if (segTx) {
-        lines.push(`       Most Significant TX (${fa.slice(0, 8)}… → ${ta.slice(0, 8)}…):`);
+        lines.push(`       Transactions — Hop ${hopNum}:`);
         emitTxs([segTx], "       ");
       } else {
-        lines.push(`              (most significant TX: not available in fetched history)`);
+        lines.push(`       Transactions — Hop ${hopNum}: (not available in fetched history)`);
       }
     };
 

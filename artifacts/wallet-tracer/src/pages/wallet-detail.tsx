@@ -901,9 +901,9 @@ export default function WalletDetail() {
     lines.push(`╚══════════════════════════════════════════════════════════════╝`);
     lines.push(`Generated    : ${now}`);
     lines.push(`Chain        : ${chainUp}`);
-    lines.push(`Target       : ${commingleResult.targetWallet}`);
+    lines.push(`Wallet 1     : ${commingleResult.targetWallet}`);
     commingleResult.comparisonWallets.forEach((w, i) => {
-      lines.push(`Comparison ${i + 1} : ${w}`);
+      lines.push(`Wallet ${i + 2}     : ${w}`);
     });
     lines.push(`Depth        : 4 tiers   |   Nodes Scanned: ${commingleResult.totalScanned}`);
     lines.push(`Min Tx Amount: ${commingleMinAmount <= 0 ? "None (all transactions included)" : `${commingleMinAmount} ${chainUp} (dust/spam/fees filtered out)`}`);
@@ -976,7 +976,7 @@ export default function WalletDetail() {
                 const kn = KNOWN_LABELS[addr];
                 const lbl = kn ? `  [${kn.label}]` : "";
                 if (idx === 0) {
-                  lines.push(`         ${addr}${lbl}  ← TARGET WALLET`);
+                  lines.push(`         ${addr}${lbl}  ← WALLET 1`);
                 } else {
                   lines.push(`         ↓  Hop ${idx}`);
                   lines.push(`         ${addr}${lbl}${idx === f.targetPath.length - 1 ? "  ← SHARED NODE" : ""}`);
@@ -984,17 +984,17 @@ export default function WalletDetail() {
               });
               lines.push("");
             }
-            // Most significant IN + OUT for the first reachable hop (target ↔ targetPath[1])
+            // Most significant IN + OUT for the first reachable hop (Wallet 1 ↔ targetPath[1])
             if (f.targetPath.length > 1) {
               const hopAddr  = f.targetPath[1];
               const hopShort = hopAddr.length > 16 ? `${hopAddr.slice(0, 8)}…${hopAddr.slice(-4)}` : hopAddr;
               const hopRole  = f.tier === 1 ? "shared wallet" : "hop 1";
               const txs = bestInOut(hopAddr);
               if (txs.length > 0) {
-                lines.push(`       Most Significant Transactions (target ↔ ${hopShort} — ${hopRole}):`);
+                lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${hopShort} — ${hopRole}):`);
                 emitTxs(txs, "       ");
               } else {
-                lines.push(`       Most Significant Transactions (target ↔ ${hopShort}): none in loaded history`);
+                lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${hopShort}): none in loaded history`);
               }
               // For 3+ hop paths, show each intermediate segment with full TX details.
               if (f.targetPath.length > 2) {
@@ -1064,7 +1064,7 @@ export default function WalletDetail() {
                 const kn = KNOWN_LABELS[addr];
                 const lbl = kn ? `  [${kn.label}]` : "";
                 if (idx === 0) {
-                  lines.push(`         ${addr}${lbl}  ← TARGET`);
+                  lines.push(`         ${addr}${lbl}  ← WALLET 1`);
                 } else {
                   lines.push(`         ↓  Hop ${idx}`);
                   lines.push(`         ${addr}${lbl}${idx === f.targetPath.length - 1 ? "  ← SHARED" : ""}`);
@@ -1075,10 +1075,10 @@ export default function WalletDetail() {
               const hop1short = hop1.length > 16 ? `${hop1.slice(0, 8)}…${hop1.slice(-4)}` : hop1;
               const hopTxs    = bestInOut(hop1);
               if (hopTxs.length > 0) {
-                lines.push(`       Most Significant Transactions — Hop 1  (Target ↔ ${hop1short}):`);
+                lines.push(`       Most Significant Transactions — Hop 1  (Wallet 1 ↔ ${hop1short}):`);
                 emitTxs(hopTxs, "       ");
               } else {
-                lines.push(`       Most Significant Transactions — Hop 1  (Target ↔ ${hop1short}): none in loaded history`);
+                lines.push(`       Most Significant Transactions — Hop 1  (Wallet 1 ↔ ${hop1short}): none in loaded history`);
               }
               if (f.targetPath.length > 2) {
                 lines.push("");
@@ -1128,13 +1128,13 @@ export default function WalletDetail() {
       lines.push("");
       if (allExchFindings.length === 0 && directExchFlows.length === 0) {
         lines.push("  No exchange, bridge, or official flows detected.");
-        lines.push("  The target wallet does not route funds through any known exchange,");
+        lines.push("  The selected wallets do not route funds through any known exchange,");
         lines.push("  custodian, bridge, or official protocol node in loaded history.");
         lines.push("");
       } else {
         // ① Direct flows — target wallet directly transacts with a known exchange
         if (directExchFlows.length > 0) {
-          lines.push("  DIRECT EXCHANGE FLOWS  (target wallet ↔ known exchange — not a shared node):");
+          lines.push("  DIRECT EXCHANGE FLOWS  (selected wallets ↔ known exchange — not a shared node):");
           lines.push("");
           directExchFlows.forEach(({ addr, known, txs: _allTxsForAddr }, i) => {
             const isBridge  = known.type === "bridge";
@@ -1146,11 +1146,11 @@ export default function WalletDetail() {
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${addr}`);
             lines.push(`       Label   : ${known.label.toUpperCase()}  ${flowTag}`);
             lines.push(`       Type    : ${typeDesc}`);
-            lines.push(`       Source  : Direct — target wallet transacts with this exchange directly`);
+            lines.push(`       Source  : Direct — Wallet 1 transacts with this exchange directly`);
             const addrShort = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr;
             const exchTxs   = bestInOut(addr);
             if (exchTxs.length > 0) {
-              lines.push(`       Most Significant Transactions (target ↔ ${addrShort}):`);
+              lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${addrShort}):`);
               emitTxs(exchTxs, "       ");
             } else {
               lines.push(`       Transactions: none in loaded history`);
@@ -1176,7 +1176,7 @@ export default function WalletDetail() {
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}`);
             lines.push(`       Label   : ${(f.knownInfo?.label ?? "UNKNOWN").toUpperCase()}  ${flowTag}`);
             lines.push(`       Type    : ${typeDesc}`);
-            lines.push(`       Tier    : ${f.tier}  (depth ${f.tier} from target wallet)`);
+            lines.push(`       Tier    : ${f.tier}  (depth ${f.tier} from Wallet 1)`);
             lines.push(`       Path    : ${fmtPath(f.targetPath)}`);
             lines.push(`       Shared  : ${f.comparisons.map((c) => c.wallet).join(", ")}`);
             const txAddr  = f.targetPath[1] ?? f.sharedAddress;
@@ -1184,7 +1184,7 @@ export default function WalletDetail() {
             if (txs.length > 0) {
               const addrShort = txAddr.length > 16 ? `${txAddr.slice(0, 8)}…${txAddr.slice(-4)}` : txAddr;
               const hopRole   = f.tier === 1 ? "shared wallet" : "hop 1 entry";
-              lines.push(`       Most Significant Transactions (target ↔ ${addrShort} — ${hopRole}):`);
+              lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${addrShort} — ${hopRole}):`);
               emitTxs(txs, "       ");
             } else {
               lines.push(`       Transactions: none in loaded history`);
@@ -1205,8 +1205,8 @@ export default function WalletDetail() {
       lines.push("  counterparties, intermediaries, or endpoints.");
     } else if (t1priv.length > 0) {
       lines.push("  HIGH RISK — Direct private wallet connections detected (Tier 1).");
-      lines.push("  The target and comparison wallet(s) transact with the same private");
-      lines.push("  addresses directly. This is a strong commingling indicator.");
+      lines.push("  The selected wallets transact with the same private addresses");
+      lines.push("  directly. This is a strong commingling indicator.");
       if (t1exch.length > 0)
         lines.push(`  NOTE: ${t1exch.length} shared exchange(s) also present — normal on-ramp/off-ramp use.`);
     } else if (t1exch.length > 0 && privFindings.length === 0) {

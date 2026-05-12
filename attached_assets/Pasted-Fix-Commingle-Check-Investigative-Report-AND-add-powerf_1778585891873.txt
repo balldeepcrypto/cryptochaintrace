@@ -1,0 +1,29 @@
+Fix Commingle Check + Investigative Report AND add powerful new "Multi-Wallet Intersection / Funnel Analysis" feature for police-grade tracking:
+
+1. STRICT RULES FOR ALL REPORTS (Commingle Check, Investigative Report, and new feature):
+   - "PRIVATE WALLET CONNECTIONS" section = ONLY private wallets. Team/Stardust/Treasury/DOR on DAG count as private but are clearly labeled (e.g. [Stardust Team]).
+   - Completely exclude wallet DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz from all commingling.
+   - NO exchange, custodial, bridge, or Base hot wallets allowed in private paths ever.
+   - All exchange/bridge/Base flows go EXCLUSIVELY to bottom section titled "EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS".
+   - In that bottom section show EVERY single in/out transaction with full details: From → To wallet/exchange, amount (+/- and USD), full TX hash, date/time, memo/tag.
+
+2. FULL DETAILED TRAILS
+   - Every private connection/hop must show complete "From: [exact wallet] → To: [exact wallet]" with full TX hash, amount, date/time, memo/tag for every transaction.
+   - Show only the most significant (highest amount) IN/OUT per wallet to keep clean.
+
+3. NEW FEATURE: MULTI-WALLET INTERSECTION / FUNNEL ANALYSIS
+   - New button/tab in wallet profile header: "INTERSECTION / FUNNEL ANALYSIS".
+   - User can input 2 or more starting wallets (e.g. theft wallet + suspicious wallet).
+   - Perform deep outward graph analysis (2–4 hops/layers) on ALL starting wallets simultaneously.
+   - Detect and highlight convergence/funneling: paths that meet at the same intermediate private wallets or mixing hubs after multiple layers.
+   - Show clear visual paths and full transaction details from each starting wallet through every hop to the common meeting point(s).
+   - Same private-only + exchange separation rules as above.
+
+4. UPHOLD DAG FIX
+   - Ensure wallet DAG1pLpkyX7aTtFZtbF98kgA9QTZRzrsGaFmf4BT is always labeled "[Uphold DAG]" and appears correctly in the Exchange Flows section.
+
+Apply to ALL blockchains. Improve PDF styling (clean headers, spacing, page breaks, professional titles).
+
+Keep ALL existing features 100% intact.
+
+Push to GitHub when complete.

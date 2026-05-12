@@ -353,6 +353,8 @@ interface CommingleCheckResult {
   findings: CommingleFinding[];
   tieredCounts: [number, number, number, number];
   totalScanned: number;
+  // Best TX for each intermediate hop segment: key = "fromAddr::toAddr"
+  segmentTxs: Record<string, Tx | null>;
 }
 
 const DAG_BATCH = 250;
@@ -789,17 +791,27 @@ export default function WalletDetail() {
         const usd      = tx.valueUsd > 0
           ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
           : "";
-        const fromAddr = tx.from || "—";
-        const toAddr   = tx.to   || "—";
-        // Line 1: direction tag + explicit From → To (who sent to whom)
-        lines.push(`${pad}${conn} [${dir}]  From: ${fromAddr} → To: ${toAddr}`);
-        // Lines 2-4: amount, full tx hash, timestamp
+        lines.push(`${pad}${conn} [${dir}]  From: ${tx.from || "—"} → To: ${tx.to || "—"}`);
         lines.push(`${pad}${childPfx}  Amount: ${amt} ${asset}${usd}`);
         lines.push(`${pad}${childPfx}  TX    : ${tx.hash || "(none)"}`);
         lines.push(`${pad}${childPfx}  Date  : ${fmtDate(tx.timestamp || "")}`);
         if (tx.destinationTag != null) lines.push(`${pad}${childPfx}  ↳ Destination Tag : ${tx.destinationTag}`);
         if (tx.memo)                   lines.push(`${pad}${childPfx}  ↳ Memo            : ${tx.memo}`);
       });
+    };
+
+    // Emit one intermediate hop row: addresses + best cached TX (or fallback note).
+    const emitHopSegment = (fa: string, ta: string, hopNum: number) => {
+      const fKn = KNOWN_LABELS[fa]; const tKn = KNOWN_LABELS[ta];
+      lines.push(`       Hop ${hopNum}:  ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
+      lines.push(`              →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
+      const segTx = commingleResult.segmentTxs?.[`${fa}::${ta}`] ?? null;
+      if (segTx) {
+        lines.push(`       Most Significant TX (${fa.slice(0, 8)}… → ${ta.slice(0, 8)}…):`);
+        emitTxs([segTx], "       ");
+      } else {
+        lines.push(`              (most significant TX: not available in fetched history)`);
+      }
     };
 
     lines.push(`╔══════════════════════════════════════════════════════════════╗`);
@@ -902,18 +914,12 @@ export default function WalletDetail() {
               } else {
                 lines.push(`       Most Significant Transactions (target ↔ ${hopShort}): none in loaded history`);
               }
-              // For 3+ hop paths, show each intermediate segment clearly.
-              // TX data for intermediate hops is between other wallets (not target),
-              // so it is not in allTxs — but we show the full hop structure.
+              // For 3+ hop paths, show each intermediate segment with full TX details.
               if (f.targetPath.length > 2) {
                 lines.push("");
                 lines.push(`       Intermediate Hops (full path to shared node):`);
                 for (let h = 1; h < f.targetPath.length - 1; h++) {
-                  const fa = f.targetPath[h]; const ta = f.targetPath[h + 1];
-                  const fKn = KNOWN_LABELS[fa]; const tKn = KNOWN_LABELS[ta];
-                  lines.push(`       Hop ${h + 1}:  ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
-                  lines.push(`              →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
-                  lines.push(`              (TX data for this segment: load ${fa.slice(0, 8)}…${fa.slice(-4)}'s wallet profile)`);
+                  emitHopSegment(f.targetPath[h], f.targetPath[h + 1], h + 1);
                 }
               }
             }
@@ -996,11 +1002,7 @@ export default function WalletDetail() {
                 lines.push("");
                 lines.push(`       Intermediate Hops (full path to shared node):`);
                 for (let h = 1; h < f.targetPath.length - 1; h++) {
-                  const fa = f.targetPath[h]; const ta = f.targetPath[h + 1];
-                  const fKn = KNOWN_LABELS[fa]; const tKn = KNOWN_LABELS[ta];
-                  lines.push(`       Hop ${h + 1}:  ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
-                  lines.push(`              →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
-                  lines.push(`              (TX data for this segment: load ${fa.slice(0, 8)}…${fa.slice(-4)}'s wallet profile)`);
+                  emitHopSegment(f.targetPath[h], f.targetPath[h + 1], h + 1);
                 }
               }
             }
@@ -2386,6 +2388,38 @@ export default function WalletDetail() {
         findings.filter((f) => f.tier === 4).length,
       ];
 
+      // ── Fetch best TX for each intermediate hop segment ────────────────────────
+      // Intermediate = path positions 1 .. length-2 (between target and shared node).
+      // Segments involving the target wallet itself are already in allTxs (bestInOut).
+      setCommingleProgress("Fetching intermediate hop TX details…");
+      const intermedWallets = new Set<string>();
+      for (const finding of findings) {
+        for (let i = 1; i < finding.targetPath.length - 1; i++) {
+          intermedWallets.add(finding.targetPath[i]);
+        }
+      }
+      const segmentTxs: Record<string, Tx | null> = {};
+      if (intermedWallets.size > 0) {
+        await Promise.allSettled(
+          Array.from(intermedWallets).slice(0, 20).map(async (fromAddr) => {
+            try {
+              const resp = await fetch(`/api/wallets/${encodeURIComponent(fromAddr)}/transactions?chain=${chain}&limit=50`);
+              if (!resp.ok) return;
+              const data = await resp.json() as { transactions?: Tx[] };
+              for (const tx of data.transactions ?? []) {
+                const counterparty = tx.direction === "in" ? tx.from : tx.to;
+                if (!counterparty) continue;
+                const key = `${fromAddr}::${counterparty}`;
+                const prev = segmentTxs[key];
+                if (!prev || parseFloat(tx.value) > parseFloat(prev.value ?? "0")) {
+                  segmentTxs[key] = tx;
+                }
+              }
+            } catch { /* best-effort */ }
+          })
+        );
+      }
+
       setCommingleResult({
         targetWallet: address,
         comparisonWallets: commingleWallets,
@@ -2394,6 +2428,7 @@ export default function WalletDetail() {
         findings,
         tieredCounts,
         totalScanned: targetReach.size,
+        segmentTxs,
       });
       setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
     } catch (err) {

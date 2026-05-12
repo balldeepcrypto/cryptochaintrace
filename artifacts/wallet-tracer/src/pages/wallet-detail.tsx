@@ -680,13 +680,14 @@ export default function WalletDetail() {
     };
     const lines: string[] = [];
 
-    // Return up to `limit` txs from allTxs where counterparty == addr
-    const sampleTxsFor = (addr: string, limit = 3) =>
+    // Return up to `limit` txs sorted by amount descending (most significant first)
+    const keyTxsFor = (addr: string, limit = 5) =>
       allTxs
         .filter((t) =>
           (t.direction === "in" ? t.from : t.to) === addr &&
           (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
         )
+        .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
         .slice(0, limit);
 
     // Emit a mini TX tree indented by `pad`
@@ -700,7 +701,10 @@ export default function WalletDetail() {
         const dir   = tx.direction === "in" ? "IN " : "OUT";
         const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
         const asset = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
-        lines.push(`${pad}${conn} ${dir}  (TX: ${tx.hash || "(none)"})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
+        const usd   = tx.valueUsd > 0
+          ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+          : "";
+        lines.push(`${pad}${conn} ${dir}  (TX: ${tx.hash || "(none)"})  ${amt} ${asset}${usd}  ${fmtDate(tx.timestamp || "")}`);
         if (tx.destinationTag != null) lines.push(`${pad}${childPfx}   ↳ Destination Tag : ${tx.destinationTag}`);
         if (tx.memo)                   lines.push(`${pad}${childPfx}   ↳ Memo            : ${tx.memo}`);
       });
@@ -751,9 +755,14 @@ export default function WalletDetail() {
       lines.push("");
     } else {
       // Helper: render private then exchange sub-sections within a tier
+      // directLimit: key txs to the shared address itself (T1 only)
+      // hopLimit: key txs to targetPath[1] — the first hop on the path (T2+)
+      // exchDirectLimit / exchHopLimit: same but for exchange findings
       const renderPrivExch = (
         priv: CommingleFinding[], exch: CommingleFinding[],
-        showSample: boolean, showHop: boolean, maxShow: number
+        directLimit: number, hopLimit: number,
+        exchDirectLimit: number, exchHopLimit: number,
+        maxShow: number
       ) => {
         if (priv.length > 0) {
           lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${priv.length}) — INVESTIGATE FIRST`);
@@ -763,18 +772,25 @@ export default function WalletDetail() {
             lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
             lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
             lines.push(`       TX Count      : ${f.txCountTarget}`);
-            if (showSample) {
-              const txs = sampleTxsFor(f.sharedAddress, 3);
+            if (directLimit > 0) {
+              const txs = keyTxsFor(f.sharedAddress, directLimit);
               if (txs.length > 0) {
-                lines.push(`       Sample TXs (target wallet ↔ shared node):`);
+                lines.push(`       Key Connecting Transactions (target ↔ shared wallet):`);
                 emitTxs(txs, "       ");
+              } else {
+                lines.push(`       Key Connecting Transactions : none in loaded history (load more TXs for full trail)`);
               }
             }
-            if (showHop && f.targetPath[1]) {
-              const hopTxs = sampleTxsFor(f.targetPath[1], 2);
+            if (hopLimit > 0 && f.targetPath[1]) {
+              const hop1 = f.targetPath[1];
+              const hop1short = hop1.length > 16 ? `${hop1.slice(0, 8)}…${hop1.slice(-4)}` : hop1;
+              lines.push(`       First Hop     : ${hop1}`);
+              const hopTxs = keyTxsFor(hop1, hopLimit);
               if (hopTxs.length > 0) {
-                lines.push(`       Entry TXs (target → first hop):`);
+                lines.push(`       Key Entry Transactions (target → ${hop1short}):`);
                 emitTxs(hopTxs, "       ");
+              } else {
+                lines.push(`       Key Entry Transactions : none in loaded history`);
               }
             }
             lines.push("");
@@ -791,6 +807,22 @@ export default function WalletDetail() {
             lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
             lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
             lines.push(`       TX Count      : ${f.txCountTarget}`);
+            if (exchDirectLimit > 0) {
+              const txs = keyTxsFor(f.sharedAddress, exchDirectLimit);
+              if (txs.length > 0) {
+                lines.push(`       Key Transactions to Exchange:`);
+                emitTxs(txs, "       ");
+              }
+            }
+            if (exchHopLimit > 0 && f.targetPath[1]) {
+              const hop1 = f.targetPath[1];
+              const hop1short = hop1.length > 16 ? `${hop1.slice(0, 8)}…${hop1.slice(-4)}` : hop1;
+              const hopTxs = keyTxsFor(hop1, exchHopLimit);
+              if (hopTxs.length > 0) {
+                lines.push(`       Key Entry Transactions (target → ${hop1short}):`);
+                emitTxs(hopTxs, "       ");
+              }
+            }
             lines.push("");
           });
           if (exch.length > maxShow) lines.push(`  … and ${exch.length - maxShow} more exchange connections`);
@@ -805,12 +837,14 @@ export default function WalletDetail() {
       // ── Tier 1 ──────────────────────────────────────────────────────────────
       lines.push(sep("TIER 1 — DIRECT SHARED COUNTERPARTIES"));
       lines.push("");
-      renderPrivExch(t1priv, t1exch, true, false, 20);
+      // T1: 5 key txs direct to shared wallet; 3 key txs to exchange; no hop needed
+      renderPrivExch(t1priv, t1exch, 5, 0, 3, 0, 20);
 
       // ── Tier 2 ──────────────────────────────────────────────────────────────
       lines.push(sep("TIER 2 — SECOND-DEGREE SHARED NODES"));
       lines.push("");
-      renderPrivExch(t2priv, t2exch, false, true, 20);
+      // T2: no direct txs (shared wallet is a hop away); 3 entry txs to first hop (private), 2 (exchange)
+      renderPrivExch(t2priv, t2exch, 0, 3, 0, 2, 20);
 
       // ── Tier 3–4 ────────────────────────────────────────────────────────────
       const t34priv = [...t3priv.slice(0, 10), ...t4priv.slice(0, 10)];
@@ -825,6 +859,15 @@ export default function WalletDetail() {
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : ""}`);
             lines.push(`       Path        : ${f.targetPath.join(" → ")}`);
             lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
+            if (f.targetPath[1]) {
+              const hop1 = f.targetPath[1];
+              const hop1short = hop1.length > 16 ? `${hop1.slice(0, 8)}…${hop1.slice(-4)}` : hop1;
+              const hopTxs = keyTxsFor(hop1, 2);
+              if (hopTxs.length > 0) {
+                lines.push(`       Entry Transactions (target → ${hop1short}):`);
+                emitTxs(hopTxs, "       ");
+              }
+            }
             lines.push("");
           });
           if (t3priv.length + t4priv.length > 20) lines.push(`  … and ${t3priv.length + t4priv.length - 20} more`);

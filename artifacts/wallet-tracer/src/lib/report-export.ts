@@ -33,6 +33,9 @@ function renderReportHtml(content: string): string {
           line.includes("↳ Memos") || line.includes("↳ Destination Tags"))
         return `<div class="memo-line">${esc}</div>`;
 
+      if (line.includes("◄ DAG OFFICIAL ENTITY") || line.includes("DAG OFFICIAL ENTITY"))
+        return `<div class="dag-official-line">${esc}</div>`;
+
       if (line.includes("◄ OFFICIAL") || line.includes("COLDWALLET") ||
           line.includes("◄ EXCHANGE FLOW") || line.includes("EXCHANGE / CUSTODIAL"))
         return `<div class="exchange-line">${esc}</div>`;
@@ -98,8 +101,8 @@ const PDF_CSS = `
     .tx-detail { page-break-inside: avoid; page-break-before: avoid; page-break-after: avoid; }
     .memo-line { page-break-inside: avoid; page-break-before: avoid; }
 
-    /* Keep private/exchange section headers with the first finding below */
-    .private-line, .exchange-line { page-break-after: avoid; }
+    /* Keep private/exchange/dag-official section headers with the first finding below */
+    .private-line, .exchange-line, .dag-official-line { page-break-after: avoid; }
     .end-rule, .thin-rule { page-break-before: avoid; }
   }
 
@@ -187,7 +190,7 @@ const PDF_CSS = `
   /* Base line styles */
   .line, .blank, .meta-line, .footer-line,
   .title-border, .title-inner, .section-sep, .end-rule, .thin-rule,
-  .memo-line, .warn-line, .exchange-line, .private-line,
+  .memo-line, .warn-line, .exchange-line, .private-line, .dag-official-line,
   .tx-in, .tx-out, .tx-detail, .risk-high, .risk-med, .risk-low {
     font-family: 'Courier New', Courier, monospace;
     font-size: 9pt;
@@ -283,6 +286,15 @@ const PDF_CSS = `
     padding: 3pt 8pt;
     font-weight: bold;
     color: #1b3a1d;
+    margin: 3pt 0;
+  }
+  /* DAG official entity lines — orange, distinct from exchange (blue) and private (green) */
+  .dag-official-line {
+    background: #fff7ed;
+    border-left: 4pt solid #ea580c;
+    padding: 3pt 8pt;
+    font-weight: bold;
+    color: #431407;
     margin: 3pt 0;
   }
   .warn-line {

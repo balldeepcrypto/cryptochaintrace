@@ -21,7 +21,10 @@ import {
 import { Link } from "wouter";
 
 // ─── Known entity labels ──────────────────────────────────────────────────────
-const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" }> = {
+// "dag-team" = DAG official entities (DOR Metagraph, DTM, Team Foundation, Treasury,
+//   Validator Tax Pool, Reward Pool). They are LABELLED PROMINENTLY and highlighted in
+//   reports, but they DO count as private commingling evidence (unlike exchange/bridge/genesis).
+const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" }> = {
   // ── XRP ────────────────────────────────────────────────────────────────────
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis",     type: "genesis" },
   r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.",      type: "genesis" },
@@ -150,37 +153,39 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "1Bh2AAQCnSiXqJWTGVTTTVMFAFPjguegYZ":           { label: "Gate.io BTC",   type: "exchange" },
   "1GR9qNz7zgtaW5HwwVpEJWMnGWhsbsieCG":           { label: "MEXC BTC",      type: "exchange" },
   // ── DAG (Constellation Network) ────────────────────────────────────────────
+  // ── DAG Official Entities (type "dag-team") ────────────────────────────────
+  // Labelled + highlighted in reports; count as PRIVATE COMMINGLING (not excluded).
   // DOR Metagraph
-  DAG0o6WSyvc7XfzujwJB1e25mfyzgXoLYDD6wqnk: { label: "DOR Metagraph",   type: "defi" },
-  DAG4nBD5J3Pr2uHgtS1sa16PqemHrwCcvjdR31Xe: { label: "DOR Metagraph 2", type: "defi" },
-  DAG4YD6rkExLwYyAZzwjYJMxe36PAptKuUKq9uc7: { label: "DOR Metagraph 3", type: "defi" },
-  DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM: { label: "DOR Metagraph 4", type: "defi" },
-  DAG5fqiGq9L5iLH5R5eV7gBjkucewrcaQ1jVnKYD: { label: "DOR Metagraph 5", type: "defi" },
-  DAG5uDuGhPuh4mQZGNLFCEcdy69txSF4iSfFbdWJ: { label: "DOR Metagraph 6", type: "defi" },
-  DAG6B5mBMoEu3Habtb2ts3QGUD2UquywrQSLSubU: { label: "DOR Metagraph 7", type: "defi" },
+  DAG0o6WSyvc7XfzujwJB1e25mfyzgXoLYDD6wqnk: { label: "[DOR Metagraph]",            type: "dag-team" },
+  DAG4nBD5J3Pr2uHgtS1sa16PqemHrwCcvjdR31Xe: { label: "[DOR Metagraph 2]",          type: "dag-team" },
+  DAG4YD6rkExLwYyAZzwjYJMxe36PAptKuUKq9uc7: { label: "[DOR Metagraph 3]",          type: "dag-team" },
+  DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM: { label: "[DOR Metagraph 4]",          type: "dag-team" },
+  DAG5fqiGq9L5iLH5R5eV7gBjkucewrcaQ1jVnKYD: { label: "[DOR Metagraph 5]",          type: "dag-team" },
+  DAG5uDuGhPuh4mQZGNLFCEcdy69txSF4iSfFbdWJ: { label: "[DOR Metagraph 6]",          type: "dag-team" },
+  DAG6B5mBMoEu3Habtb2ts3QGUD2UquywrQSLSubU: { label: "[DOR Metagraph 7]",          type: "dag-team" },
   // DTM Enterprise
-  DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE: { label: "DTM Enterprise",   type: "defi" },
-  DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA: { label: "DTM Enterprise 2", type: "defi" },
+  DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE: { label: "[DTM Enterprise]",           type: "dag-team" },
+  DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA: { label: "[DTM Enterprise 2]",         type: "dag-team" },
   // DOR Validator
-  DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT: { label: "DOR Validator Tax Pool", type: "defi" },
-  DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW: { label: "DOR Validator Tax",      type: "defi" },
+  DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT: { label: "[DOR Validator Tax Pool]",   type: "dag-team" },
+  DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW: { label: "[DOR Validator Tax]",        type: "dag-team" },
   // DTM Reward Pool
-  DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "DTM Reward Pool",   type: "defi" },
-  DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK: { label: "DTM Reward Pool 2", type: "defi" },
-  // Team Foundation
-  DAG8UsoSR14peffVJKAsf3mqJFnkKSoQEUQDAQKN: { label: "Team Foundation",    type: "genesis" },
-  DAG07znCvSyM2xhxPZECrGhVF6WVPMvFWe6Z6EWW: { label: "Team Foundation 2",  type: "genesis" },
-  DAG38whfr5CWzMoQg8PajuiukNNojySqyXtZdBhK: { label: "Team Foundation 3",  type: "genesis" },
-  DAG7teqwiZjuBivJi7Mx8AkhwnF6w3Q1poUTCViK: { label: "Team Foundation 4",  type: "genesis" },
-  DAG7uFTujXArFTuTqELGYGcthacpfQykBX7wsgFv: { label: "Team Foundation 5",  type: "genesis" },
-  DAG8MWCDLPxjufRE2tkg3qpWSd7iJKFfsg9H5nCE: { label: "Team Foundation 6",  type: "genesis" },
-  DAG3yzY9252n8Fkxix7pZo5TH6F9paxSVLsDARK4: { label: "Team Foundation 7",  type: "genesis" },
-  DAG2eFDjZ2CMA3M4KMfLw6Vnn7kaJPJqcSCpHU25: { label: "Team Foundation 8",  type: "genesis" },
-  DAG2ttEXvYHsMP5qu7ejoBTbuCPmHoDhU5fZi3YL: { label: "Team Foundation 9",  type: "genesis" },
-  DAG1ZieMRm7ALEbSjmvwztvtZYu7srPaXwxbC14U: { label: "Team Foundation 10", type: "genesis" },
+  DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "[DTM Reward Pool]",          type: "dag-team" },
+  DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK: { label: "[DTM Reward Pool 2]",        type: "dag-team" },
+  // Stardust / Team Foundation (Constellation)
+  DAG8UsoSR14peffVJKAsf3mqJFnkKSoQEUQDAQKN: { label: "[Stardust Team Foundation]",  type: "dag-team" },
+  DAG07znCvSyM2xhxPZECrGhVF6WVPMvFWe6Z6EWW: { label: "[Stardust Team Fdn 2]",      type: "dag-team" },
+  DAG38whfr5CWzMoQg8PajuiukNNojySqyXtZdBhK: { label: "[Stardust Team Fdn 3]",      type: "dag-team" },
+  DAG7teqwiZjuBivJi7Mx8AkhwnF6w3Q1poUTCViK: { label: "[Stardust Team Fdn 4]",      type: "dag-team" },
+  DAG7uFTujXArFTuTqELGYGcthacpfQykBX7wsgFv: { label: "[Stardust Team Fdn 5]",      type: "dag-team" },
+  DAG8MWCDLPxjufRE2tkg3qpWSd7iJKFfsg9H5nCE: { label: "[Stardust Team Fdn 6]",      type: "dag-team" },
+  DAG3yzY9252n8Fkxix7pZo5TH6F9paxSVLsDARK4: { label: "[Stardust Team Fdn 7]",      type: "dag-team" },
+  DAG2eFDjZ2CMA3M4KMfLw6Vnn7kaJPJqcSCpHU25: { label: "[Stardust Team Fdn 8]",      type: "dag-team" },
+  DAG2ttEXvYHsMP5qu7ejoBTbuCPmHoDhU5fZi3YL: { label: "[Stardust Team Fdn 9]",      type: "dag-team" },
+  DAG1ZieMRm7ALEbSjmvwztvtZYu7srPaXwxbC14U: { label: "[Stardust Team Fdn 10]",     type: "dag-team" },
   // Treasury
-  DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "DAG Treasury",   type: "genesis" },
-  DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "DAG Treasury 2", type: "genesis" },
+  DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "[DAG Treasury]",             type: "dag-team" },
+  DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "[DAG Treasury 2]",           type: "dag-team" },
   // Bridge / Infrastructure (DAG only)
   DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Base / Bridge Wallet (Official Constellation)", type: "bridge" },
   DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz: { label: "DAG Reward / Team Wallet",                     type: "genesis" },
@@ -303,7 +308,7 @@ interface MultiGraphNode {
 
 interface MultiSharedEntry {
   address: string;
-  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" };
+  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" };
   appearances: Array<{
     wallet: string;
     depth: number;
@@ -320,7 +325,7 @@ interface MultiAnalysisResult {
   patterns: Array<{
     id: number;
     sharedAddr: string;
-    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" };
+    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" };
     totalTxCount: number;
     totalValueUsd: number;
     paths: Array<{ wallet: string; path: string[] }>;
@@ -762,8 +767,12 @@ export default function WalletDetail() {
 
     lines.push(sep("SUMMARY"));
     lines.push("");
+    const dagTeamFindings = privFindings.filter((f) => f.knownInfo?.type === "dag-team");
     lines.push(`  Total Shared Nodes : ${findings.length}`);
     lines.push(`    ► Private wallets      : ${privFindings.length}  ← wallet-to-wallet commingling (key evidence)`);
+    if (dagTeamFindings.length > 0) {
+      lines.push(`         incl. ${dagTeamFindings.length} known DAG official entity(s)  ← marked ◄ DAG OFFICIAL ENTITY`);
+    }
     lines.push(`    ► Exchange/Bridge/Offcl: ${exchFindings.length}  ← on-ramp / off-ramp / infrastructure flows`);
     lines.push("");
     lines.push(`  Tier breakdown:`);
@@ -791,7 +800,9 @@ export default function WalletDetail() {
           lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${priv.length}) — INVESTIGATE FIRST`);
           lines.push("");
           priv.slice(0, maxShow).forEach((f, i) => {
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : ""}`);
+            const isDagTeamNode = f.knownInfo?.type === "dag-team";
+            const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]${dagTag}` : ""}`);
             lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
             lines.push(`       Path          : ${fmtPath(f.targetPath)}`);
             lines.push(`       TX Count      : ${f.txCountTarget}`);
@@ -880,7 +891,9 @@ export default function WalletDetail() {
           lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${t3priv.length + t4priv.length}) — INVESTIGATE`);
           lines.push("");
           t34priv.forEach((f, i) => {
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]` : ""}`);
+            const isDagTeamNode = f.knownInfo?.type === "dag-team";
+            const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]${dagTag}` : ""}`);
             lines.push(`       Path        : ${fmtPath(f.targetPath)}`);
             lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
             if (f.targetPath[1]) {
@@ -1862,6 +1875,7 @@ export default function WalletDetail() {
       defi:     { bg: "bg-teal-700/95",    border: "border-teal-300/80",    glow: "shadow-teal-400/40",    ring: "ring-1 ring-teal-400/30",    emoji: "🔄" },
       flagged:  { bg: "bg-red-600/95",     border: "border-red-300/80",     glow: "shadow-red-400/40",     ring: "ring-1 ring-red-400/30",     emoji: "🚨" },
       bridge:   { bg: "bg-amber-600/95",   border: "border-amber-300/80",   glow: "shadow-amber-400/40",   ring: "ring-1 ring-amber-400/30",   emoji: "🌉" },
+      "dag-team": { bg: "bg-orange-600/95", border: "border-orange-300/80", glow: "shadow-orange-400/40",  ring: "ring-1 ring-orange-400/30",  emoji: "🏛️" },
     };
     const exchangeThemes: Array<[RegExp, { bg: string; border: string; glow: string; ring: string; emoji: string }]> = [
       [/uphold/,     { bg: "bg-red-600/95",      border: "border-red-300/70",      glow: "shadow-red-500/60",      ring: "ring-1 ring-red-400/50",      emoji: "🔴" }],
@@ -2923,11 +2937,13 @@ export default function WalletDetail() {
                 const isCommingling = comminglingAddresses.has(entry.address);
                 const isExchange = entry.knownInfo?.type === "exchange" || entry.knownInfo?.type === "bridge";
                 const isGenesis = entry.knownInfo?.type === "genesis";
+                const isDagTeam = entry.knownInfo?.type === "dag-team";
                 const isRoot = entry.depth === 0;
 
                 let dotColor = "bg-muted-foreground";
                 if (isRoot) dotColor = "bg-primary";
                 else if (isExchange) dotColor = "bg-blue-500";
+                else if (isDagTeam) dotColor = "bg-orange-500";
                 else if (isGenesis) dotColor = "bg-purple-500";
                 else if (isCommingling) dotColor = "bg-yellow-500";
                 else if (intersectionData?.intersectionAddrs.has(entry.address)) dotColor = "bg-green-500";
@@ -2936,6 +2952,7 @@ export default function WalletDetail() {
                 if (isCommingling) rowBg = "bg-yellow-950/20 hover:bg-yellow-950/30 border-l-2 border-yellow-500/40";
                 else if (intersectionData?.intersectionAddrs.has(entry.address)) rowBg = "bg-green-950/20 hover:bg-green-950/30 border-l-2 border-green-500/40";
                 else if (isExchange) rowBg = "bg-blue-950/10 hover:bg-blue-950/20";
+                else if (isDagTeam) rowBg = "bg-orange-950/10 hover:bg-orange-950/20 border-l-2 border-orange-500/30";
                 else if (isRoot) rowBg = "bg-primary/5 border-l-2 border-primary/40";
 
                 return (

@@ -37,7 +37,8 @@ function renderReportHtml(content: string): string {
         return `<div class="dag-official-line">${esc}</div>`;
 
       if (line.includes("◄ OFFICIAL") || line.includes("COLDWALLET") ||
-          line.includes("◄ EXCHANGE FLOW") || line.includes("EXCHANGE / CUSTODIAL"))
+          line.includes("◄ EXCHANGE FLOW") || line.includes("◄ BRIDGE FLOW") ||
+          line.includes("EXCHANGE / CUSTODIAL"))
         return `<div class="exchange-line">${esc}</div>`;
 
       if (line.includes("★ PRIVATE") || line.includes("PRIVATE WALLET CONNECTIONS"))
@@ -52,6 +53,20 @@ function renderReportHtml(content: string): string {
         return `<div class="risk-med">${esc}</div>`;
       if (line.includes("LOW RISK") || line.includes("LOW-MEDIUM RISK"))
         return `<div class="risk-low">${esc}</div>`;
+
+      // ── Hop-by-hop trail display ───────────────────────────────────────────
+      // Target/shared endpoint addresses: "  addr  ← TARGET WALLET" / "← SHARED NODE"
+      if (line.includes("← TARGET") || line.includes("← SHARED"))
+        return `<div class="hop-endpoint-line">${esc}</div>`;
+      // Hop arrow connector: "  ↓  Hop N"
+      if (tr.startsWith("↓  Hop") || tr.startsWith("↓ Hop"))
+        return `<div class="hop-arrow-line">${esc}</div>`;
+      // "Full Trail" and "Transactions — Hop N" section labels
+      if (line.includes("Full Trail") || line.includes("Transactions — Hop "))
+        return `<div class="hop-tx-label">${esc}</div>`;
+      // "trace X separately" investigation notes
+      if (line.includes(": trace ") && line.includes("separately"))
+        return `<div class="hop-note-line">${esc}</div>`;
 
       // ── Commingle report TX direction lines: ├─ [IN ]  From: ... → To: ... ──
       if (line.includes("[IN ]") && line.includes("From:"))
@@ -70,6 +85,10 @@ function renderReportHtml(content: string): string {
         return `<div class="tx-in">${esc}</div>`;
       if (hasTxRef && (line.includes("OUT") || line.includes("−")))
         return `<div class="tx-out">${esc}</div>`;
+
+      // Numbered finding header lines: "  01. addr  [LABEL]"
+      if (/^\s{2}\d{2}\.\s/.test(line))
+        return `<div class="finding-header">${esc}</div>`;
 
       if (/^(Generated|Chain|Target|Comparison\s*\d|Depth|Min Tx)\s*[:\|]/.test(tr))
         return `<div class="meta-line">${esc}</div>`;
@@ -103,6 +122,11 @@ const PDF_CSS = `
 
     /* Keep private/exchange/dag-official section headers with the first finding below */
     .private-line, .exchange-line, .dag-official-line { page-break-after: avoid; }
+    /* Keep hop trail blocks together */
+    .hop-tx-label { page-break-after: avoid; }
+    .hop-endpoint-line, .hop-arrow-line { page-break-inside: avoid; page-break-after: avoid; }
+    /* Keep finding header with the first detail line below it */
+    .finding-header { page-break-after: avoid; }
     .end-rule, .thin-rule { page-break-before: avoid; }
   }
 
@@ -191,6 +215,7 @@ const PDF_CSS = `
   .line, .blank, .meta-line, .footer-line,
   .title-border, .title-inner, .section-sep, .end-rule, .thin-rule,
   .memo-line, .warn-line, .exchange-line, .private-line, .dag-official-line,
+  .hop-endpoint-line, .hop-arrow-line, .hop-tx-label, .hop-note-line, .finding-header,
   .tx-in, .tx-out, .tx-detail, .risk-high, .risk-med, .risk-low {
     font-family: 'Courier New', Courier, monospace;
     font-size: 9pt;
@@ -297,6 +322,68 @@ const PDF_CSS = `
     color: #431407;
     margin: 3pt 0;
   }
+
+  /* ── Hop-by-hop trail display ─────────────────────────────────────────────── */
+  /* Section labels: "Full Trail (target → shared node):" and "Transactions — Hop N" */
+  .hop-tx-label {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 8.5pt;
+    white-space: pre-wrap;
+    word-break: break-all;
+    padding: 4pt 6pt 1pt;
+    font-weight: bold;
+    color: #1e3a5f;
+    margin-top: 6pt;
+  }
+  /* Endpoint addresses: "addr  ← TARGET WALLET" / "← SHARED NODE" */
+  .hop-endpoint-line {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 8.5pt;
+    white-space: pre-wrap;
+    word-break: break-all;
+    background: #f0f4ff;
+    border-left: 3pt solid #6366f1;
+    padding: 2pt 8pt;
+    font-weight: bold;
+    color: #1e1b4b;
+    line-height: 1.6;
+  }
+  /* Hop connector: "↓  Hop N" */
+  .hop-arrow-line {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 8pt;
+    white-space: pre-wrap;
+    color: #6366f1;
+    padding: 1pt 8pt;
+    font-style: italic;
+  }
+  /* Investigation note: "trace X separately" */
+  .hop-note-line {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 8pt;
+    white-space: pre-wrap;
+    word-break: break-all;
+    color: #6b7280;
+    font-style: italic;
+    padding: 1pt 8pt;
+    border-left: 2pt solid #d1d5db;
+  }
+
+  /* Numbered finding headers: "  01. addr  [LABEL]" */
+  .finding-header {
+    font-family: 'Courier New', Courier, monospace;
+    font-size: 9pt;
+    white-space: pre-wrap;
+    word-break: break-all;
+    line-height: 1.7;
+    margin-top: 12pt;
+    padding: 3pt 6pt;
+    font-weight: bold;
+    color: #111;
+    border-bottom: 1pt solid #e5e7eb;
+    background: #fafafa;
+  }
+
   .warn-line {
     background: #fff3cd;
     border-left: 4pt solid #d97706;

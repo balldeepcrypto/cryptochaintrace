@@ -800,20 +800,22 @@ export default function WalletDetail() {
       });
     };
 
-    // Emit one intermediate hop row: addresses + best cached TX (or fallback note).
-    // Uses the "↓  Hop N" and "Transactions — Hop N" text patterns so the PDF
-    // renderer applies hop-arrow-line / hop-tx-label CSS classes automatically.
+    // Emit one intermediate hop row: both wallet addresses + best cached TX.
+    // Tries key fa::ta first, then ta::fa (covers both fetch directions).
+    // Uses "Transactions — Hop N" label so the PDF renderer applies hop-tx-label CSS.
     const emitHopSegment = (fa: string, ta: string, hopNum: number) => {
       const fKn = KNOWN_LABELS[fa]; const tKn = KNOWN_LABELS[ta];
-      lines.push(`       ↓  Hop ${hopNum}`);
-      lines.push(`         ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
-      lines.push(`         →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
-      const segTx = commingleResult.segmentTxs?.[`${fa}::${ta}`] ?? null;
+      // Hop address lines — explicit From / To before the TX block
+      lines.push(`       Hop ${hopNum}:  ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
+      lines.push(`                →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
+      // Look up best TX — try both key directions since fetching is one-sided
+      const map = commingleResult.segmentTxs ?? {};
+      const segTx = map[`${fa}::${ta}`] ?? map[`${ta}::${fa}`] ?? null;
       if (segTx) {
         lines.push(`       Transactions — Hop ${hopNum}:`);
         emitTxs([segTx], "       ");
       } else {
-        lines.push(`       Transactions — Hop ${hopNum}: (not available in fetched history)`);
+        lines.push(`       Transactions — Hop ${hopNum}: (TX not in fetched history — path may be indirect)`);
       }
     };
 
@@ -2412,10 +2414,13 @@ export default function WalletDetail() {
               for (const tx of data.transactions ?? []) {
                 const counterparty = tx.direction === "in" ? tx.from : tx.to;
                 if (!counterparty) continue;
-                const key = `${fromAddr}::${counterparty}`;
-                const prev = segmentTxs[key];
-                if (!prev || parseFloat(tx.value) > parseFloat(prev.value ?? "0")) {
-                  segmentTxs[key] = tx;
+                // Store both directions so emitHopSegment finds the TX regardless
+                // of which wallet was fetched or which direction the TX flowed.
+                for (const key of [`${fromAddr}::${counterparty}`, `${counterparty}::${fromAddr}`]) {
+                  const prev = segmentTxs[key];
+                  if (!prev || parseFloat(tx.value) > parseFloat(prev.value ?? "0")) {
+                    segmentTxs[key] = tx;
+                  }
                 }
               }
             } catch { /* best-effort */ }

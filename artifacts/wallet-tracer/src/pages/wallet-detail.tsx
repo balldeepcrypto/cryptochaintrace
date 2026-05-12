@@ -21,7 +21,7 @@ import {
 import { Link } from "wouter";
 
 // ─── Known entity labels ──────────────────────────────────────────────────────
-const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" }> = {
+const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" }> = {
   // ── XRP ────────────────────────────────────────────────────────────────────
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis",     type: "genesis" },
   r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.",      type: "genesis" },
@@ -182,7 +182,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "DAG Treasury",   type: "genesis" },
   DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "DAG Treasury 2", type: "genesis" },
   // Bridge / Infrastructure (DAG only)
-  DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Base / Bridge Wallet (Official Constellation)", type: "genesis" },
+  DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Base / Bridge Wallet (Official Constellation)", type: "bridge" },
   // DAG Exchanges
   DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf: { label: "MEXC DAG",        type: "exchange" },
   DAG4TETUwraLYX1mYdC8ymUxxWsoNZPffUpDf4Ar: { label: "Gate.io DAG",      type: "exchange" },
@@ -302,7 +302,7 @@ interface MultiGraphNode {
 
 interface MultiSharedEntry {
   address: string;
-  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" };
+  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" };
   appearances: Array<{
     wallet: string;
     depth: number;
@@ -319,7 +319,7 @@ interface MultiAnalysisResult {
   patterns: Array<{
     id: number;
     sharedAddr: string;
-    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" };
+    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" };
     totalTxCount: number;
     totalValueUsd: number;
     paths: Array<{ wallet: string; path: string[] }>;
@@ -735,7 +735,7 @@ export default function WalletDetail() {
 
     const { findings } = commingleResult;
     // Separate private wallets from exchange/custodial nodes
-    const isExch = (f: CommingleFinding) => f.knownInfo?.type === "exchange";
+    const isExch = (f: CommingleFinding) => f.knownInfo?.type === "exchange" || f.knownInfo?.type === "bridge";
     const privFindings = findings.filter((f) => !isExch(f));
     const exchFindings = findings.filter((f) => isExch(f));
     const t1priv = findings.filter((f) => f.tier === 1 && !isExch(f));
@@ -809,11 +809,12 @@ export default function WalletDetail() {
           lines.push("");
         }
         if (exch.length > 0) {
-          lines.push(`  ── EXCHANGE / CUSTODIAL FLOWS (${exch.length}) — On-ramp / Off-ramp activity ──`);
+          lines.push(`  ── EXCHANGE / CUSTODIAL / BRIDGE FLOWS (${exch.length}) — On-ramp / Off-ramp / Bridge activity ──`);
           lines.push("");
           exch.slice(0, maxShow).forEach((f, i) => {
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  [${(f.knownInfo?.label ?? "").toUpperCase()}] ◄ EXCHANGE FLOW`);
-            lines.push(`       Type          : Exchange Hot Wallet — funds routed through custodian`);
+            const isBridge = f.knownInfo?.type === "bridge";
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  [${(f.knownInfo?.label ?? "").toUpperCase()}] ◄ ${isBridge ? "BRIDGE FLOW" : "EXCHANGE FLOW"}`);
+            lines.push(`       Type          : ${isBridge ? "Bridge / Infrastructure Node — funds pass through official protocol" : "Exchange Hot Wallet — funds routed through custodian"}`);
             lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
             lines.push(`       Path          : ${f.targetPath.join(" → ")}`);
             lines.push(`       TX Count      : ${f.txCountTarget}`);
@@ -1515,7 +1516,7 @@ export default function WalletDetail() {
         const sender = bestTx.from;
         const knownSender = KNOWN_LABELS[sender];
 
-        const isExchange = knownSender?.type === "exchange";
+        const isExchange = knownSender?.type === "exchange" || knownSender?.type === "bridge";
         const isLoop     = visited.has(sender);
         const isMaxHops  = i === maxHops - 1;
 
@@ -1802,6 +1803,7 @@ export default function WalletDetail() {
       genesis:  { bg: "bg-purple-700/95",  border: "border-purple-300/80",  glow: "shadow-purple-400/40",  ring: "ring-1 ring-purple-400/30",  emoji: "⚡" },
       defi:     { bg: "bg-teal-700/95",    border: "border-teal-300/80",    glow: "shadow-teal-400/40",    ring: "ring-1 ring-teal-400/30",    emoji: "🔄" },
       flagged:  { bg: "bg-red-600/95",     border: "border-red-300/80",     glow: "shadow-red-400/40",     ring: "ring-1 ring-red-400/30",     emoji: "🚨" },
+      bridge:   { bg: "bg-amber-600/95",   border: "border-amber-300/80",   glow: "shadow-amber-400/40",   ring: "ring-1 ring-amber-400/30",   emoji: "🌉" },
     };
     const exchangeThemes: Array<[RegExp, { bg: string; border: string; glow: string; ring: string; emoji: string }]> = [
       [/uphold/,     { bg: "bg-red-600/95",      border: "border-red-300/70",      glow: "shadow-red-500/60",      ring: "ring-1 ring-red-400/50",      emoji: "🔴" }],
@@ -2861,7 +2863,7 @@ export default function WalletDetail() {
             <div className="p-4 space-y-1 max-h-[420px] overflow-y-auto">
               {trailEntries.map((entry) => {
                 const isCommingling = comminglingAddresses.has(entry.address);
-                const isExchange = entry.knownInfo?.type === "exchange";
+                const isExchange = entry.knownInfo?.type === "exchange" || entry.knownInfo?.type === "bridge";
                 const isGenesis = entry.knownInfo?.type === "genesis";
                 const isRoot = entry.depth === 0;
 

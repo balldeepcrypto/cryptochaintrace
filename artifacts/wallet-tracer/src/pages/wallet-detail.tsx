@@ -302,6 +302,7 @@ interface MultiGraphNode {
   address: string;
   depth: number;
   via: string | null;
+  pathChain: string[];
   txCount: number;
   totalValueUsd: number;
 }
@@ -315,6 +316,7 @@ interface MultiSharedEntry {
     txCount: number;
     totalValueUsd: number;
     via: string | null;
+    pathChain: string[];
   }>;
 }
 
@@ -1210,7 +1212,7 @@ export default function WalletDetail() {
       lines.push(`Wallet ${String(i + 2).padStart(2, " ")}    : ${w}${kn ? `  [${kn.label}]` : ""}`);
     });
     lines.push(`Total Wallets: ${multiResult.trackedWallets.length}`);
-    lines.push(`Depth        : 2 hops from each wallet (connections graph)`);
+    lines.push(`Depth        : up to 4 hops from each wallet (connections graph)`);
     lines.push(sep());
     lines.push(`NOTE: TX details from primary wallet's loaded history only.`);
     lines.push(`      Additional wallets show edge-level counts from graph analysis.`);
@@ -1218,12 +1220,12 @@ export default function WalletDetail() {
 
     // ── § 1 — Private Convergence Points ──────────────────────────────────────
     lines.push(sep("PRIVATE CONVERGENCE POINTS"));
-    lines.push(`  Private addresses reached within 2 hops of 2+ tracked wallets.`);
+    lines.push(`  Private addresses reached within 4 hops of 2+ tracked wallets.`);
     lines.push(`  These are the core investigative findings — potential funneling / mixing hubs.`);
     lines.push(`  Exchanges, bridges, and official nodes are EXCLUDED (see next section).`);
     lines.push("");
     if (privPoints.length === 0) {
-      lines.push("  No private convergence detected at depth 1–2.");
+      lines.push("  No private convergence detected at depth 1–4.");
       lines.push("  Tracked wallets do not share private intermediaries within scanned depth.");
       lines.push("  Try loading more TX history and re-running for deeper coverage.");
       lines.push("");
@@ -1237,8 +1239,18 @@ export default function WalletDetail() {
         entry.appearances.forEach((app) => {
           const idx    = multiResult.trackedWallets.indexOf(app.wallet);
           const wLabel = idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`;
-          const depth  = app.depth === 1 ? "depth-1 (direct counterparty)" : `depth-2 via ${app.via ?? "?"}`;
-          lines.push(`       ├── ${wLabel}: ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  ${depth}`);
+          let depthDesc: string;
+          if (app.depth === 1) {
+            depthDesc = "depth-1 (direct counterparty)";
+          } else if (app.pathChain.length > 2) {
+            const hops = app.pathChain.slice(1, -1)
+              .map(a => a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-4)}` : a)
+              .join(" → ");
+            depthDesc = `depth-${app.depth} via ${hops}`;
+          } else {
+            depthDesc = `depth-${app.depth} via ${app.via ?? "?"}`;
+          }
+          lines.push(`       ├── ${wLabel}: ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  ${depthDesc}`);
           if (app.totalValueUsd > 0) lines.push(`       │     Value : $${app.totalValueUsd.toFixed(2)} USD`);
         });
         const primaryTxs = bestInOut2(entry.address);
@@ -1260,7 +1272,7 @@ export default function WalletDetail() {
     lines.push("");
     if (exchPoints.length === 0) {
       lines.push("  No shared exchange/custodial flows detected.");
-      lines.push("  Tracked wallets do not route through the same known exchange within depth-2.");
+      lines.push("  Tracked wallets do not route through the same known exchange within depth-4.");
       lines.push("");
     } else {
       exchPoints.slice(0, 20).forEach((entry, i) => {
@@ -1298,8 +1310,8 @@ export default function WalletDetail() {
       lines.push(`     These represent potential money-funneling / commingling hubs.`);
       lines.push(`     Investigative action: subpoena / KYC for each convergence address listed above.`);
     } else {
-      lines.push(`  No private convergence detected within depth-2.`);
-      lines.push(`  Expand scan depth or load more TX history and re-run for deeper analysis.`);
+      lines.push(`  No private convergence detected within depth-4.`);
+      lines.push(`  Load more TX history and re-run for broader coverage.`);
     }
     if (exchPoints.length > 0) {
       lines.push("");
@@ -1943,36 +1955,114 @@ export default function WalletDetail() {
       } catch { return { nodes: [], edges: [] }; }
     };
 
+    const EXCL_M = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
+    const isExchM = (a: string) => ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[a]?.type ?? "");
+
     try {
-      // Build a per-wallet map: address → MultiGraphNode (depth 1 + 2)
+      // Build per-wallet map: address → MultiGraphNode (depth 1–4)
       const walletNodeMaps: Array<{ wallet: string; nodes: Map<string, MultiGraphNode> }> = [];
 
       for (const wallet of allWallets) {
         setMultiProgress(`Depth-1: ${wallet.slice(0, 10)}…`);
         const nodeMap = new Map<string, MultiGraphNode>();
 
+        // ── Depth 1 ─────────────────────────────────────────────────────────
         const d1 = await fetchConns(wallet);
-        const d1peers = d1.nodes.filter((n) => n.address !== wallet && !allWallets.includes(n.address)).slice(0, 12);
+        const d1peers = d1.nodes
+          .filter((n) => n.address !== wallet && !allWallets.includes(n.address))
+          .slice(0, 12);
         for (const peer of d1peers) {
-          const edge = d1.edges.find((e) => (e.from === wallet && e.to === peer.address) || (e.to === wallet && e.from === peer.address));
-          nodeMap.set(peer.address, { address: peer.address, depth: 1, via: wallet, txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0 });
+          const edge = d1.edges.find((e) =>
+            (e.from === wallet && e.to === peer.address) || (e.to === wallet && e.from === peer.address));
+          nodeMap.set(peer.address, {
+            address: peer.address, depth: 1, via: wallet,
+            pathChain: [wallet, peer.address],
+            txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
+          });
         }
 
-        // Depth-2: top 6 depth-1 peers in parallel
-        const top6 = d1peers.slice(0, 6);
-        const d2results = await Promise.all(top6.map((p) => fetchConns(p.address)));
-        for (let pi = 0; pi < top6.length; pi++) {
-          const peer = top6[pi];
+        // ── Depth 2: top 6 depth-1 peers in parallel ─────────────────────────
+        const top6d1 = d1peers.slice(0, 6);
+        const d2results = await Promise.all(top6d1.map((p) => fetchConns(p.address)));
+        const d2privateNodes: MultiGraphNode[] = [];
+        for (let pi = 0; pi < top6d1.length; pi++) {
+          const peer = top6d1[pi];
           setMultiProgress(`Depth-2: ${peer.address.slice(0, 10)}…`);
           const d2 = d2results[pi];
-          const d2peers = d2.nodes.filter((n) => n.address !== peer.address && !allWallets.includes(n.address)).slice(0, 8);
+          const d2peers = d2.nodes
+            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
+            .slice(0, 8);
           for (const node of d2peers) {
             if (!nodeMap.has(node.address)) {
-              const edge = d2.edges.find((e) => (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
-              nodeMap.set(node.address, { address: node.address, depth: 2, via: peer.address, txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0 });
+              const edge = d2.edges.find((e) =>
+                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
+              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
+              const gn: MultiGraphNode = {
+                address: node.address, depth: 2, via: peer.address,
+                pathChain: [...parentChain, node.address],
+                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
+              };
+              nodeMap.set(node.address, gn);
+              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d2privateNodes.push(gn);
             }
           }
         }
+
+        // ── Depth 3: top 3 private depth-2 nodes ─────────────────────────────
+        const top3d2 = [...d2privateNodes]
+          .sort((a, b) => b.txCount - a.txCount)
+          .slice(0, 3);
+        const d3results = await Promise.all(top3d2.map((p) => fetchConns(p.address)));
+        const d3privateNodes: MultiGraphNode[] = [];
+        for (let pi = 0; pi < top3d2.length; pi++) {
+          const peer = top3d2[pi];
+          setMultiProgress(`Depth-3: ${peer.address.slice(0, 10)}…`);
+          const d3 = d3results[pi];
+          const d3peers = d3.nodes
+            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
+            .slice(0, 6);
+          for (const node of d3peers) {
+            if (!nodeMap.has(node.address)) {
+              const edge = d3.edges.find((e) =>
+                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
+              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
+              const gn: MultiGraphNode = {
+                address: node.address, depth: 3, via: peer.address,
+                pathChain: [...parentChain, node.address],
+                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
+              };
+              nodeMap.set(node.address, gn);
+              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d3privateNodes.push(gn);
+            }
+          }
+        }
+
+        // ── Depth 4: top 2 private depth-3 nodes ─────────────────────────────
+        const top2d3 = [...d3privateNodes]
+          .sort((a, b) => b.txCount - a.txCount)
+          .slice(0, 2);
+        const d4results = await Promise.all(top2d3.map((p) => fetchConns(p.address)));
+        for (let pi = 0; pi < top2d3.length; pi++) {
+          const peer = top2d3[pi];
+          setMultiProgress(`Depth-4: ${peer.address.slice(0, 10)}…`);
+          const d4 = d4results[pi];
+          const d4peers = d4.nodes
+            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
+            .slice(0, 5);
+          for (const node of d4peers) {
+            if (!nodeMap.has(node.address)) {
+              const edge = d4.edges.find((e) =>
+                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
+              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
+              nodeMap.set(node.address, {
+                address: node.address, depth: 4, via: peer.address,
+                pathChain: [...parentChain, node.address],
+                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
+              });
+            }
+          }
+        }
+
         walletNodeMaps.push({ wallet, nodes: nodeMap });
       }
 
@@ -1983,7 +2073,10 @@ export default function WalletDetail() {
           if (!addressMap.has(addr)) {
             addressMap.set(addr, { address: addr, knownInfo: KNOWN_LABELS[addr], appearances: [] });
           }
-          addressMap.get(addr)!.appearances.push({ wallet, depth: node.depth, txCount: node.txCount, totalValueUsd: node.totalValueUsd, via: node.via });
+          addressMap.get(addr)!.appearances.push({
+            wallet, depth: node.depth, txCount: node.txCount,
+            totalValueUsd: node.totalValueUsd, via: node.via, pathChain: node.pathChain,
+          });
         }
       }
 
@@ -1994,7 +2087,7 @@ export default function WalletDetail() {
         .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0));
 
       const commonEndpoints = shared
-        .filter((s) => s.appearances.every((a) => a.depth === 2))
+        .filter((s) => s.appearances.every((a) => a.depth >= 2))
         .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0));
 
       const patterns = shared
@@ -2008,7 +2101,7 @@ export default function WalletDetail() {
           totalValueUsd: s.appearances.reduce((sum, a) => sum + a.totalValueUsd, 0),
           paths: s.appearances.map((a) => ({
             wallet: a.wallet,
-            path: a.depth === 1 ? [a.wallet, s.address] : [a.wallet, a.via ?? "?", s.address],
+            path: a.pathChain.length > 0 ? a.pathChain : [a.wallet, a.via ?? "?", s.address],
           })),
         }));
 
@@ -3603,7 +3696,7 @@ export default function WalletDetail() {
               </button>
             </div>
             <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
-              Deep convergence detection: maps depth-2 connections for every tracked wallet and surfaces shared private intermediaries, common funneling hubs, and exchange outflows — private/exchange strictly separated. Click{" "}
+              Deep convergence detection: maps up to depth-4 connections for every tracked wallet and surfaces shared private intermediaries, common funneling hubs, and exchange outflows — private/exchange strictly separated. Click{" "}
               <span className="text-yellow-400 font-bold">TRACK</span>
               {" "}on any counterparty row to add wallets here — or paste addresses manually.
             </p>
@@ -3760,7 +3853,7 @@ export default function WalletDetail() {
                       </div>
                       {privNodes.length === 0 ? (
                         <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
-                          No private convergence points. Wallets do not share private intermediaries within depth-2. Try adding more wallets or loading additional TX history.
+                          No private convergence points found within depth-4. Try adding more wallets or loading additional TX history.
                         </p>
                       ) : (
                         <div className="space-y-2">

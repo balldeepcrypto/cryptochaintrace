@@ -1,0 +1,36 @@
+FINAL COMBINED FIX + NEW FEATURE — Commingle Check, Investigative Report, Trace to Origin, and ALL reports (apply to EVERY blockchain, especially DAG):
+
+1. STRICT PRIVATE-ONLY COMMINGLING RULES (enforce this without exception)
+   - "PRIVATE WALLET CONNECTIONS" section must contain ONLY private wallets.
+   - For DAG: Team/Stardust/Treasury/DOR wallets count as private but must be clearly labeled (e.g. [Stardust Team]).
+   - Completely exclude wallet DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz from all commingling.
+   - **NO** known exchange, custodial, bridge, Base, or official hot wallet (Gate.io, KuCoin, MEXC, Uphold, etc.) is allowed in any private path or tier.
+
+2. DEDICATED EXCHANGE SECTION (bottom of every report)
+   - ALL exchange/bridge/Base flows go here ONLY.
+   - Show EVERY single in/out transaction with full details: From → To, amount (+/- and USD), full TX hash, date/time UTC, memo/tag.
+   - Force Uphold DAG wallet (DAG1pLpkyX7aTtFZtbF98kgA9QTZRzrsGaFmf4BT) to always be labeled "[Uphold DAG]" and appear here whenever there is any activity.
+
+3. FULL DETAILED TRAILS FOR EVERY HOP
+   - In private sections, show complete end-to-end trails for every connection.
+   - For EVERY hop show: "From: [exact wallet] → To: [exact wallet]" with the most significant transaction details:
+     • Amount (+/- and USD)
+     • Full TX hash
+     • Date/time (UTC)
+     • Memo / Destination Tag (if present)
+   - Never use "trace separately" — show full details inline for all hops.
+
+4. NEW FEATURE: MULTI-WALLET INTERSECTION / FUNNEL ANALYSIS
+   - Add new button/tab in wallet profile header: "INTERSECTION / FUNNEL ANALYSIS".
+   - User can input 2 or more starting wallets (e.g. theft wallet + suspicious wallet).
+   - Perform deep outward graph analysis (up to 4 hops/layers) on ALL starting wallets simultaneously.
+   - Detect and highlight convergence/funneling patterns: paths from different starting wallets that meet at the same intermediate private wallets or mixing hubs after multiple layers.
+   - Show clear visual paths and full transaction details from each starting wallet through every hop to the common meeting point(s).
+   - Use the same private-only + exchange separation rules as above.
+
+Apply these rules to Commingle Check, Investigative Report, Trace to Origin, and any other report.  
+Improve PDF styling (professional headers, spacing, page breaks, clean layout).
+
+Keep ALL existing features 100% intact.
+
+Push to GitHub when complete.

@@ -902,15 +902,18 @@ export default function WalletDetail() {
               } else {
                 lines.push(`       Most Significant Transactions (target ↔ ${hopShort}): none in loaded history`);
               }
-              // For 3+ hop paths, note segments requiring separate investigation
+              // For 3+ hop paths, show each intermediate segment clearly.
+              // TX data for intermediate hops is between other wallets (not target),
+              // so it is not in allTxs — but we show the full hop structure.
               if (f.targetPath.length > 2) {
                 lines.push("");
+                lines.push(`       Intermediate Hops (full path to shared node):`);
                 for (let h = 1; h < f.targetPath.length - 1; h++) {
                   const fa = f.targetPath[h]; const ta = f.targetPath[h + 1];
                   const fKn = KNOWN_LABELS[fa]; const tKn = KNOWN_LABELS[ta];
-                  const fs  = fa.length > 16 ? `${fa.slice(0, 8)}…${fa.slice(-4)}` : fa;
-                  const ts  = ta.length > 16 ? `${ta.slice(0, 8)}…${ta.slice(-4)}` : ta;
-                  lines.push(`       Transactions — Hop ${h + 1}  (${fs}${fKn ? ` [${fKn.label}]` : ""} → ${ts}${tKn ? ` [${tKn.label}]` : ""}): trace ${fs} separately`);
+                  lines.push(`       Hop ${h + 1}:  ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
+                  lines.push(`              →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
+                  lines.push(`              (TX data for this segment: load ${fa.slice(0, 8)}…${fa.slice(-4)}'s wallet profile)`);
                 }
               }
             }
@@ -991,12 +994,13 @@ export default function WalletDetail() {
               }
               if (f.targetPath.length > 2) {
                 lines.push("");
+                lines.push(`       Intermediate Hops (full path to shared node):`);
                 for (let h = 1; h < f.targetPath.length - 1; h++) {
                   const fa = f.targetPath[h]; const ta = f.targetPath[h + 1];
                   const fKn = KNOWN_LABELS[fa]; const tKn = KNOWN_LABELS[ta];
-                  const fs = fa.length > 16 ? `${fa.slice(0, 8)}…${fa.slice(-4)}` : fa;
-                  const ts = ta.length > 16 ? `${ta.slice(0, 8)}…${ta.slice(-4)}` : ta;
-                  lines.push(`       Transactions — Hop ${h + 1}  (${fs}${fKn ? ` [${fKn.label}]` : ""} → ${ts}${tKn ? ` [${tKn.label}]` : ""}): trace ${fs} separately`);
+                  lines.push(`       Hop ${h + 1}:  ${fa}${fKn ? `  [${fKn.label}]` : ""}`);
+                  lines.push(`              →  ${ta}${tKn ? `  [${tKn.label}]` : ""}`);
+                  lines.push(`              (TX data for this segment: load ${fa.slice(0, 8)}…${fa.slice(-4)}'s wallet profile)`);
                 }
               }
             }
@@ -1207,16 +1211,15 @@ export default function WalletDetail() {
     lines.push(`╚══════════════════════════════════════════════════════════════╝`);
     lines.push(`Generated    : ${now}`);
     lines.push(`Chain        : ${chainUp}`);
-    lines.push(`Primary      : ${multiResult.trackedWallets[0]}`);
-    multiResult.trackedWallets.slice(1).forEach((w, i) => {
+    multiResult.trackedWallets.forEach((w, i) => {
       const kn = KNOWN_LABELS[w];
-      lines.push(`Wallet ${String(i + 2).padStart(2, " ")}    : ${w}${kn ? `  [${kn.label}]` : ""}`);
+      lines.push(`Wallet ${String(i + 1).padStart(2, " ")}    : ${w}${kn ? `  [${kn.label}]` : ""}`);
     });
     lines.push(`Total Wallets: ${multiResult.trackedWallets.length}`);
     lines.push(`Depth        : up to 4 hops from each wallet (connections graph)`);
     lines.push(sep());
-    lines.push(`NOTE: TX details from primary wallet's loaded history only.`);
-    lines.push(`      Additional wallets show edge-level counts from graph analysis.`);
+    lines.push(`NOTE: TX details are from the currently-loaded wallet's transaction history.`);
+    lines.push(`      All wallets are treated equally — no single wallet is the "primary".`);
     lines.push(`      Load full TX history on each wallet for complete transaction records.`);
 
     // ── § 1 — Private Convergence Points ──────────────────────────────────────
@@ -2264,20 +2267,35 @@ export default function WalletDetail() {
     const buildReachMap = async (wallet: string, label: string): Promise<ReachMap> => {
       const reach: ReachMap = new Map();
 
+      // Hard-excluded: never add to reach map, never expand from.
+      const HARD_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
+
+      // Nodes that should appear in the reach map (for exchange-flow detection) but
+      // must NEVER be used as expansion seeds — prevents exchange hot wallets from
+      // injecting their thousands of counterparties as false "private" connections.
+      const isExpandable = (addr: string): boolean => {
+        if (HARD_EXCL.has(addr)) return false;
+        const kn = KNOWN_LABELS[addr];
+        if (!kn) return true;                     // unknown private wallet — expand
+        if (kn.type === "dag-team") return true;  // DAG official entity — expand (counts as private)
+        return false;                             // exchange / bridge / genesis — DO NOT expand
+      };
+
       setCommingleProgress(`${label}: tier 1…`);
       const d1 = await fetchConns(wallet);
-      const tier1 = d1.nodes.filter((n) => n.address !== wallet).slice(0, 12);
+      const tier1 = d1.nodes.filter((n) => n.address !== wallet && !HARD_EXCL.has(n.address)).slice(0, 12);
       for (const n of tier1) {
         const edge = d1.edges.find((e) => (e.from === wallet && e.to === n.address) || (e.to === wallet && e.from === n.address));
         reach.set(n.address, { path: [wallet, n.address], tier: 1, txCount: edge?.transactionCount ?? 0 });
       }
 
       setCommingleProgress(`${label}: tier 2…`);
-      const t2expand = tier1.slice(0, 6);
+      // Only expand from private/dag-team tier-1 nodes — never from exchange/bridge/genesis.
+      const t2expand = tier1.filter((n) => isExpandable(n.address)).slice(0, 6);
       const d2results = await Promise.all(t2expand.map((n) => fetchConns(n.address)));
       for (let i = 0; i < t2expand.length; i++) {
         const parent = t2expand[i];
-        for (const n of d2results[i].nodes.filter((x) => x.address !== parent.address && x.address !== wallet).slice(0, 8)) {
+        for (const n of d2results[i].nodes.filter((x) => x.address !== parent.address && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 8)) {
           if (!reach.has(n.address)) {
             const edge = d2results[i].edges.find((e) => (e.from === parent.address && e.to === n.address) || (e.to === parent.address && e.from === n.address));
             reach.set(n.address, { path: [wallet, parent.address, n.address], tier: 2, txCount: edge?.transactionCount ?? 0 });
@@ -2286,12 +2304,13 @@ export default function WalletDetail() {
       }
 
       setCommingleProgress(`${label}: tier 3…`);
-      const tier2nodes = Array.from(reach.entries()).filter(([, v]) => v.tier === 2).slice(0, 4);
+      // Only expand from private/dag-team tier-2 nodes.
+      const tier2nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 2 && isExpandable(addr)).slice(0, 4);
       if (tier2nodes.length > 0) {
         const d3results = await Promise.all(tier2nodes.map(([a]) => fetchConns(a)));
         for (let i = 0; i < tier2nodes.length; i++) {
           const [parentAddr, parentData] = tier2nodes[i];
-          for (const n of d3results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet).slice(0, 6)) {
+          for (const n of d3results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 6)) {
             if (!reach.has(n.address)) {
               const edge = d3results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
               reach.set(n.address, { path: [...parentData.path, n.address], tier: 3, txCount: edge?.transactionCount ?? 0 });
@@ -2301,12 +2320,13 @@ export default function WalletDetail() {
       }
 
       setCommingleProgress(`${label}: tier 4…`);
-      const tier3nodes = Array.from(reach.entries()).filter(([, v]) => v.tier === 3).slice(0, 3);
+      // Only expand from private/dag-team tier-3 nodes.
+      const tier3nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 3 && isExpandable(addr)).slice(0, 3);
       if (tier3nodes.length > 0) {
         const d4results = await Promise.all(tier3nodes.map(([a]) => fetchConns(a)));
         for (let i = 0; i < tier3nodes.length; i++) {
           const [parentAddr, parentData] = tier3nodes[i];
-          for (const n of d4results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet).slice(0, 5)) {
+          for (const n of d4results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 5)) {
             if (!reach.has(n.address)) {
               const edge = d4results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
               reach.set(n.address, { path: [...parentData.path, n.address], tier: 4, txCount: edge?.transactionCount ?? 0 });
@@ -2348,7 +2368,13 @@ export default function WalletDetail() {
 
       findings.sort((a, b) => {
         if (a.tier !== b.tier) return a.tier - b.tier;
-        const rank = (f: CommingleFinding) => f.knownInfo?.type === "exchange" ? 0 : f.knownInfo ? 1 : 2;
+        // Unknown private wallets first (rank 0), dag-team second (rank 1),
+        // exchange/bridge/genesis last (rank 2) — they appear in a separate section anyway.
+        const rank = (f: CommingleFinding) => {
+          if (!f.knownInfo) return 0;
+          if (f.knownInfo.type === "dag-team") return 1;
+          return 2; // exchange / bridge / genesis
+        };
         if (rank(a) !== rank(b)) return rank(a) - rank(b);
         return b.txCountTarget - a.txCountTarget;
       });

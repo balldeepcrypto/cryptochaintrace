@@ -17,6 +17,7 @@ import {
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
   AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Check, Heart, MessageSquare,
   Plus, GitMerge, Layers, Flag, FileText, MousePointer2, Download, FileJson,
+  Landmark, Star,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -1324,6 +1325,129 @@ export default function WalletDetail() {
     return lines.join("\n");
   }
 
+  // ── EXCHANGE FLOWS REPORT — all IN/OUT TXs touching known exchanges/bridges ──
+  function generateExchangeFlowsReport(): string {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const chainUp = chain.toUpperCase();
+    const rule = "─".repeat(64);
+    const dbl  = "═".repeat(64);
+    const sep  = (label = "") => label
+      ? `\n─── ${label} ${"─".repeat(Math.max(0, 58 - label.length))}`
+      : rule;
+    const fmtDate = (ts: string) =>
+      ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
+    const fmtAmt = (v: string | number, dir: string) => {
+      const n = typeof v === "number" ? v : parseFloat(v as string);
+      if (!isFinite(n)) return (dir === "in" ? "+" : "−") + "0.0000";
+      const abs = Math.abs(n);
+      const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      return (dir === "in" ? "+" : "−") + abs.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    };
+
+    const lines: string[] = [];
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║      EXCHANGE FLOWS REPORT — CryptoChainTrace               ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`Generated    : ${now}`);
+    lines.push(`Chain        : ${chainUp}`);
+    lines.push(`Target       : ${address}`);
+    lines.push(`Loaded TXs   : ${allTxs.length.toLocaleString()}`);
+    lines.push(rule);
+    lines.push(`NOTE: Shows every transaction from/to a known exchange, bridge, or`);
+    lines.push(`      official protocol address. Private wallets are excluded.`);
+    lines.push(`      Load full transaction history before running for complete coverage.`);
+    lines.push("");
+
+    // Determine if an address is an exchange/bridge/genesis that should appear in this report
+    const isExchType = (t?: string) =>
+      t === "exchange" || t === "bridge" || t === "genesis";
+
+    // Group TXs by exchange counterparty
+    const exchTxMap = new Map<string, typeof allTxs>();
+    for (const tx of allTxs) {
+      const counterparty = tx.direction === "in" ? tx.from : tx.to;
+      if (!counterparty) continue;
+      const kn = KNOWN_LABELS[counterparty];
+      if (!kn || !isExchType(kn.type)) continue;
+      if (!exchTxMap.has(counterparty)) exchTxMap.set(counterparty, []);
+      exchTxMap.get(counterparty)!.push(tx);
+    }
+
+    if (exchTxMap.size === 0) {
+      lines.push(`  No exchange, bridge, or protocol transactions found in the`);
+      lines.push(`  ${allTxs.length.toLocaleString()} loaded transactions.`);
+      lines.push(`  Load full transaction history and re-run for complete coverage.`);
+    } else {
+      // Uphold DAG always first; then sort by label
+      const UPHOLD_DAG = "DAG1pLpkyX7aTtFZtbF98kgA9QTZRzrsGaFmf4BT";
+      const entries = Array.from(exchTxMap.entries()).sort(([a], [b]) => {
+        if (a === UPHOLD_DAG) return -1;
+        if (b === UPHOLD_DAG) return 1;
+        return (KNOWN_LABELS[a]?.label ?? a).localeCompare(KNOWN_LABELS[b]?.label ?? b);
+      });
+
+      const totalTxs = entries.reduce((s, [, v]) => s + v.length, 0);
+      lines.push(`  Found: ${entries.length} exchange/protocol address${entries.length !== 1 ? "es" : ""} with activity`);
+      lines.push(`  Total exchange TXs: ${totalTxs.toLocaleString()}`);
+
+      for (const [addr, txs] of entries) {
+        const kn = KNOWN_LABELS[addr];
+        const typeTag = kn?.type === "bridge" ? "BRIDGE" : kn?.type === "genesis" ? "PROTOCOL" : "EXCHANGE";
+        const headerLabel = `[${(kn?.label ?? addr).toUpperCase()}]  ◄ ${typeTag} FLOW`;
+        lines.push(sep(headerLabel));
+        lines.push(`  Address : ${addr}`);
+        lines.push(`  Type    : ${typeTag} · ${kn?.label ?? "Unknown"}`);
+
+        const inTxs  = txs.filter(t => t.direction === "in");
+        const outTxs = txs.filter(t => t.direction === "out");
+        const totalIn  = inTxs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const totalOut = outTxs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        lines.push(`  IN  TXs : ${inTxs.length}   Total Received : +${totalIn.toFixed(4)} ${chainUp}`);
+        lines.push(`  OUT TXs : ${outTxs.length}   Total Sent     : −${totalOut.toFixed(4)} ${chainUp}`);
+        lines.push("");
+
+        const sorted = [...txs].sort((a, b) =>
+          new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime()
+        );
+        sorted.forEach((tx, i) => {
+          const isLast = i === sorted.length - 1;
+          const conn    = isLast ? "└─" : "├─";
+          const childPx = isLast ? "   " : "│  ";
+          const dir = tx.direction === "in" ? "IN " : "OUT";
+          const asset = (tx as typeof tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
+          const usd = tx.valueUsd && tx.valueUsd > 0
+            ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+            : "";
+          lines.push(`${conn} [${dir}]  From: ${tx.from ?? "—"}`);
+          lines.push(`${childPx}         To  : ${tx.to   ?? "—"}`);
+          lines.push(`${childPx}  Amount : ${fmtAmt(tx.value, tx.direction)} ${asset}${usd}`);
+          lines.push(`${childPx}  TX     : ${tx.hash ?? "(no hash)"}`);
+          lines.push(`${childPx}  Date   : ${fmtDate(tx.timestamp ?? "")}`);
+          if ((tx as typeof tx & { destinationTag?: number | null }).destinationTag != null)
+            lines.push(`${childPx}  ↳ Destination Tag : ${(tx as typeof tx & { destinationTag?: number | null }).destinationTag}`);
+          if (tx.memo) lines.push(`${childPx}  ↳ Memo : ${tx.memo}`);
+          if (!isLast) lines.push(childPx);
+        });
+        lines.push("");
+      }
+    }
+
+    lines.push(sep("INVESTIGATIVE SUMMARY"));
+    if (exchTxMap.size > 0) {
+      lines.push(`  Exchange activity detected on this wallet.`);
+      lines.push(`  File subpoena / KYC requests with each listed exchange to obtain`);
+      lines.push(`  account-holder identity, IP logs, and transaction records.`);
+      lines.push(`  Exchange addresses, TX hashes, and dates are documented above.`);
+    } else {
+      lines.push(`  No exchange transactions found in ${allTxs.length.toLocaleString()} loaded TXs.`);
+      lines.push(`  Load full transaction history for complete coverage.`);
+    }
+    lines.push("");
+    lines.push(dbl);
+    lines.push("Generated by CryptoChainTrace  ·  cryptochaintrace.replit.app");
+    return lines.join("\n");
+  }
+
   // Commit new pagination data: sort newest-first, mutate the ref, trigger re-render.
   function commit(txs: Tx[], cursor: string | null, more: boolean) {
     const sorted = [...txs].sort(
@@ -2511,6 +2635,21 @@ export default function WalletDetail() {
             </Button>
             <Button
               variant="outline"
+              className="font-mono text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/30 hover:border-emerald-500/70 hover:text-emerald-300"
+              title="Generate a report of all exchange, bridge, and protocol transactions"
+              onClick={() => {
+                const rpt = generateExchangeFlowsReport();
+                const title = `Exchange Flows Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
+                setReportContent(rpt);
+                setReportTitle(title);
+                setReportJsonData({ reportType: "exchange-flows", generatedAt: new Date().toISOString(), chain, subjectAddress: address, walletInfo: wallet, selectedAddresses: [], reportText: rpt });
+                setShowReportModal(true);
+              }}
+            >
+              <Landmark className="w-3.5 h-3.5 mr-1.5" /> EXCHANGE FLOWS
+            </Button>
+            <Button
+              variant="outline"
               className="font-mono text-xs border-purple-500/30 text-purple-400 hover:bg-purple-950/30 hover:border-purple-500/60"
               onClick={() => {
                 try {
@@ -2868,11 +3007,23 @@ export default function WalletDetail() {
                         <td className="px-5 py-3 text-right">
                           <div className="flex items-center gap-1.5 justify-end">
                             <button
+                              onClick={(e) => { e.stopPropagation(); toggleSavedWallet(row.address); }}
+                              className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap flex items-center gap-1 ${
+                                savedWallets.has(row.address)
+                                  ? "text-yellow-300 border-yellow-400/60 bg-yellow-950/30 hover:bg-yellow-950/50"
+                                  : "text-yellow-600 border-yellow-600/40 bg-yellow-950/10 hover:text-yellow-300 hover:border-yellow-400/60 hover:bg-yellow-950/30"
+                              }`}
+                              title={savedWallets.has(row.address) ? "Remove from Watchlist" : "Save to Watchlist"}
+                            >
+                              <Star className={`w-3 h-3 ${savedWallets.has(row.address) ? "fill-yellow-300 text-yellow-300" : "text-yellow-600"}`} />
+                              {savedWallets.has(row.address) ? "SAVED" : "WATCHLIST"}
+                            </button>
+                            <button
                               onClick={(e) => { e.stopPropagation(); toggleTracked(row.address); }}
                               className={`text-[10px] font-mono px-2 py-0.5 rounded border transition-colors whitespace-nowrap flex items-center gap-1 ${
                                 multiWallets.includes(row.address)
-                                  ? "text-yellow-400 border-yellow-500/40 bg-yellow-950/20 hover:bg-yellow-950/40"
-                                  : "text-muted-foreground border-border/30 hover:text-yellow-400 hover:border-yellow-500/40"
+                                  ? "text-sky-400 border-sky-500/40 bg-sky-950/20 hover:bg-sky-950/40"
+                                  : "text-muted-foreground border-border/30 hover:text-sky-400 hover:border-sky-500/40"
                               }`}
                               title={multiWallets.includes(row.address) ? "Remove from Multi-Wallet Analysis" : "Add to Multi-Wallet Analysis"}
                             >

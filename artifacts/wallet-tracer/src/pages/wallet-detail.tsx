@@ -204,6 +204,8 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG7xJEbxJmZeJJC6jqfLHQd7JPRf5WmKrJqSvLo: { label: "Bitrue DAG 2",     type: "exchange" },
   DAG4PKqJ68MYKB9bPicGfzUbH3nqmz4q5H6YJZYM: { label: "Poloniex DAG",     type: "exchange" },
   DAG2NuRbQp3vX3X6p4bRKQ2TKe8vHXPqbq9xXGEd: { label: "LBank DAG",        type: "exchange" },
+  // High-traffic custodial / exchange intermediary confirmed by intersection analysis
+  DAG45C9RJb66ZsFq3o5o5QPeUp4UpeF5g3mp7TNN: { label: "DAG Exchange Intermediary", type: "exchange" },
 };
 
 const EXPLORER_MAP: Record<string, (h: string) => string> = {

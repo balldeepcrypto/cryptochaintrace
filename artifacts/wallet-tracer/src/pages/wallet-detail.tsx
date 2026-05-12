@@ -690,23 +690,31 @@ export default function WalletDetail() {
         .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
         .slice(0, limit);
 
-    // Emit a mini TX tree indented by `pad`
+    // Emit a detailed TX block — each TX shows explicit From → To addresses,
+    // then Amount / full TX hash / Date on separate indented lines.
     const emitTxs = (txs: Tx[], pad: string) => {
       if (txs.length === 0) return;
       lines.push(`${pad}│`);
       txs.forEach((tx, ti) => {
-        const isLast = ti === txs.length - 1;
-        const conn     = isLast ? "└──" : "├──";
+        const isLast   = ti === txs.length - 1;
+        const conn     = isLast ? "└─" : "├─";
         const childPfx = isLast ? "   " : "│  ";
-        const dir   = tx.direction === "in" ? "IN " : "OUT";
-        const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
-        const asset = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
-        const usd   = tx.valueUsd > 0
+        const dir      = tx.direction === "in" ? "IN " : "OUT";
+        const amt      = fmtAmt(tx.value, tx.direction as "in" | "out");
+        const asset    = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
+        const usd      = tx.valueUsd > 0
           ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
           : "";
-        lines.push(`${pad}${conn} ${dir}  (TX: ${tx.hash || "(none)"})  ${amt} ${asset}${usd}  ${fmtDate(tx.timestamp || "")}`);
-        if (tx.destinationTag != null) lines.push(`${pad}${childPfx}   ↳ Destination Tag : ${tx.destinationTag}`);
-        if (tx.memo)                   lines.push(`${pad}${childPfx}   ↳ Memo            : ${tx.memo}`);
+        const fromAddr = tx.from || "—";
+        const toAddr   = tx.to   || "—";
+        // Line 1: direction tag + explicit From → To (who sent to whom)
+        lines.push(`${pad}${conn} [${dir}]  From: ${fromAddr} → To: ${toAddr}`);
+        // Lines 2-4: amount, full tx hash, timestamp
+        lines.push(`${pad}${childPfx}  Amount: ${amt} ${asset}${usd}`);
+        lines.push(`${pad}${childPfx}  TX    : ${tx.hash || "(none)"}`);
+        lines.push(`${pad}${childPfx}  Date  : ${fmtDate(tx.timestamp || "")}`);
+        if (tx.destinationTag != null) lines.push(`${pad}${childPfx}  ↳ Destination Tag : ${tx.destinationTag}`);
+        if (tx.memo)                   lines.push(`${pad}${childPfx}  ↳ Memo            : ${tx.memo}`);
       });
     };
 

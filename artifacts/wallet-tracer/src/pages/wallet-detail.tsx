@@ -683,7 +683,10 @@ export default function WalletDetail() {
     // Return up to `limit` txs from allTxs where counterparty == addr
     const sampleTxsFor = (addr: string, limit = 3) =>
       allTxs
-        .filter((t) => (t.direction === "in" ? t.from : t.to) === addr)
+        .filter((t) =>
+          (t.direction === "in" ? t.from : t.to) === addr &&
+          (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
+        )
         .slice(0, limit);
 
     // Emit a mini TX tree indented by `pad`
@@ -713,6 +716,7 @@ export default function WalletDetail() {
       lines.push(`Comparison ${i + 1} : ${w}`);
     });
     lines.push(`Depth        : 4 tiers   |   Nodes Scanned: ${commingleResult.totalScanned}`);
+    lines.push(`Min Tx Amount: ${commingleMinAmount <= 0 ? "None (all transactions included)" : `${commingleMinAmount} ${chainUp} (dust/spam/fees filtered out)`}`);
     lines.push("");
 
     const { findings, tieredCounts } = commingleResult;
@@ -867,6 +871,8 @@ export default function WalletDetail() {
   const [commingleError, setCommingleError] = useState<string | null>(null);
   const [commingleReportCopied, setCommingleReportCopied] = useState(false);
   const [commingleToast, setCommingleToast] = useState<string | null>(null);
+  const [commingleMinAmount, setCommingleMinAmount] = useState(1.0);
+  const [commingleMinAmountInput, setCommingleMinAmountInput] = useState("1");
   const comminglePanelRef = useRef<HTMLDivElement>(null);
 
   const addToCommingle = useCallback((addr: string) => {
@@ -3530,19 +3536,46 @@ export default function WalletDetail() {
             <div className="divide-y divide-border/20">
 
               {/* ── Generate report bar ── */}
-              <div className="px-5 py-3 bg-amber-950/20 border-b border-amber-500/20 flex items-center justify-between gap-3 flex-wrap">
-                <div className="flex items-center gap-3 flex-wrap">
-                  <div className="text-xs font-mono text-amber-300/80">
-                    Scan complete · {commingleResult.findings.length} shared nodes · {commingleResult.totalScanned} addresses mapped
+              <div className="px-5 py-3 bg-amber-950/20 border-b border-amber-500/20 flex flex-col gap-2.5">
+                {/* Row 1: scan summary + MIN AMOUNT + GENERATE */}
+                <div className="flex items-center justify-between gap-3 flex-wrap">
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <div className="text-xs font-mono text-amber-300/80">
+                      Scan complete · {commingleResult.findings.length} shared nodes · {commingleResult.totalScanned} addresses mapped
+                    </div>
+                    {commingleResult.tieredCounts[0] > 0 && (
+                      <span className="flex items-center gap-1 text-[10px] font-mono text-red-300 bg-red-950/50 border border-red-500/30 px-2 py-0.5 rounded font-bold">
+                        <AlertTriangle className="w-2.5 h-2.5" /> {commingleResult.tieredCounts[0]} DIRECT MATCH{commingleResult.tieredCounts[0] !== 1 ? "ES" : ""}
+                      </span>
+                    )}
                   </div>
-                  {commingleResult.tieredCounts[0] > 0 && (
-                    <span className="flex items-center gap-1 text-[10px] font-mono text-red-300 bg-red-950/50 border border-red-500/30 px-2 py-0.5 rounded font-bold">
-                      <AlertTriangle className="w-2.5 h-2.5" /> {commingleResult.tieredCounts[0]} DIRECT MATCH{commingleResult.tieredCounts[0] !== 1 ? "ES" : ""}
-                    </span>
-                  )}
                 </div>
-                <button
-                  onClick={() => {
+                {/* Row 2: MIN AMOUNT filter + GENERATE button */}
+                <div className="flex items-center gap-3 flex-wrap">
+                  <span className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider shrink-0">Min Amount:</span>
+                  <input
+                    type="number"
+                    min="0"
+                    step="0.1"
+                    value={commingleMinAmountInput}
+                    onChange={(e) => {
+                      setCommingleMinAmountInput(e.target.value);
+                      const v = parseFloat(e.target.value);
+                      if (!isNaN(v) && v >= 0) setCommingleMinAmount(v);
+                    }}
+                    onBlur={() => {
+                      const v = parseFloat(commingleMinAmountInput);
+                      if (isNaN(v) || v < 0) { setCommingleMinAmountInput("1"); setCommingleMinAmount(1); }
+                    }}
+                    className="w-20 bg-muted/20 border border-amber-500/30 focus:border-amber-400/60 rounded px-2 py-1 text-xs font-mono text-amber-200 outline-none transition-colors"
+                  />
+                  <span className="text-[10px] font-mono text-amber-300/60 shrink-0">{(commingleResult?.chain ?? chain).toUpperCase()}</span>
+                  <span className="text-[10px] font-mono text-muted-foreground/60">
+                    {commingleMinAmount <= 0 ? "showing all transactions" : "dust & fees excluded"}
+                  </span>
+                  <button
+                    className="ml-auto flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-amber-600 hover:bg-amber-500 border border-amber-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
+                    onClick={() => {
                     const rpt = generateCommingleReport();
                     const title = `Commingle Check Report — ${(commingleResult?.chain ?? chain).toUpperCase()} — ${(commingleResult?.targetWallet ?? address).slice(0, 12)}`;
                     setReportContent(rpt);
@@ -3550,7 +3583,10 @@ export default function WalletDetail() {
                     const enrichedFindings = (commingleResult?.findings ?? []).map((f) => ({
                       ...f,
                       sampleTransactions: allTxs
-                        .filter((t) => (t.direction === "in" ? t.from : t.to) === f.sharedAddress)
+                        .filter((t) =>
+                          (t.direction === "in" ? t.from : t.to) === f.sharedAddress &&
+                          (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
+                        )
                         .slice(0, 5)
                         .map((t) => ({
                           hash: t.hash,
@@ -3564,11 +3600,11 @@ export default function WalletDetail() {
                     setReportJsonData({ reportType: "commingle", generatedAt: new Date().toISOString(), ...commingleResult, findings: enrichedFindings, reportText: rpt });
                     setShowReportModal(true);
                   }}
-                  className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-amber-600 hover:bg-amber-500 border border-amber-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
                 >
                   <FileText className="w-3.5 h-3.5" /> GENERATE REPORT
                 </button>
               </div>
+            </div>
 
               {/* ── Tier badges summary ── */}
               <div className="px-5 py-3 flex items-center gap-4 flex-wrap bg-muted/5">

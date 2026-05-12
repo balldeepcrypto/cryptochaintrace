@@ -552,29 +552,67 @@ export default function WalletDetail() {
       }
     }
 
-    // Exchange layer
-    const exchangeAddrs = addrs.filter(a => KNOWN_LABELS[a]?.type === "exchange");
-    if (exchangeAddrs.length > 0) {
-      lines.push(sep("EXCHANGE ON-RAMPS & CUSTODIAL LAYER"));
+    // Exchange / Custodial / Bridge / Official flows:
+    // Union of (a) selected wallets that are known exchanges, and
+    // (b) any known exchange address that appears in allTxs but wasn't explicitly selected.
+    const selectedExchSet = new Set(addrs.filter(a =>
+      ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[a]?.type ?? "")
+    ));
+    const txOnlyExchAddrs = Object.keys(KNOWN_LABELS).filter(a => {
+      const t = KNOWN_LABELS[a]?.type;
+      if (!t || !["exchange", "bridge", "genesis"].includes(t)) return false;
+      if (selectedExchSet.has(a)) return false;
+      return allTxs.some(tx => (tx.direction === "in" ? tx.from : tx.to) === a);
+    });
+    const allExchangeAddrs = [...Array.from(selectedExchSet), ...txOnlyExchAddrs];
+    lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
+    lines.push("");
+    if (allExchangeAddrs.length === 0) {
+      lines.push("  No exchange, bridge, or official flows detected in loaded history.");
       lines.push("");
-      lines.push("  CONFIRMED CUSTODIAL / EXCHANGE WALLETS:");
-      for (const addr of exchangeAddrs) {
-        const known = KNOWN_LABELS[addr]!;
-        const rows = byAddr.get(addr)!;
-        const totalTxs = rows.reduce((s, r) => s + r.txCount, 0);
-        const totalVal = rows.reduce((s, r) => s + r.totalValue, 0);
-        const sampleTx = allTxs.find(t => (t.direction === "in" ? t.from : t.to) === addr);
-        const memos    = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.memo).map(t => t.memo!).slice(0, 5);
-        const destTags = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr && t.destinationTag != null).map(t => t.destinationTag!).slice(0, 5);
-        lines.push("");
+    } else {
+      for (const addr of allExchangeAddrs) {
+        const known     = KNOWN_LABELS[addr]!;
+        const isBridge  = known.type === "bridge";
+        const isGenesis = known.type === "genesis";
+        const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
+        const txsForAddr = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr);
+        const totalTxs  = txsForAddr.length;
+        const totalVal  = txsForAddr.reduce((s, t) => s + parseFloat(t.value || "0"), 0);
+        const memos     = txsForAddr.filter(t => t.memo).map(t => t.memo!).slice(0, 5);
+        const destTags  = txsForAddr.filter(t => t.destinationTag != null).map(t => t.destinationTag!).slice(0, 5);
+        const bestIn    = txsForAddr.filter(t => t.direction === "in").sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+        const bestOut   = txsForAddr.filter(t => t.direction === "out").sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+        const bestTxs   = [bestIn, bestOut].filter(Boolean) as Tx[];
+        const addrShort = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr;
         lines.push(`  ├── ${addr}`);
-        lines.push(`  │       ◄ OFFICIAL ${known.label.toUpperCase()} COLDWALLET`);
-        lines.push(`  │       Txs: ${totalTxs.toLocaleString("en-US")}  |  Total: ${fmtVal(totalVal)} ${chainUp}`);
-        if (sampleTx) lines.push(`  │       Sample TX : ${sampleTx.hash}`);
+        lines.push(`  │       ${flowTag}  ${known.label.toUpperCase()}`);
+        lines.push(`  │       Txs in loaded history: ${totalTxs}  |  Total: ${fmtVal(totalVal)} ${chainUp}`);
         if (destTags.length > 0) lines.push(`  │       ↳ Destination Tags (subpoena): ${destTags.join("  |  ")}`);
         if (memos.length > 0)    lines.push(`  │       ↳ Memos         (subpoena): ${memos.join("  |  ")}`);
+        if (bestTxs.length > 0) {
+          lines.push(`  │       Most Significant Transactions (target ↔ ${addrShort}):`);
+          bestTxs.forEach(t => {
+            const n   = parseFloat(t.value);
+            const abs = Math.abs(n);
+            const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+            const sign = t.direction === "in" ? "+" : "−";
+            const amt  = `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })} ${chainUp}`;
+            const dir  = t.direction === "in" ? "[IN ]" : "[OUT]";
+            const from = t.direction === "in" ? (t.from ?? "—") : address;
+            const to   = t.direction === "in" ? address : (t.to ?? "—");
+            lines.push(`  │         ${dir}  From: ${from}`);
+            lines.push(`  │                →  To: ${to}`);
+            lines.push(`  │               TX    : ${t.hash ?? "—"}`);
+            lines.push(`  │               Amount: ${amt}`);
+            if (t.timestamp) lines.push(`  │               Date  : ${t.timestamp.replace("T", " ").slice(0, 16)} UTC`);
+            if (t.memo)      lines.push(`  │               Memo  : ${t.memo}`);
+          });
+        } else {
+          lines.push(`  │       Transactions: none in loaded history`);
+        }
+        lines.push("");
       }
-      lines.push("");
     }
 
     lines.push("═".repeat(64));
@@ -983,44 +1021,88 @@ export default function WalletDetail() {
 
       // ── Consolidated Exchange / Custodial / Bridge / Official flows ────────────
       const allExchFindings = [...t1exch, ...t2exch, ...t3exch, ...t4exch];
+      // Also scan allTxs for DIRECT exchange outflows: known exchange addresses that appear
+      // as counterparties in the target wallet's transactions but are NOT already detected
+      // as shared commingling nodes (i.e. only the target wallet transacts with them).
+      const commingledExchAddrs = new Set(allExchFindings.map(f => f.sharedAddress));
+      const directExchFlows: Array<{ addr: string; known: { label: string; type: string }; txs: Tx[] }> = [];
+      for (const [addr, info] of Object.entries(KNOWN_LABELS)) {
+        if (!["exchange", "bridge", "genesis"].includes(info.type)) continue;
+        if (commingledExchAddrs.has(addr)) continue;
+        if (EXCLUDED_ADDRS.has(addr)) continue;
+        const txs = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr);
+        if (txs.length > 0) directExchFlows.push({ addr, known: info, txs });
+      }
       lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
-      if (allExchFindings.length === 0) {
+      lines.push("");
+      if (allExchFindings.length === 0 && directExchFlows.length === 0) {
         lines.push("  No exchange, bridge, or official flows detected.");
-        lines.push("  Neither wallet routes funds through any known exchange, custodian,");
-        lines.push("  bridge, or official protocol node within 4 tiers of separation.");
+        lines.push("  The target wallet does not route funds through any known exchange,");
+        lines.push("  custodian, bridge, or official protocol node in loaded history.");
         lines.push("");
       } else {
-        lines.push("  All exchange, bridge, and official shared nodes — full transaction detail:");
-        lines.push("");
-        allExchFindings.slice(0, 30).forEach((f, i) => {
-          const isBridge  = f.knownInfo?.type === "bridge";
-          const isGenesis = f.knownInfo?.type === "genesis";
-          const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
-          const typeDesc  = isBridge
-            ? "Bridge / Infrastructure Node — funds pass through official protocol"
-            : isGenesis
-            ? "Official / Team / Foundation Wallet — not private commingling"
-            : "Exchange Hot Wallet — funds routed through custodian (on-ramp / off-ramp)";
-          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}`);
-          lines.push(`       Label   : ${(f.knownInfo?.label ?? "UNKNOWN").toUpperCase()}  ${flowTag}`);
-          lines.push(`       Type    : ${typeDesc}`);
-          lines.push(`       Tier    : ${f.tier}  (depth ${f.tier} from target wallet)`);
-          lines.push(`       Path    : ${fmtPath(f.targetPath)}`);
-          lines.push(`       Shared  : ${f.comparisons.map((c) => c.wallet).join(", ")}`);
-          const txAddr  = f.targetPath[1] ?? f.sharedAddress;
-          const txs     = bestInOut(txAddr);
-          if (txs.length > 0) {
-            const addrShort = txAddr.length > 16 ? `${txAddr.slice(0, 8)}…${txAddr.slice(-4)}` : txAddr;
-            const hopRole   = f.tier === 1 ? "shared wallet" : "hop 1 entry";
-            lines.push(`       Most Significant Transactions (target ↔ ${addrShort} — ${hopRole}):`);
-            emitTxs(txs, "       ");
-          } else {
-            lines.push(`       Transactions: none in loaded history`);
-          }
+        // ① Direct flows — target wallet directly transacts with a known exchange
+        if (directExchFlows.length > 0) {
+          lines.push("  DIRECT EXCHANGE FLOWS  (target wallet ↔ known exchange — not a shared node):");
           lines.push("");
-        });
-        if (allExchFindings.length > 30) lines.push(`  … and ${allExchFindings.length - 30} more`);
-        lines.push("");
+          directExchFlows.forEach(({ addr, known, txs: _allTxsForAddr }, i) => {
+            const isBridge  = known.type === "bridge";
+            const isGenesis = known.type === "genesis";
+            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
+            const typeDesc  = isBridge ? "Bridge / Infrastructure"
+              : isGenesis ? "Official / Foundation Wallet"
+              : "Exchange Hot Wallet — direct outflow / inflow to custodian";
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${addr}`);
+            lines.push(`       Label   : ${known.label.toUpperCase()}  ${flowTag}`);
+            lines.push(`       Type    : ${typeDesc}`);
+            lines.push(`       Source  : Direct — target wallet transacts with this exchange directly`);
+            const addrShort = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr;
+            const exchTxs   = bestInOut(addr);
+            if (exchTxs.length > 0) {
+              lines.push(`       Most Significant Transactions (target ↔ ${addrShort}):`);
+              emitTxs(exchTxs, "       ");
+            } else {
+              lines.push(`       Transactions: none in loaded history`);
+            }
+            lines.push("");
+          });
+        }
+        // ② Commingle-detected exchange shared nodes
+        if (allExchFindings.length > 0) {
+          lines.push(directExchFlows.length > 0
+            ? "  SHARED EXCHANGE NODES  (both wallets transact with same exchange):"
+            : "  All exchange, bridge, and official shared nodes — full transaction detail:");
+          lines.push("");
+          allExchFindings.slice(0, 30).forEach((f, i) => {
+            const isBridge  = f.knownInfo?.type === "bridge";
+            const isGenesis = f.knownInfo?.type === "genesis";
+            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
+            const typeDesc  = isBridge
+              ? "Bridge / Infrastructure Node — funds pass through official protocol"
+              : isGenesis
+              ? "Official / Team / Foundation Wallet — not private commingling"
+              : "Exchange Hot Wallet — funds routed through custodian (on-ramp / off-ramp)";
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}`);
+            lines.push(`       Label   : ${(f.knownInfo?.label ?? "UNKNOWN").toUpperCase()}  ${flowTag}`);
+            lines.push(`       Type    : ${typeDesc}`);
+            lines.push(`       Tier    : ${f.tier}  (depth ${f.tier} from target wallet)`);
+            lines.push(`       Path    : ${fmtPath(f.targetPath)}`);
+            lines.push(`       Shared  : ${f.comparisons.map((c) => c.wallet).join(", ")}`);
+            const txAddr  = f.targetPath[1] ?? f.sharedAddress;
+            const txs     = bestInOut(txAddr);
+            if (txs.length > 0) {
+              const addrShort = txAddr.length > 16 ? `${txAddr.slice(0, 8)}…${txAddr.slice(-4)}` : txAddr;
+              const hopRole   = f.tier === 1 ? "shared wallet" : "hop 1 entry";
+              lines.push(`       Most Significant Transactions (target ↔ ${addrShort} — ${hopRole}):`);
+              emitTxs(txs, "       ");
+            } else {
+              lines.push(`       Transactions: none in loaded history`);
+            }
+            lines.push("");
+          });
+          if (allExchFindings.length > 30) lines.push(`  … and ${allExchFindings.length - 30} more`);
+          lines.push("");
+        }
       }
     }
 

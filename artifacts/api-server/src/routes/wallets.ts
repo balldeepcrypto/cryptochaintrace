@@ -1004,8 +1004,18 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       const transactions = unique.map((entry) => {
         const tx = (entry["tx"] ?? entry["transaction"] ?? entry) as Record<string, unknown>;
         const meta = (entry["meta"] ?? entry["metadata"]) as Record<string, unknown> | undefined;
-        const deliveredAmt = String(meta?.["delivered_amount"] ?? tx["Amount"] ?? "0");
-        const value = /^\d+$/.test(deliveredAmt) ? dropToXrp(deliveredAmt) : "0.000000";
+        const rawDelivered = meta?.["delivered_amount"] ?? tx["Amount"];
+        let value: string;
+        let txTokenSymbol = "XRP";
+        if (typeof rawDelivered === "object" && rawDelivered !== null) {
+          // IOU / non-native token: delivered_amount is {"currency":"USD","value":"1.5","issuer":"r..."}
+          const iou = rawDelivered as Record<string, unknown>;
+          value = parseFloat(String(iou["value"] ?? "0")).toFixed(6);
+          txTokenSymbol = String(iou["currency"] ?? "XRP");
+        } else {
+          const deliveredStr = String(rawDelivered ?? "0");
+          value = /^\d+$/.test(deliveredStr) ? dropToXrp(deliveredStr) : "0.000000";
+        }
         const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
         const from = String(tx["Account"] ?? "");
         const to = String(tx["Destination"] ?? "");
@@ -1037,7 +1047,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           status: ((meta?.["TransactionResult"] as string | undefined) === "tesSUCCESS"
             ? "success" : "failed") as "success" | "failed",
           direction,
-          tokenSymbol: "XRP", tokenName: null, memo, destinationTag,
+          tokenSymbol: txTokenSymbol, tokenName: null, memo, destinationTag,
         };
       });
 
@@ -1503,8 +1513,14 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         const to = String(tx["Destination"] ?? "");
         if (!from || !to) continue;
         peerSet.add(from); peerSet.add(to);
-        const deliveredAmt = String(meta?.["delivered_amount"] ?? tx["Amount"] ?? "0");
-        const val = /^\d+$/.test(deliveredAmt) ? Number(deliveredAmt) / 1e6 : 0;
+        const rawDeliveredConn = meta?.["delivered_amount"] ?? tx["Amount"];
+        let val: number;
+        if (typeof rawDeliveredConn === "object" && rawDeliveredConn !== null) {
+          val = parseFloat(String((rawDeliveredConn as Record<string, unknown>)["value"] ?? "0"));
+        } else {
+          const deliveredStr = String(rawDeliveredConn ?? "0");
+          val = /^\d+$/.test(deliveredStr) ? Number(deliveredStr) / 1e6 : 0;
+        }
         const dateVal = tx["date"] as number | undefined;
         const ts = dateVal ? new Date((dateVal + 946684800) * 1000).toISOString() : new Date().toISOString();
         const key = `${from}:${to}`;

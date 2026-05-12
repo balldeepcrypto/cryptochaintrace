@@ -427,7 +427,11 @@ export default function WalletDetail() {
     const fmtAmt = (v: string, dir: "in" | "out") => {
       const n = parseFloat(v);
       const sign = dir === "in" ? "+" : "−";
-      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+      if (!n || isNaN(n)) return `${sign}0.00`;
+      // Use enough decimals so tiny BTC/XRP/DAG amounts never round to 0.0000
+      const abs = Math.abs(n);
+      const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
     };
     const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
     const fmtVal  = (v: number)  => v.toLocaleString("en-US", { minimumFractionDigits: 3, maximumFractionDigits: 6 });
@@ -668,7 +672,11 @@ export default function WalletDetail() {
     const fmtAmt = (v: string, dir: "in" | "out") => {
       const n = parseFloat(v);
       const sign = dir === "in" ? "+" : "−";
-      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: 4, maximumFractionDigits: 4 })}`;
+      if (!n || isNaN(n)) return `${sign}0.00`;
+      // Use enough decimals so tiny BTC/XRP/DAG amounts never round to 0.0000
+      const abs = Math.abs(n);
+      const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
     };
     const lines: string[] = [];
 

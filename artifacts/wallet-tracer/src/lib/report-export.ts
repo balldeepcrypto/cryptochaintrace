@@ -43,12 +43,12 @@ function renderReportHtml(content: string): string {
       if (line.includes("LOW RISK") || line.includes("LOW-MEDIUM RISK"))
         return `<div class="risk-low">${esc}</div>`;
 
-      if ((line.includes(" IN ") || line.includes(" IN  ")) && line.includes("TX:") || line.includes("TA:") && line.includes(" IN "))
+      // TX lines — fix operator precedence by using hasTxRef variable
+      const hasTxRef = line.includes("TX:") || line.includes("TA:");
+      if (hasTxRef && (line.includes(" IN ") || line.includes("+") && line.includes(" IN")))
         return `<div class="tx-in">${esc}</div>`;
-      if (line.includes("OUT") && (line.includes("TX:") || line.includes("TA:")))
+      if (hasTxRef && (line.includes("OUT") || line.includes("−")))
         return `<div class="tx-out">${esc}</div>`;
-      if (line.includes(" IN ") && (line.includes("TX:") || line.includes("TA:")))
-        return `<div class="tx-in">${esc}</div>`;
 
       if (/^(Generated|Chain|Target|Comparison\s*\d|Depth)\s*[:\|]/.test(tr))
         return `<div class="meta-line">${esc}</div>`;
@@ -65,19 +65,23 @@ const PDF_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   @media print {
-    @page { margin: 22mm 18mm 18mm; size: A4; }
+    @page { margin: 22mm 18mm 20mm; size: A4; }
     body { padding: 0; }
     .no-print { display: none !important; }
     .running-hdr { display: block !important; }
     .section-sep { page-break-after: avoid; }
     .title-border, .title-inner { page-break-inside: avoid; }
-    .tx-in, .tx-out, .memo-line, .exchange-line, .warn-line { page-break-inside: avoid; }
+    .cover { page-break-inside: avoid; page-break-after: always; }
+    /* keep TX line + its memo/hash together on same page */
+    .tx-in, .tx-out { page-break-inside: avoid; page-break-after: avoid; }
+    .memo-line, .exchange-line, .warn-line { page-break-inside: avoid; }
+    .end-rule { page-break-before: avoid; }
   }
 
   body {
     font-family: 'Courier New', Courier, monospace;
     font-size: 8.5pt;
-    line-height: 1.55;
+    line-height: 1.6;
     color: #111;
     background: #fff;
     padding: 0 2mm;
@@ -96,7 +100,7 @@ const PDF_CSS = `
   }
   .running-hdr-inner { display: flex; justify-content: space-between; }
 
-  /* Save-as-PDF bar (no-print) */
+  /* Save-as-PDF bar (screen only) */
   .save-bar {
     position: sticky;
     top: 0;
@@ -112,7 +116,7 @@ const PDF_CSS = `
     z-index: 100;
     border-bottom: 2pt solid #3b82f6;
   }
-  .save-bar-text { font-size: 9.5pt; color: #94a3b8; }
+  .save-bar-text { font-size: 9pt; color: #94a3b8; }
   .save-btn {
     background: #3b82f6;
     color: #fff;
@@ -130,24 +134,25 @@ const PDF_CSS = `
   /* Cover block */
   .cover {
     border: 2pt solid #111;
-    padding: 14pt 18pt 14pt;
-    margin-bottom: 22pt;
+    padding: 16pt 18pt;
+    margin-bottom: 26pt;
     margin-top: 14pt;
-    page-break-inside: avoid;
   }
   .cover h1 {
     font-family: Arial, Helvetica, sans-serif;
     font-size: 13.5pt;
     font-weight: bold;
     text-transform: uppercase;
-    letter-spacing: 0.04em;
+    letter-spacing: 0.05em;
     color: #000;
-    margin-bottom: 10pt;
+    margin-bottom: 12pt;
+    border-bottom: 1pt solid #ccc;
+    padding-bottom: 8pt;
   }
   .cover-grid {
     display: grid;
-    grid-template-columns: 90pt 1fr;
-    gap: 3pt 0;
+    grid-template-columns: 95pt 1fr;
+    gap: 4pt 0;
     font-family: 'Courier New', Courier, monospace;
     font-size: 8.5pt;
   }
@@ -163,22 +168,42 @@ const PDF_CSS = `
     font-size: 8.5pt;
     white-space: pre-wrap;
     word-break: break-all;
-    line-height: 1.5;
+    line-height: 1.6;
   }
 
-  .blank { height: 5pt; }
+  .blank { height: 6pt; }
   .title-border, .title-inner { font-size: 9.5pt; font-weight: bold; }
-  .title-border { margin-top: 2pt; }
+  .title-border { margin-top: 4pt; }
 
   .section-sep {
     font-weight: bold;
     font-size: 9pt;
     color: #111;
-    margin-top: 10pt;
-    padding-top: 4pt;
+    margin-top: 12pt;
+    padding-top: 5pt;
     border-top: 1pt solid #bbb;
   }
-  .end-rule { height: 1.5pt; background: #333; margin: 14pt 0 6pt; }
+  .end-rule { height: 1.5pt; background: #333; margin: 16pt 0 8pt; }
+
+  /* TX amount lines — the most important lines in the report */
+  .tx-in {
+    color: #0a4a0a;
+    font-weight: bold;
+    font-size: 9pt;
+    background: #f0fdf0;
+    border-left: 3.5pt solid #16a34a;
+    padding-left: 6pt;
+    margin: 2pt 0;
+  }
+  .tx-out {
+    color: #7a0000;
+    font-weight: bold;
+    font-size: 9pt;
+    background: #fff5f5;
+    border-left: 3.5pt solid #dc2626;
+    padding-left: 6pt;
+    margin: 2pt 0;
+  }
 
   .memo-line {
     background: #fffbe6;
@@ -202,15 +227,12 @@ const PDF_CSS = `
     padding-left: 6pt;
     font-weight: bold;
     color: #6b3800;
-    margin: 1.5pt 0;
+    margin: 2pt 0;
   }
 
   .risk-high { font-weight: bold; color: #8b0000; font-size: 9pt; }
   .risk-med  { font-weight: bold; color: #b45309; font-size: 9pt; }
   .risk-low  { font-weight: bold; color: #166534; font-size: 9pt; }
-
-  .tx-in  { color: #145a14; font-weight: bold; }
-  .tx-out { color: #8b0000; font-weight: bold; }
 
   .meta-line   { color: #444; }
   .footer-line { color: #999; font-size: 7.5pt; margin-top: 8pt; }
@@ -244,7 +266,7 @@ export function exportAsPdf(title: string, content: string): void {
 <div class="save-bar no-print">
   <div>
     <div style="font-weight:bold;font-size:11pt;">CryptoChainTrace — ${escHtml(title)}</div>
-    <div class="save-bar-text">Click the button to save as PDF &nbsp;→&nbsp; choose "Save as PDF" in the print dialog</div>
+    <div class="save-bar-text">Click the button → choose "Save as PDF" in the print dialog</div>
   </div>
   <button class="save-btn" onclick="window.print()">&#8964; Save as PDF</button>
 </div>

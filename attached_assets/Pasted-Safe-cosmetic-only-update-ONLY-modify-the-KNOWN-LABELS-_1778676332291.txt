@@ -1,0 +1,56 @@
+Safe cosmetic-only update — ONLY modify the KNOWN_LABELS object. Do not change any other code, logic, filtering, reports, or PDF structure.
+
+Add the following new XRP wallets from the latest screenshots (Coinbase, Uphold, Kraken, Crypto.com, Binance.US). All duplicates from previous additions have been removed. Use simple exchange names only.
+
+```js
+// New XRP wallets from latest screenshots — Coinbase, Uphold, Kraken, Crypto.com, Binance.US
+"rwPJqrGioKpieFx3MsbiySfrrFqt2PzUDN": { label: "Coinbase", type: "exchange" },
+"rUrriLdQ4q6fPbjiyo5zGHY5NFdUzJr13TM": { label: "Coinbase", type: "exchange" },
+"rDdkHrHMqFPFqUew2WCxPhS5JR6Gmh755RS": { label: "Coinbase", type: "exchange" },
+"rGwCvT1vFDxsj6WWV55jBYxzXduyiPnVwZ": { label: "Coinbase", type: "exchange" },
+"rD2yXXhio7QdkQ2Nx59MkRCw1w7Mq3NBSa": { label: "Coinbase", type: "exchange" },
+"rLWajfrUR6htxdzyl7XAZ7TS51Dds8XTT8": { label: "Coinbase", type: "exchange" },
+"rBDSYHx4xKZvWvBR9kGeVnWEFEb8ir7Gfm": { label: "Coinbase", type: "exchange" },
+"rHo7znRYDpeBJoMzcMMZfV6r8ML4hPeCDR": { label: "Coinbase", type: "exchange" },
+"rGct8a15zHDuCobXWMja4FNI47TcJ6DoB5": { label: "Coinbase", type: "exchange" },
+"rUs9dv67xMdFs2mdtCnK7tKHbtcJvy7Pu9": { label: "Coinbase", type: "exchange" },
+"rXypYS18H9sh9v3582dmZuuw18hgWEVFg": { label: "Coinbase", type: "exchange" },
+"rMvaKYzHpaZGUUSRX1iJbnqKV2iG9gmjTH": { label: "Coinbase", type: "exchange" },
+"rsZ1kdivRkXwqY4Ws69HeRRGjgJtmaqKaR": { label: "Coinbase", type: "exchange" },
+"rpyLCHeFs897rYKTMAzSRKrMGhRK6GUrri": { label: "Coinbase", type: "exchange" },
+"rNCfaHmv2QLs6du9r25KTsZpd syWQAquTd": { label: "Coinbase", type: "exchange" },
+"rDfKzRSdXacYfFbVLfi7xBLFRXkCyNvMme": { label: "Coinbase", type: "exchange" },
+"r4Gyb9xhG4iLrsR6Ac9dcHTjZLekJcXW2V": { label: "Coinbase", type: "exchange" },
+"rLWDu4tEhtBaLDYNtjALT21hdhwX8f9vNK": { label: "Coinbase", type: "exchange" },
+"rnjXFUfKCtBBYDTK1GCYbJL6V9WCqRGdEr": { label: "Coinbase", type: "exchange" },
+"rwPet7Vu3yaBuwMgFYG521mSat1qkkwsLE": { label: "Coinbase", type: "exchange" },
+"rQGXuQCZH27mj7wcikYrKCEbAh5xfenwb8": { label: "Coinbase", type: "exchange" },
+"r4VDPS5yatqpkdBoJxNWh3TWWXTmR62r": { label: "Coinbase", type: "exchange" },
+"rwpTh9DDa52XkM9nTKp2QrJuCGV5d1mQVP": { label: "Coinbase", type: "exchange" },
+"r4sRyacXpbh4HbagmgfoQq8Q3j8ZJzbZ1J": { label: "Coinbase", type: "exchange" },
+"rLNaPoKeeBjZe2qs6x52yVPZpZ8td4dc6w": { label: "Coinbase", type: "exchange" },
+"r3YsZdkznVzYBv141qhwXHDWoPUXLdksNw": { label: "Coinbase", type: "exchange" },
+"rpMaupvHx4jcfgpd58VdLVR7g6XjhnUtXg": { label: "Coinbase", type: "exchange" },
+"r3wcwBpVCGcKu7TzY1ta2kQiJ5UHECDFZS": { label: "Coinbase", type: "exchange" },
+"rGvmcMqafc5HAdyhaoQCG4tpBZKdYLT3cH": { label: "Coinbase", type: "exchange" },
+
+// Uphold XRP
+"rKzfrk1RsUxWmHimWyNwk8AoWHoFneu4m": { label: "Uphold", type: "exchange" },
+"rsXT3AQqhHDusFs3nQQuwcA1yXRLZJAXKw": { label: "Uphold", type: "exchange" },
+"rBEc94rUFfLfTDwwGN7rQGBHc883c2QHhx": { label: "Uphold", type: "exchange" },
+"rsX8cp4aj9grKVD9V1K2ouUbxgYsigUtBL": { label: "Uphold", type: "exchange" },
+
+// Kraken XRP
+"rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh": { label: "Kraken", type: "exchange" },
+"rEvuKRoEBzSbM5k5Qe5tD9BixZXsfxkHf": { label: "Kraken", type: "exchange" },
+"rUeDDFNp2q7Ymv y v75hFGC8DA cygVyJbNF": { label: "Kraken", type: "exchange" },
+
+// Crypto.com XRP
+"r4DymtkgUAH2wqRxVfdd3Xtswzim6eC6c5": { label: "Crypto.com", type: "exchange" },
+"rKNwXQh9GMjaU8uTqKLECsqyib47g5dMvo": { label: "Crypto.com", type: "exchange" },
+"rKV8HEL3vLc6q9waTJcewdRdSFyx67QFb": { label: "Crypto.com", type: "exchange" },
+"rJmXYcKCGJSayp4sAdp6Eo4CdSFtDVv7WG": { label: "Crypto.com", type: "exchange" },
+
+// Binance.US XRP
+"rEeWEp88cpKUddkKk37B2EZeiHGBiBXY3": { label: "Binance.US", type: "exchange" },
+"rMvYS27SYs5dXfdsUgpvv1CSrPsCz7ePF5": { label: "Binance.US", type: "exchange" }

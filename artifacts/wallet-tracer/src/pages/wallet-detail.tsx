@@ -162,6 +162,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "0xce2cc46682e9c6d5f174af598fb4931a9c0be68e": { label: "Crypto.com XDC 20",  type: "exchange" },
   "0xb428523cdda53640a62e9f26c2d8613a9159b282": { label: "Crypto.com XDC 21",  type: "exchange" },
   "0x17e49502febdf7b3bd3a9842a325036d729b7654": { label: "Crypto.com XDC 22",  type: "exchange" },
+  "0x8bc87020028a07e5ed17824b4fe0e2afcd823b2e": { label: "Crypto.com XDC 23",  type: "exchange" },
   "0xa023f08c70a23abc7edfc5b6b5e171d78dfc947e": { label: "Crypto.com XDC 24",  type: "exchange" },
   "0xcbf25a7c3f305ce9d0747b933ea314568abee40b": { label: "Crypto.com XDC 25",  type: "exchange" },
   "0x09fa1f3461152d243ca1e5c59d0e228caaf1f2b8": { label: "Crypto.com XDC 26",  type: "exchange" },

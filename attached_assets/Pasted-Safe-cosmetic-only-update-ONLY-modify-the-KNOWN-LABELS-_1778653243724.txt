@@ -1,0 +1,58 @@
+Safe cosmetic-only update — ONLY modify the KNOWN_LABELS object. Do not change anything else in the code (no logic, no filtering, no report structure, no audit log, no PDF rendering, nothing else).
+
+Add the following entries to the KNOWN_LABELS object (merge them cleanly with any existing ones, keep all comments for organization):
+
+// ==================== U.S. EXCHANGE HOT / CUSTODIAL WALLETS ====================
+
+// XLM (Stellar)
+GBJDVTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O: { label: "Uphold", type: "exchange" },
+GCGMJ63NTBSQKW7OEQ3J2RZH6PYXSTEUK4TVE35IPXLB7XWNI2PUDCY6: { label: "Uphold", type: "exchange" },
+GDMKMOHKKYS4VTHBCH4TZXNFF7MK7KDA7IEZL6NB36JREVCRNYZJXPTA: { label: "Uphold", type: "exchange" },
+GBP32F37ZHXGSLOE4WAFCLNWQUMY4OUIAUGNBZUF4OD2BG6MS7WKRTSX: { label: "Uphold", type: "exchange" },
+GA5XIGA5C7QTPTWXQHY6MCJRMTRZDOSHR6EFIBNDQTCQHG262N4GGKTM: { label: "Kraken", type: "exchange" },
+GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37: { label: "Coinbase", type: "exchange" },
+GCIL6JNOVODHIZGZBYKWSRDRYUVXWF5ZEVMISJQQJBQRMF5FAH6YOD7U: { label: "Coinbase", type: "exchange" },
+GCVEON7LARMBNCCJCYLXO4FNFENL6R74NWCC2V6YZN5Z6L5W4GUZDMWC: { label: "Coinbase", type: "exchange" },
+GDS2WFLIJID6BDM64FGUD7MNOVZUEWHJ5VJPO2GQ32KOZCYIYIRIQTG6: { label: "Coinbase", type: "exchange" },
+GDZHDOITT5W2S35LVJZRLUAUXLU7UEDEAN4R7O4VA5FFGKG7RHC4NPSC: { label: "Coinbase", type: "exchange" },
+GBRSO2HPPEHCZASU3W3ZDMS7ISWPWJZB7IJ4JPFLZMKN7VOTWUCT3SL6: { label: "Coinbase", type: "exchange" },
+GB5FUSCVVV7ZLKJVL7FRCSBQHZXYLMSWWXXYC7NH35GV57S5XWKEVA4V: { label: "Coinbase", type: "exchange" },
+GDUQXQAR4ECNAYCTGZAS4TH4KJJIZDLXPR5V2YYRFRGGQ3LTXBFTBVW6: { label: "Coinbase", type: "exchange" },
+GANZM2JP5ZFHI2UZCFTK5OAPLJJVEWRKCLGJD5RTAI7WRTHX6OB6O6CC: { label: "Coinbase", type: "exchange" },
+GDF4UGQSY6VHWN7T4XJEZ6WYJEREMZYLNYZ5CCKYVS3V3MNYIBMTB354: { label: "Coinbase", type: "exchange" },
+GBW5AENWI5PFJRYEIAIRYDB62MVEHDYHEBXKFN3TI64RSL2L6GYOYFG4: { label: "Coinbase", type: "exchange" },
+GDTYD6BWWZIOHD2PPLTFQYW3KVTT5YEF2EVWMTUJTVGQ4U2UBKFHHVYN: { label: "Coinbase", type: "exchange" },
+GB2ES2N326MZK4EGJBKN3ZARCQ5RTFQSAWIJAAKFVIIIJSCC35TXIMLB: { label: "Robinhood", type: "exchange" },
+GDT7ARDYZRBXXYOCSQ3MUMISTITSSRWZI6KR2A5L5Q3KB4QIZHGYMTIH: { label: "Bybit", type: "exchange" },
+
+// XRP (Ripple)
+rMdG3ju8pgyVh29ELPWaDuA74CpWW6Fxns: { label: "Uphold", type: "exchange" },
+rsXT3AQqhHDusFs3nQQuwcA1yXRLZJAXKw: { label: "Uphold", type: "exchange" },
+rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: { label: "Kraken", type: "exchange" },
+r4sRyacXpbh4HbagmgfoQq8Q3j8ZJzbZ1J: { label: "Coinbase", type: "exchange" },
+rw2ciyaNshpHe7bCHo4bRWq6pqqynnWKQg: { label: "Coinbase", type: "exchange" },
+rwnYLUsoBQX3ECa1A5bSKLdbPoHKnqf63J: { label: "Coinbase", type: "exchange" },
+rwpTh9DDa52XkM9nTKp2QrJuCGV5d1mQVP: { label: "Coinbase", type: "exchange" },
+r3YsZdkznVzYBv141qhwXHDWoPUXLdksNw: { label: "Coinbase", type: "exchange" },
+rLNaPoKeeBjZe2qs6x52yVPZpZ8td4dc6w: { label: "Coinbase", type: "exchange" },
+rUjfTQpvBr6wsGGxMw6sRmRQGG76nvp8Ln: { label: "Coinbase", type: "exchange" },
+r3wcwBpVCGcKu7TzY1ta2kQiJ5UHECDFZS: { label: "Coinbase", type: "exchange" },
+rayCEqaUBryJSWxf3BEc1Y4EMRYLuK3aJ8: { label: "Coinbase", type: "exchange" },
+r7BspkyEZqKZ88SovgxZtsGGxoVoPodJf: { label: "Coinbase", type: "exchange" },
+rGFNBYb9548VqJojTDoDDYoJBEpvmVywSV: { label: "Coinbase", type: "exchange" },
+rQGXuQCZH27mj7wcikYrKCEbAh5xfenwb8: { label: "Coinbase", type: "exchange" },
+r4k4U4Hge3mLfyURfGu3pJFeNTWXduBha2: { label: "Coinbase", type: "exchange" },
+rGvmcMqafc5HAdyhaoQCG4tpBZKdYLT3cH: { label: "Coinbase", type: "exchange" },
+rHRHwHJHHzQ328c33wCimeXqCgyDoxLXjF: { label: "Coinbase", type: "exchange" },
+rMJXDzU1N9ZSDzPF7s1i2GGKyjM2wB3iom: { label: "Robinhood", type: "exchange" },
+rKNwXQh9GMjaU8uTqKLECsqyib47g5dMvo: { label: "Crypto.com", type: "exchange" },
+rUzWJkXyEtT8ekSSxkBYPqCvHpngcy6Fks: { label: "OKX", type: "exchange" },
+raBQUYdAhnnojJQ6Xi3eXztZ74ot24RDq1: { label: "Gemini", type: "exchange" },
+rMxCKbEDwqr76QuheSUMdEGf4B9xJ8m5De: { label: "Ripple RLUSD Issuer", type: "exchange" },
+
+// ETH (Ethereum)
+0xf30ba13e4b04ce5dc4d254ae5fa95477800f0eb0: { label: "Kraken", type: "exchange" },
+
+// ==================== END OF U.S. EXCHANGE HOT WALLETS ====================
+
+After adding these, the typecheck must pass clean. Then hard-refresh the site, go to any wallet that has one of these addresses as a counterparty (for example an XLM or XRP wallet that interacts with Uphold or Coinbase), turn on "Group by Counterparty", and confirm the labels appear correctly in the table and in any exported PDF report. Send me the updated PDF screenshot or link to confirm everything looks perfect.

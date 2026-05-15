@@ -3049,12 +3049,17 @@ export default function WalletDetail() {
       }
       const segmentTxs: Record<string, Tx | null> = {};
       if (intermedWallets.size > 0) {
-        await Promise.allSettled(
-          Array.from(intermedWallets).slice(0, 20).map(async (fromAddr) => {
+        // Paginating hop fetch — up to 25 pages × 200 ops each (~5 000 ops per hop wallet).
+        // All hop wallets run in parallel; pages within each wallet are sequential cursor follows.
+        const fetchHopPages = async (fromAddr: string): Promise<void> => {
+          let cursor: string | null = null;
+          for (let p = 0; p < 25; p++) {
             try {
-              const resp = await fetch(`/api/wallets/${encodeURIComponent(fromAddr)}/transactions?chain=${chain}&limit=50`);
-              if (!resp.ok) return;
-              const data = await resp.json() as { transactions?: Tx[] };
+              const qs = new URLSearchParams({ chain, limit: "200" });
+              if (cursor) qs.set("cursor", cursor);
+              const resp = await fetch(`/api/wallets/${encodeURIComponent(fromAddr)}/transactions?${qs}`);
+              if (!resp.ok) break;
+              const data = await resp.json() as { transactions?: Tx[]; nextCursor?: string | null };
               for (const tx of data.transactions ?? []) {
                 // XLM: enforce allowlist + per-asset minimums at the earliest ingest point.
                 // segmentTxs are fetched independently of allTxs, so commit() doesn't cover them.
@@ -3070,8 +3075,13 @@ export default function WalletDetail() {
                   }
                 }
               }
-            } catch { /* best-effort */ }
-          })
+              cursor = data.nextCursor ?? null;
+              if (!cursor) break;
+            } catch { break; /* best-effort */ }
+          }
+        };
+        await Promise.allSettled(
+          Array.from(intermedWallets).slice(0, 20).map((w) => fetchHopPages(w))
         );
       }
 

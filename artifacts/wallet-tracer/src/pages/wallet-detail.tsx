@@ -487,7 +487,7 @@ interface CommingleCheckResult {
   // Best TX for each intermediate hop segment: key = "fromAddr::toAddr"
   segmentTxs: Record<string, Tx | null>;
   // Debug stats per intermediate hop wallet: how many pages/ops were fetched
-  hopFetchStats: Record<string, { pages: number; txs: number; failReason?: string }>;
+  hopFetchStats: Record<string, { pages: number; txs: number; rateLimitEvents?: number; failReason?: string }>;
   // Filtered transactions for each cluster wallet (for display purposes)
   walletTxs: Record<string, Tx[]>;
   // First-class exchange flow data detected during the scan from raw transaction history.
@@ -1076,7 +1076,9 @@ export default function WalletDetail() {
         if (s.pages === 0) {
           lines.push(`    FAILED: ${s.failReason ?? "unknown error — 0 pages fetched"}`);
         } else {
-          lines.push(`    Fetched: ${s.txs} ops across ${s.pages} page${s.pages !== 1 ? "s" : ""}${s.failReason ? `  (stopped: ${s.failReason})` : ""}`);
+          const rlNote = s.rateLimitEvents ? `  [rate-limited × ${s.rateLimitEvents} → waited & retried]` : "";
+          const stopNote = s.failReason ? `  (stopped: ${s.failReason})` : "";
+          lines.push(`    Fetched: ${s.txs} ops across ${s.pages} page${s.pages !== 1 ? "s" : ""}${rlNote}${stopNote}`);
         }
       }
       lines.push(`──────────────────────────────────────────────────────────────`);
@@ -3067,21 +3069,24 @@ export default function WalletDetail() {
         }
       }
       const segmentTxs: Record<string, Tx | null> = {};
-      const hopFetchStats: Record<string, { pages: number; txs: number; failReason?: string }> = {};
+      const hopFetchStats: Record<string, { pages: number; txs: number; rateLimitEvents?: number; failReason?: string }> = {};
       if (intermedWallets.size > 0) {
         // Paginating hop fetch — up to 125 pages × 200 ops each (25 000 ops per hop wallet).
-        // All hop wallets run in parallel; pages within each wallet are sequential cursor follows.
-        // Returns { pages, txs, failReason? } so the report shows exactly why a fetch stopped.
+        // Wallets are fetched SERIALLY (not parallel) to avoid saturating Stellar Horizon's
+        // 60 req/min limit. A 1 200 ms inter-page delay keeps us well under that cap.
+        // On HTTP 429 the page is retried after honoring the Retry-After header (min 2 000 ms).
+        const hopSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
         const fetchHopPages = async (
           fromAddr: string,
-        ): Promise<{ pages: number; txs: number; failReason?: string }> => {
-          // Defensive: skip obviously invalid addresses before making any network call.
+        ): Promise<{ pages: number; txs: number; rateLimitEvents?: number; failReason?: string }> => {
           const trimmed = fromAddr.trim();
           if (!trimmed) return { pages: 0, txs: 0, failReason: "empty address" };
 
           let cursor: string | null = null;
           let pagesUsed = 0;
           let txsTotal = 0;
+          let rateLimitEvents = 0;
           let failReason: string | undefined;
 
           for (let p = 0; p < 125; p++) {
@@ -3091,13 +3096,21 @@ export default function WalletDetail() {
               if (cursor) qs.set("cursor", cursor);
               resp = await fetch(`/api/wallets/${encodeURIComponent(trimmed)}/transactions?${qs}`);
             } catch (e) {
-              // Network-level failure (timeout, DNS, etc.)
               failReason = `network error on page ${p + 1}: ${e instanceof Error ? e.message : String(e)}`;
               break;
             }
 
+            // Rate-limited: wait the server-specified delay then retry the same page.
+            if (resp.status === 429) {
+              const retryHeader = resp.headers.get("Retry-After");
+              const waitMs = retryHeader ? Math.max(parseInt(retryHeader, 10) * 1000, 2000) : 2000;
+              rateLimitEvents++;
+              await hopSleep(waitMs);
+              p--; // retry same page number on next iteration
+              continue;
+            }
+
             if (!resp.ok) {
-              // HTTP error — read body for server error detail if available
               let body = "";
               try { body = await resp.text(); } catch { /* ignore */ }
               failReason = `HTTP ${resp.status} on page ${p + 1}${body ? `: ${body.slice(0, 120)}` : ""}`;
@@ -3117,13 +3130,9 @@ export default function WalletDetail() {
             txsTotal += pageTxs.length;
 
             for (const tx of pageTxs) {
-              // XLM: enforce allowlist + per-asset minimums at the earliest ingest point.
-              // segmentTxs are fetched independently of allTxs, so commit() doesn't cover them.
               if (chain === "xlm" && !xlmPassesFilter(tx)) continue;
               const counterparty = tx.direction === "in" ? tx.from : tx.to;
               if (!counterparty) continue;
-              // Store both directions so emitHopSegment finds the TX regardless
-              // of which wallet was fetched or which direction the TX flowed.
               for (const key of [`${trimmed}::${counterparty}`, `${counterparty}::${trimmed}`]) {
                 const prev = segmentTxs[key];
                 if (!prev || parseFloat(tx.value) > parseFloat(prev.value ?? "0")) {
@@ -3133,17 +3142,25 @@ export default function WalletDetail() {
             }
 
             cursor = data.nextCursor ?? null;
+            // Break before sleeping if there is no next page.
             if (!cursor) break;
+            // 1 200 ms between pages — keeps requests well under Horizon's 60/min limit.
+            await hopSleep(1200);
           }
 
-          return { pages: pagesUsed, txs: txsTotal, ...(failReason ? { failReason } : {}) };
+          return {
+            pages: pagesUsed,
+            txs: txsTotal,
+            ...(rateLimitEvents > 0 ? { rateLimitEvents } : {}),
+            ...(failReason ? { failReason } : {}),
+          };
         };
-        await Promise.allSettled(
-          Array.from(intermedWallets).slice(0, 20).map(async (w) => {
-            const stats = await fetchHopPages(w);
-            hopFetchStats[w] = stats;
-          })
-        );
+
+        // Serial wallet loop — one wallet at a time so all page requests share
+        // the same rate-limit budget instead of exhausting it in parallel.
+        for (const w of Array.from(intermedWallets).slice(0, 20)) {
+          hopFetchStats[w] = await fetchHopPages(w);
+        }
       }
 
       // Fetch transactions for every cluster wallet and detect exchange flows directly.

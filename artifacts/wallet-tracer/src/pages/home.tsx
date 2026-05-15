@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useSaveSearch } from "@workspace/api-client-react";
-import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock } from "lucide-react";
+import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -28,9 +28,41 @@ const CHAIN_COLORS: Record<string, string> = {
   dag: "text-pink-400 bg-pink-950/40 border-pink-500/30",
 };
 
+const CHAIN_LABELS: Record<string, string> = {
+  ethereum: "ETH",
+  bitcoin: "BTC",
+  xrp: "XRP",
+  xlm: "XLM",
+  hbar: "HBAR",
+  xdc: "XDC",
+  dag: "DAG",
+};
+
 function truncateAddr(addr: string): string {
   if (addr.length <= 20) return addr;
   return `${addr.slice(0, 10)}…${addr.slice(-6)}`;
+}
+
+function detectChain(addr: string): string {
+  if (/^0\.0\.\d+$/.test(addr)) return "hbar";
+  if (/^G[A-Z2-7]{54}$/.test(addr)) return "xlm";
+  if (/^r[1-9A-HJ-NP-Za-km-z]{24,40}$/.test(addr)) return "xrp";
+  if (/^DAG/i.test(addr)) return "dag";
+  if (/^xdc[0-9a-fA-F]{40}$/.test(addr)) return "xdc";
+  if (/^0x[0-9a-fA-F]{40}$/.test(addr)) return "ethereum";
+  if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(addr)) return "bitcoin";
+  return "ethereum";
+}
+
+function loadSavedWallets(): string[] {
+  try {
+    const raw = localStorage.getItem("chaintrace-saved-wallets");
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
 export default function Home() {
@@ -39,6 +71,7 @@ export default function Home() {
   const [chain, setChain] = useState("ethereum");
   const [showDonate, setShowDonate] = useState(true);
   const [recentSearches, setRecentSearches] = useState<RecentSearchEntry[]>(() => getRecentSearches());
+  const [savedWallets, setSavedWallets] = useState<string[]>(() => loadSavedWallets());
 
   const saveSearch = useSaveSearch();
 
@@ -47,6 +80,21 @@ export default function Home() {
     const handler = () => setRecentSearches(getRecentSearches());
     window.addEventListener("chaintrace-recent-searches-updated", handler);
     return () => window.removeEventListener("chaintrace-recent-searches-updated", handler);
+  }, []);
+
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === "chaintrace-saved-wallets") {
+        setSavedWallets(loadSavedWallets());
+      }
+    };
+    window.addEventListener("storage", onStorage);
+    const onCustom = () => setSavedWallets(loadSavedWallets());
+    window.addEventListener("chaintrace-saved-wallets-updated", onCustom);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("chaintrace-saved-wallets-updated", onCustom);
+    };
   }, []);
 
   const handleSearch = (e: React.FormEvent) => {
@@ -58,6 +106,18 @@ export default function Home() {
     setLocation(`/wallet/${trimmedAddress}?chain=${chain}`);
     saveSearch.mutate({ data: { address: trimmedAddress, chain } });
   };
+
+  const removeFromWatchlist = (addr: string) => {
+    setSavedWallets((prev) => {
+      const next = prev.filter((a) => a !== addr);
+      try { localStorage.setItem("chaintrace-saved-wallets", JSON.stringify(next)); } catch { /* noop */ }
+      return next;
+    });
+  };
+
+  const recentChainMap = new Map<string, string>(
+    recentSearches.map((s) => [s.address, s.chain])
+  );
 
   const DONATE_ADDRESSES = [
     { chain: "XLM", symbol: "XLM", color: "text-sky-300",    bg: "bg-sky-950/40",    border: "border-sky-500/30",    address: "GCXUMH47OGMC6JKUCMNG5KSKUOZGX7H4A6P2YZTZ2FCA2ZEB2PPSB6XW" },
@@ -224,6 +284,10 @@ export default function Home() {
                     {new Set(recentSearches.map((s) => s.chain)).size}
                   </span>
                 </div>
+                <div className="flex justify-between items-end">
+                  <span className="text-xs font-mono text-muted-foreground">WATCHLIST</span>
+                  <span className="text-xl font-mono text-yellow-400">{savedWallets.length}</span>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -261,6 +325,82 @@ export default function Home() {
           </Card>
         </div>
       </div>
+
+      {/* ── WATCHLIST ── */}
+      <Card className="bg-card/40 border-yellow-500/20">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Bookmark className="w-4 h-4 text-yellow-400 fill-yellow-400/40" />
+              <CardTitle className="text-sm font-medium uppercase tracking-wider text-yellow-400">
+                Watchlist
+              </CardTitle>
+              {savedWallets.length > 0 && (
+                <span className="text-[10px] font-mono px-1.5 py-0.5 rounded border border-yellow-500/30 bg-yellow-950/40 text-yellow-400">
+                  {savedWallets.length}
+                </span>
+              )}
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {savedWallets.length === 0 ? (
+            <div className="text-center py-8 text-sm text-muted-foreground font-mono">
+              NO SAVED WALLETS — star a wallet on its profile page to add it here
+            </div>
+          ) : (
+            <div className="space-y-1">
+              {savedWallets.map((addr) => {
+                const detectedChain = recentChainMap.get(addr) ?? detectChain(addr);
+                const chainColor = CHAIN_COLORS[detectedChain] ?? "text-muted-foreground bg-muted border-border";
+                const chainLabel = CHAIN_LABELS[detectedChain] ?? detectedChain.toUpperCase();
+                return (
+                  <div
+                    key={addr}
+                    className="flex items-center justify-between p-3 rounded border border-transparent hover:bg-accent/30 hover:border-yellow-500/20 transition-colors group"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      <Bookmark className="w-3 h-3 text-yellow-400 fill-yellow-400 shrink-0" />
+                      <span className={`text-[10px] font-mono uppercase px-2 py-0.5 rounded border shrink-0 ${chainColor}`}>
+                        {chainLabel}
+                      </span>
+                      <span className="font-mono text-sm truncate text-foreground/90" title={addr}>
+                        {truncateAddr(addr)}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0 ml-3">
+                      <button
+                        onClick={() => setLocation(`/wallet/${addr}?chain=${detectedChain}`)}
+                        title="View Profile"
+                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold text-blue-300 border border-blue-500/30 bg-blue-950/30 hover:bg-blue-900/50 transition-colors"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span className="hidden sm:inline">PROFILE</span>
+                      </button>
+                      <button
+                        onClick={() => setLocation(`/trace/${addr}?chain=${detectedChain}`)}
+                        title="Start Trail Trace"
+                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold text-primary border border-primary/30 bg-primary/10 hover:bg-primary/20 transition-colors"
+                      >
+                        <GitBranch className="w-3 h-3" />
+                        <span className="hidden sm:inline">TRACE</span>
+                      </button>
+                      <button
+                        onClick={() => removeFromWatchlist(addr)}
+                        title="Remove from Watchlist"
+                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-mono font-bold text-muted-foreground border border-border/40 hover:border-destructive/50 hover:text-destructive hover:bg-destructive/10 transition-colors"
+                      >
+                        <BookmarkX className="w-3 h-3" />
+                        <span className="hidden sm:inline">REMOVE</span>
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }

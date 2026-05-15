@@ -991,6 +991,7 @@ export default function WalletDetail() {
     // Return [highest-value IN tx, highest-value OUT tx] — exactly 2 TXs max
     // This gives the most significant transaction in each direction for investigative clarity.
     const bestInOut = (addr: string): Tx[] => {
+      // Primary: allTxs — user-loaded history, direction from target's perspective.
       const pool = allTxs.filter((t) =>
         (t.direction === "in" ? t.from : t.to) === addr &&
         (chain === "xlm"
@@ -1000,7 +1001,24 @@ export default function WalletDetail() {
       const top = (dir: "in" | "out") =>
         pool.filter((t) => t.direction === dir)
             .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
-      return [top("in"), top("out")].filter(Boolean) as Tx[];
+      const fromAllTxs = [top("in"), top("out")].filter(Boolean) as Tx[];
+      if (fromAllTxs.length > 0) return fromAllTxs;
+
+      // Fallback 1: segmentTxs — hop-fetched full history, unfiltered by asset type.
+      // The best (highest-value) TX between target and addr is stored under both key orders.
+      const target = commingleResult.targetWallet;
+      const segMap = commingleResult.segmentTxs ?? {};
+      const segTx = segMap[`${target}::${addr}`] ?? segMap[`${addr}::${target}`] ?? null;
+      if (segTx) return [segTx];
+
+      // Fallback 2: walletTxs[target] — exchange scan (up to 2,000 ops, target's POV).
+      const wPool = (commingleResult.walletTxs[target] ?? []).filter((t) =>
+        (t.direction === "in" ? t.from : t.to) === addr
+      );
+      const wTop = (dir: "in" | "out") =>
+        wPool.filter((t) => t.direction === dir)
+             .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+      return [wTop("in"), wTop("out")].filter(Boolean) as Tx[];
     };
 
     // Format a path array, annotating each hop with its known label
@@ -3130,7 +3148,9 @@ export default function WalletDetail() {
             txsTotal += pageTxs.length;
 
             for (const tx of pageTxs) {
-              if (chain === "xlm" && !xlmPassesFilter(tx)) continue;
+              // NOTE: intentionally NO xlmPassesFilter here — segmentTxs must capture
+              // connecting transactions regardless of asset type (DEX tokens, path payments,
+              // non-allowlisted assets all count as real connections between wallets).
               const counterparty = tx.direction === "in" ? tx.from : tx.to;
               if (!counterparty) continue;
               for (const key of [`${trimmed}::${counterparty}`, `${counterparty}::${trimmed}`]) {

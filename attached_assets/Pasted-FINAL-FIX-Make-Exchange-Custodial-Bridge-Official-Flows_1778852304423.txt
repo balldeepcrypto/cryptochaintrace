@@ -1,0 +1,40 @@
+FINAL FIX — Make Exchange / Custodial / Bridge / Official Flows the #1 most important section and fully exhaustive.
+
+Current situation (from the latest GCP5X5UFY6JL report 7qOVx):
+- Private wallet commingling (68 shared nodes, Tier 1–4) is perfect and must stay 100% unchanged — iron-clad, verifiable, factual only. No false trails ever.
+- Exchange section is still only showing 2 flows (MEXC + ChangeNOW). All the new exchange deposit addresses (Kraken, Coinbase x3, Uphold regular + cold, Robinhood, Bybit) are missing even though we have full transaction history and KNOWN_LABELS already contains them.
+
+What the user wants (exactly):
+1. Keep private-wallet Tier 1–4 commingling EXACTLY as it is right now.
+2. In EVERY commingle report (and every future search/report on any chain), create or update the “EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS” section to show **EVERY** IN or OUT transaction (or memo) to **ANY** known exchange/bridge/custodial address from **ANY** wallet in the entire cluster.
+3. For each exchange flow, display full details:
+   - Source cluster wallet (Wallet 1, Wallet 12, etc.)
+   - Direction (IN or OUT)
+   - Amount + token (XLM or VELO, etc.)
+   - Date
+   - TX hash (TA)
+   - Memo (if present)
+   - Label in [BRACKETS] like [KRAKEN], [COINBASE], [UPHOLD] (COLD WALLET), [ROBINHOOD], [BYBIT]
+4. Make this section prominent and exhaustive — this is the most important part for catching criminals because exchanges are where identities can be obtained.
+5. Do NOT bury exchange flows inside private wallet sections. Keep them in their own dedicated consolidated section at the end or after Tier 1.
+6. The scanner must check the **full transaction history** of every wallet in the cluster (we already have this from the reach map).
+
+Implement this change in generateCommingleReport (and any supporting functions in wallets.ts / commingle logic):
+- After building the reach maps and private tiers, run a separate exhaustive pass over every wallet’s full tx history.
+- Match against the complete KNOWN_LABELS map (which already includes the addresses below).
+- Collect every matching IN/OUT with full metadata.
+- Output them cleanly in the Exchange Flows section exactly like the current MEXC/ChangeNOW entries, but now with all five+ exchanges and full details.
+
+Force-include these exact addresses (already in KNOWN_LABELS):
+- Kraken: GA5XIGA5C7QTPTWXQHY6MCJRMTRZDOSHR6EFIBNDQTCQHG262N4GGKTM → [KRAKEN]
+- Coinbase: GCIL6JNOVODHIZGZBYKWSRDRYUVXWF5ZEVMISJQQJBQRMF5FAH6YOD7U, GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37, GDZHDOITT5W2S35LVJZRLUAUXLU7UEDEAN4R7O4VA5FFGKG7RHC4NPSC → [COINBASE]
+- Robinhood: GB2ES2N326MZK4EGJBKN3ZARCQ5RTFQSAWIJAAKFVIIIJSCC35TXIMLB → [ROBINHOOD]
+- Uphold: GCGMJ63NTBSQKW7OEQ3J2RZH6PYXSTEUK4TVE35IPXLB7XWNI2PUDCY6 → [UPHOLD]
+- Uphold Cold: GBJDVTTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O → [UPHOLD] (COLD WALLET)
+- Bybit: GDT7ARDYZRBXXYOCSQ3MUMISTITSSRWZI6KR2A5L5Q3KB4QIZHGYMTIH → [BYBIT]
+
+After the change, regenerate the **exact same GCP5X5UFY6JL 32-wallet report** and confirm the Exchange Flows section now shows ALL of the above with full details and memos.
+
+No changes to private wallet counting, Tier logic, or any existing iron-clad connections.
+
+This pattern should be chain-agnostic so it works the same on all blockchains going forward.

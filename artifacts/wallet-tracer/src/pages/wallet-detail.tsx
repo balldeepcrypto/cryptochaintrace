@@ -486,12 +486,18 @@ interface CommingleCheckResult {
   totalScanned: number;
   // Best TX for each intermediate hop segment: key = "fromAddr::toAddr"
   segmentTxs: Record<string, Tx | null>;
-  // First-page transactions for each comparison wallet — used for cluster-wide exchange flow detection
+  // Filtered transactions for each cluster wallet (for display purposes)
   walletTxs: Record<string, Tx[]>;
-  // Exchange/bridge/genesis addresses found at tier-1 in the reach map of each cluster wallet.
-  // Key = exchange address, value = array of source wallet addresses that directly transact with it.
-  // This is authoritative — populated from the full fetched history, not just the UI page.
-  directExchanges: Record<string, string[]>;
+  // First-class exchange flow data detected during the scan from raw transaction history.
+  // Each entry = one (exchAddr × sourceWallet) pair with ALL matching transactions.
+  // Populated from unfiltered tx fetches so no asset/amount filter can drop exchange flows.
+  exchFlows: Array<{
+    exchAddr: string;
+    exchLabel: string;
+    exchType: string;
+    sourceWallet: string;
+    txs: Tx[];
+  }>;
 }
 
 const DAG_BATCH = 250;
@@ -1261,136 +1267,104 @@ export default function WalletDetail() {
 
       // ── Consolidated Exchange / Custodial / Bridge / Official flows ────────────
       const allExchFindings = [...t1exch, ...t2exch, ...t3exch, ...t4exch];
-      // Build the directExchFlows list from two authoritative sources:
-      //  (a) commingleResult.directExchanges — populated from the full reach-map scan,
-      //      so it catches every exchange the target/comparison wallets directly transacted
-      //      with even if those txs weren't on the first UI page.
-      //  (b) Transaction scan of allTxs + walletTxs — fallback / supplementary (catches
-      //      any addresses not yet in KNOWN_LABELS that appeared in loaded history).
-      // Exchange addresses already in allExchFindings (shared commingled nodes) are skipped
-      // here — they are displayed in the SHARED EXCHANGE NODES sub-section below.
+
+      // Helper: "Kraken XLM" → [KRAKEN], "Uphold XLM Cold" → [UPHOLD] (COLD WALLET)
+      const toBracketLabel = (label: string): string => {
+        const u = label.toUpperCase();
+        const firstWord = u.split(/\s+/)[0];
+        if (u.includes("COLD")) return `[${firstWord}] (COLD WALLET)`;
+        return `[${firstWord}]`;
+      };
       const walletLabel = (w: string) => {
         if (w === commingleResult.targetWallet) return "Wallet 1";
         const idx = commingleResult.comparisonWallets.indexOf(w);
         return idx >= 0 ? `Wallet ${idx + 2}` : `${w.slice(0, 10)}…`;
       };
-      const clusterWalletTxs: Array<{ wallet: string; txs: Tx[] }> = [
-        { wallet: commingleResult.targetWallet, txs: allTxs },
-        ...Object.entries(commingleResult.walletTxs ?? {}).map(([w, txs]) => ({ wallet: w, txs })),
-      ];
-      const getTxsFor = (exchAddr: string, sourceWallet: string): Tx[] => {
-        // Prefer the 500-tx batch fetched during the scan for ALL cluster wallets
-        // (including the target). Fall back to allTxs for the target wallet only if
-        // no fetched batch exists (e.g. legacy result without target walletTxs entry).
-        const fetched = commingleResult.walletTxs?.[sourceWallet];
-        const wTxs = fetched && fetched.length > 0
-          ? fetched
-          : (sourceWallet === commingleResult.targetWallet ? allTxs : []);
-        return wTxs.filter(t => (t.direction === "in" ? t.from : t.to) === exchAddr);
-      };
-      const commingledExchAddrs = new Set(allExchFindings.map(f => f.sharedAddress));
-      const directExchFlows: Array<{ addr: string; known: { label: string; type: string }; txs: Tx[]; sourceWallet: string }> = [];
-      const seenPairs = new Set<string>(); // "addr::sourceWallet" — deduplicate
-      // (a) Reach-map-based detection — authoritative, uses full scan history
-      for (const [addr, sourceWallets] of Object.entries(commingleResult.directExchanges ?? {})) {
-        if (commingledExchAddrs.has(addr)) continue;
-        if (EXCLUDED_ADDRS.has(addr)) continue;
-        const info = KNOWN_LABELS[addr];
-        if (!info) continue;
-        for (const sourceWallet of sourceWallets) {
-          const key = `${addr}::${sourceWallet}`;
-          if (seenPairs.has(key)) continue;
-          seenPairs.add(key);
-          directExchFlows.push({ addr, known: info, txs: getTxsFor(addr, sourceWallet), sourceWallet });
-        }
-      }
-      // (b) Transaction-based fallback — catches anything reach-map may have missed
-      for (const [addr, info] of Object.entries(KNOWN_LABELS)) {
-        if (!["exchange", "bridge", "genesis"].includes(info.type)) continue;
-        if (commingledExchAddrs.has(addr)) continue;
-        if (EXCLUDED_ADDRS.has(addr)) continue;
-        for (const { wallet: sourceWallet, txs: wTxs } of clusterWalletTxs) {
-          const key = `${addr}::${sourceWallet}`;
-          if (seenPairs.has(key)) continue;
-          const txs = wTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr);
-          if (txs.length > 0) {
-            seenPairs.add(key);
-            directExchFlows.push({ addr, known: info, txs, sourceWallet });
-          }
-        }
-      }
+
+      // ── Primary source: first-class exchFlows stored during the scan ─────────
+      // These were detected by scanning raw (unfiltered) transactions from every
+      // cluster wallet, checking both t.from and t.to against KNOWN_LABELS.
+      const storedExchFlows = commingleResult.exchFlows ?? [];
+
+      // ── Supplementary: allExchFindings not already covered by storedExchFlows ─
+      // Shared commingling nodes (found via the connections graph) that may not
+      // appear in the recent transaction window used for storedExchFlows.
+      const storedAddrs = new Set(storedExchFlows.map(f => f.exchAddr));
+      const extraSharedExch = allExchFindings.filter(f => !storedAddrs.has(f.sharedAddress));
+
       lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
       lines.push("");
-      if (allExchFindings.length === 0 && directExchFlows.length === 0) {
+
+      if (storedExchFlows.length === 0 && extraSharedExch.length === 0) {
         lines.push("  No exchange, bridge, or official flows detected.");
         lines.push("  The selected wallets do not route funds through any known exchange,");
-        lines.push("  custodian, bridge, or official protocol node in loaded history.");
+        lines.push("  custodian, bridge, or official protocol node in scanned history.");
         lines.push("");
       } else {
-        // ① Direct flows — target wallet directly transacts with a known exchange
-        if (directExchFlows.length > 0) {
-          lines.push("  DIRECT EXCHANGE FLOWS  (selected wallets ↔ known exchange — not a shared node):");
-          lines.push("");
-          directExchFlows.forEach(({ addr, known, txs: flowTxs, sourceWallet }, i) => {
-            const isBridge  = known.type === "bridge";
-            const isGenesis = known.type === "genesis";
-            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
-            const typeDesc  = isBridge ? "Bridge / Infrastructure"
-              : isGenesis ? "Official / Foundation Wallet"
-              : "Exchange Hot Wallet — direct outflow / inflow to custodian";
+        const totalFlows = storedExchFlows.length + extraSharedExch.length;
+        lines.push(`  ${totalFlows} exchange/bridge/custodial flow(s) detected across ${commingleResult.comparisonWallets.length + 1} wallets.`);
+        lines.push("  For exchanges with KYC/AML: subpoena identity records using TX hash + memo.");
+        lines.push("");
+
+        // ① Flows detected from raw transaction history (primary, exhaustive)
+        if (storedExchFlows.length > 0) {
+          storedExchFlows.forEach(({ exchAddr, exchLabel, exchType, sourceWallet, txs: flowTxs }, i) => {
+            const isBridge  = exchType === "bridge";
+            const isGenesis = exchType === "genesis";
+            const flowTag   = isBridge ? "◄ BRIDGE" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE";
+            const typeDesc  = isBridge
+              ? "Bridge / Infrastructure"
+              : isGenesis
+              ? "Official / Foundation Wallet"
+              : "Exchange / Custodian — identity obtainable via legal process (subpoena / court order)";
             const wLabel    = walletLabel(sourceWallet);
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${addr}`);
-            lines.push(`       Label   : ${known.label.toUpperCase()}  ${flowTag}`);
+            const isShared  = allExchFindings.some(f => f.sharedAddress === exchAddr);
+            const bracketLbl = toBracketLabel(exchLabel);
+            const addrShort  = exchAddr.length > 16 ? `${exchAddr.slice(0, 8)}…${exchAddr.slice(-4)}` : exchAddr;
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${exchAddr}`);
+            lines.push(`       Label   : ${bracketLbl}  ${flowTag}`);
             lines.push(`       Type    : ${typeDesc}`);
-            lines.push(`       Source  : Direct — ${wLabel} transacts with this exchange directly`);
-            const addrShort = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr;
-            // Use the already-filtered txs; pick highest IN and highest OUT
-            const topIn  = flowTxs.filter(t => t.direction === "in" ).sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
-            const topOut = flowTxs.filter(t => t.direction === "out").sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
-            const exchTxs = [topIn, topOut].filter(Boolean) as Tx[];
-            if (exchTxs.length > 0) {
-              lines.push(`       Most Significant Transactions (${wLabel} ↔ ${addrShort}):`);
-              emitTxs(exchTxs, "       ");
+            lines.push(`       Source  : ${wLabel}${isShared ? "  (also shared node with comparison wallets)" : "  (direct — not a shared commingling node)"}`);
+            const sorted = [...flowTxs].sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+            const show   = sorted.slice(0, 10);
+            const extra  = sorted.length - show.length;
+            if (show.length > 0) {
+              lines.push(`       Transactions (${wLabel} ↔ ${bracketLbl} / ${addrShort}) — ${sorted.length} total${extra > 0 ? `, top 10 by amount` : ""}:`);
+              emitTxs(show, "       ");
+              if (extra > 0) lines.push(`         … and ${extra} more transaction(s) to/from this exchange`);
             } else {
-              lines.push(`       Transactions: none in loaded history`);
+              lines.push(`       Transactions: none in scanned window (detected via connection graph)`);
             }
             lines.push("");
           });
         }
-        // ② Commingle-detected exchange shared nodes
-        if (allExchFindings.length > 0) {
-          lines.push(directExchFlows.length > 0
-            ? "  SHARED EXCHANGE NODES  (both wallets transact with same exchange):"
-            : "  All exchange, bridge, and official shared nodes — full transaction detail:");
+
+        // ② Extra shared exchange nodes from the commingling graph
+        if (extraSharedExch.length > 0) {
+          lines.push("  ADDITIONAL SHARED EXCHANGE NODES (commingling graph — not in recent tx window):");
           lines.push("");
-          allExchFindings.slice(0, 30).forEach((f, i) => {
+          extraSharedExch.slice(0, 20).forEach((f, i) => {
             const isBridge  = f.knownInfo?.type === "bridge";
             const isGenesis = f.knownInfo?.type === "genesis";
-            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
-            const typeDesc  = isBridge
-              ? "Bridge / Infrastructure Node — funds pass through official protocol"
-              : isGenesis
-              ? "Official / Team / Foundation Wallet — not private commingling"
-              : "Exchange Hot Wallet — funds routed through custodian (on-ramp / off-ramp)";
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}`);
-            lines.push(`       Label   : ${(f.knownInfo?.label ?? "UNKNOWN").toUpperCase()}  ${flowTag}`);
-            lines.push(`       Type    : ${typeDesc}`);
+            const flowTag   = isBridge ? "◄ BRIDGE" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE";
+            const bracketLbl = toBracketLabel(f.knownInfo?.label ?? f.sharedAddress);
+            const addrShort  = f.sharedAddress.length > 16 ? `${f.sharedAddress.slice(0, 8)}…${f.sharedAddress.slice(-4)}` : f.sharedAddress;
+            lines.push(`  ${String(storedExchFlows.length + i + 1).padStart(2, "0")}. ${f.sharedAddress}`);
+            lines.push(`       Label   : ${bracketLbl}  ${flowTag}`);
             lines.push(`       Tier    : ${f.tier}  (depth ${f.tier} from Wallet 1)`);
             lines.push(`       Path    : ${fmtPath(f.targetPath)}`);
             lines.push(`       Shared  : ${f.comparisons.map((c) => c.wallet).join(", ")}`);
             const txAddr  = f.targetPath[1] ?? f.sharedAddress;
             const txs     = bestInOut(txAddr);
             if (txs.length > 0) {
-              const addrShort = txAddr.length > 16 ? `${txAddr.slice(0, 8)}…${txAddr.slice(-4)}` : txAddr;
-              const hopRole   = f.tier === 1 ? "shared wallet" : "hop 1 entry";
-              lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${addrShort} — ${hopRole}):`);
+              lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${addrShort}):`);
               emitTxs(txs, "       ");
             } else {
               lines.push(`       Transactions: none in loaded history`);
             }
             lines.push("");
           });
-          if (allExchFindings.length > 30) lines.push(`  … and ${allExchFindings.length - 30} more`);
+          if (extraSharedExch.length > 20) lines.push(`  … and ${extraSharedExch.length - 20} more`);
           lines.push("");
         }
       }
@@ -3064,57 +3038,80 @@ export default function WalletDetail() {
         );
       }
 
-      // Fetch transactions for all cluster wallets (target + comparisons) for exchange detection.
-      // The /connections API only returns bidirectional relationship nodes, so exchange deposit
-      // addresses (one-directional outflows) never appear in the reach map. Scanning the actual
-      // transactions is the only reliable way to find them.
-      setCommingleProgress("Fetching cluster wallet transactions for exchange detection…");
+      // Fetch transactions for every cluster wallet and detect exchange flows directly.
+      // KEY: we scan the RAW (unfiltered) transactions so no asset-type or amount filter
+      // can hide exchange deposit outflows. walletTxs keeps the filtered set for display.
+      // We check BOTH t.from AND t.to — catches both incoming and outgoing exchange flows.
+      setCommingleProgress("Scanning cluster wallet transactions for exchange flows…");
       const walletTxs: Record<string, Tx[]> = {};
-      const clusterFetchWallets = [address, ...commingleWallets.slice(0, 5)];
+      const EXCH_TYPES_SCAN = new Set(["exchange", "bridge", "genesis"]);
+      // key = "exchAddr::sourceWallet"
+      const exchFlowsMap = new Map<string, {
+        exchAddr: string; exchLabel: string; exchType: string;
+        sourceWallet: string; txs: Tx[];
+      }>();
+      // target wallet gets 1 000 txs; each comparison wallet gets 500
+      const clusterFetch = [
+        { w: address, limit: 1000 },
+        ...commingleWallets.map((cw) => ({ w: cw, limit: 500 })),
+      ];
       await Promise.allSettled(
-        clusterFetchWallets.map(async (w) => {
+        clusterFetch.map(async ({ w, limit }) => {
           try {
             const resp = await fetch(
-              `/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=500`
+              `/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=${limit}`
             );
             if (!resp.ok) return;
             const data = await resp.json() as { transactions?: Tx[] };
-            const txs = (data.transactions ?? []).filter((tx) =>
-              chain === "xlm" ? xlmPassesFilter(tx) : true
-            );
-            if (txs.length > 0) walletTxs[w] = txs;
+            const rawTxs = data.transactions ?? [];
+            // Filtered set for display (walletTxs)
+            const filtered = rawTxs.filter((tx) => chain === "xlm" ? xlmPassesFilter(tx) : true);
+            if (filtered.length > 0) walletTxs[w] = filtered;
+            // Exchange detection — scan every raw tx, no amount/asset filter
+            for (const tx of rawTxs) {
+              if (tx.direction === "self") continue;
+              // Check both sides — an IN flow means an exchange sent us funds;
+              // an OUT flow means we sent funds to the exchange.
+              const candidates = [tx.from, tx.to].filter((a): a is string => !!a && a !== w);
+              for (const candidate of candidates) {
+                const info = KNOWN_LABELS[candidate];
+                if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
+                const key = `${candidate}::${w}`;
+                if (!exchFlowsMap.has(key)) {
+                  exchFlowsMap.set(key, {
+                    exchAddr: candidate, exchLabel: info.label, exchType: info.type,
+                    sourceWallet: w, txs: [],
+                  });
+                }
+                exchFlowsMap.get(key)!.txs.push(tx);
+              }
+            }
           } catch { /* best-effort */ }
         })
       );
-
-      // Build directExchanges map from two sources:
-      //  (a) Transaction scan of walletTxs — primary, catches all deposit addresses
-      //      (exchange hot-wallets are one-directional and don't appear in the connections graph)
-      //  (b) Reach-map tier-1 — supplementary, covers any exchange that IS bidirectional
-      const EXCH_TYPES = new Set(["exchange", "bridge", "genesis"]);
-      const directExchanges: Record<string, string[]> = {};
-      const addDirectExch = (addr: string, sourceWallet: string) => {
-        const info = KNOWN_LABELS[addr];
-        if (!info || !EXCH_TYPES.has(info.type)) return;
-        if (directExchanges[addr]?.includes(sourceWallet)) return; // deduplicate
-        directExchanges[addr] = [...(directExchanges[addr] ?? []), sourceWallet];
-      };
-      // (a) scan fetched transactions — most reliable for exchange deposit detection
-      for (const [w, txs] of Object.entries(walletTxs)) {
-        for (const tx of txs) {
-          const counterparty = tx.direction === "in" ? tx.from : tx.to;
-          if (counterparty) addDirectExch(counterparty, w);
-        }
-      }
-      // (b) supplement from reach-map tier-1 (catches bidirectional exchange nodes)
+      // Supplement from reach-map tier-1 (bidirectional exchange nodes that appear in the
+      // connections graph even if not in the recent tx fetch window)
       for (const [addr, data] of targetReach) {
-        if (data.tier === 1) addDirectExch(addr, address);
+        if (data.tier !== 1) continue;
+        const info = KNOWN_LABELS[addr];
+        if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
+        const key = `${addr}::${address}`;
+        if (!exchFlowsMap.has(key)) {
+          exchFlowsMap.set(key, { exchAddr: addr, exchLabel: info.label, exchType: info.type, sourceWallet: address, txs: [] });
+        }
       }
       for (const { wallet: cw, reachMap } of compReachMaps) {
         for (const [addr, data] of reachMap) {
-          if (data.tier === 1) addDirectExch(addr, cw);
+          if (data.tier !== 1) continue;
+          const info = KNOWN_LABELS[addr];
+          if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
+          const key = `${addr}::${cw}`;
+          if (!exchFlowsMap.has(key)) {
+            exchFlowsMap.set(key, { exchAddr: addr, exchLabel: info.label, exchType: info.type, sourceWallet: cw, txs: [] });
+          }
         }
       }
+      const exchFlows = [...exchFlowsMap.values()];
 
       setCommingleResult({
         targetWallet: address,
@@ -3126,7 +3123,7 @@ export default function WalletDetail() {
         totalScanned: targetReach.size,
         segmentTxs,
         walletTxs,
-        directExchanges,
+        exchFlows,
       });
       setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
     } catch (err) {

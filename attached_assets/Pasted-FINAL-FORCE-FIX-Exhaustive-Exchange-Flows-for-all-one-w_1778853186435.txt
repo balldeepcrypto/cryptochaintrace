@@ -1,0 +1,32 @@
+FINAL FORCE FIX — Exhaustive Exchange Flows for all one-way deposit addresses.
+
+From the latest report (RGONE):
+- Private commingling (68 nodes) is perfect — do NOT change anything about Tier 1–4 or shared private wallets.
+- Exchange section now shows 3 (Binance appeared), but Kraken, Coinbase (all 3), Uphold regular + cold, Robinhood, and Bybit are STILL MISSING.
+
+Implement exactly what the user wants:
+- During the commingle scan, for EVERY wallet in the cluster (target + all comparison wallets), fetch the full raw transaction history (unfiltered, 1,000+ txs).
+- For every transaction, check BOTH t.from AND t.to against the full KNOWN_LABELS map.
+- If it matches ANY known exchange address, add it to exchFlows with:
+  - Source cluster wallet number
+  - Direction (IN or OUT)
+  - Amount + token
+  - Date
+  - TX hash
+  - Memo (if present)
+  - Label in [BRACKETS]
+- Output ALL matches in the dedicated “EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS” section (prominent, consolidated, at the end or after Tier 1).
+- Show up to 10 most significant transactions per exchange per source wallet, sorted by amount descending.
+- Keep MEXC/ChangeNOW/Binance as they are (supplement from reach map).
+
+Force-include these exact addresses (already in KNOWN_LABELS):
+- Kraken: GA5XIGA5C7QTPTWXQHY6MCJRMTRZDOSHR6EFIBNDQTCQHG262N4GGKTM → [KRAKEN]
+- Coinbase: GCIL6JNOVODHIZGZBYKWSRDRYUVXWF5ZEVMISJQQJBQRMF5FAH6YOD7U, GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37, GDZHDOITT5W2S35LVJZRLUAUXLU7UEDEAN4R7O4VA5FFGKG7RHC4NPSC → [COINBASE]
+- Robinhood: GB2ES2N326MZK4EGJBKN3ZARCQ5RTFQSAWIJAAKFVIIIJSCC35TXIMLB → [ROBINHOOD]
+- Uphold: GCGMJ63NTBSQKW7OEQ3J2RZH6PYXSTEUK4TVE35IPXLB7XWNI2PUDCY6 → [UPHOLD]
+- Uphold Cold: GBJDVTTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O → [UPHOLD] (COLD WALLET)
+- Bybit: GDT7ARDYZRBXXYOCSQ3MUMISTITSSRWZI6KR2A5L5Q3KB4QIZHGYMTIH → [BYBIT]
+
+Re-run the GCP5X5UFY6JL report after this change. The Exchange Flows section must now list ALL of the above with full details.
+
+No impact on private wallet counting or Tier logic. This change must be chain-agnostic.

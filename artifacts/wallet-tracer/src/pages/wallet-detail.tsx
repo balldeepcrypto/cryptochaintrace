@@ -1284,7 +1284,44 @@ export default function WalletDetail() {
       // ── Primary source: first-class exchFlows stored during the scan ─────────
       // These were detected by scanning raw (unfiltered) transactions from every
       // cluster wallet, checking both t.from and t.to against KNOWN_LABELS.
+      // The scan paginates through multiple Horizon pages, but allTxs (fully
+      // loaded user history) may reach even further back — merge both sources.
       const storedExchFlows = commingleResult.exchFlows ?? [];
+
+      // ── Safety net: scan allTxs for the target wallet ─────────────────────
+      // allTxs = everything the user has loaded (may be ALL history if they
+      // hit Load All History). Supplements storedExchFlows for exchanges whose
+      // transactions are older than the 5-page scan window.
+      {
+        const EXCH_TYPES_RPT = new Set(["exchange", "bridge", "genesis"]);
+        const storedKeys = new Set(storedExchFlows.map(f => `${f.exchAddr}::${f.sourceWallet}`));
+        const supplementMap = new Map<string, typeof storedExchFlows[number]>();
+        for (const tx of allTxs) {
+          if (tx.direction === "self") continue;
+          const w = commingleResult.targetWallet;
+          const candidates = [tx.from, tx.to].filter((a): a is string => !!a && a !== w);
+          for (const candidate of candidates) {
+            const info = KNOWN_LABELS[candidate];
+            if (!info || !EXCH_TYPES_RPT.has(info.type)) continue;
+            const key = `${candidate}::${w}`;
+            if (storedKeys.has(key)) {
+              // Already in storedExchFlows — add tx if not already present
+              const existing = storedExchFlows.find(f => f.exchAddr === candidate && f.sourceWallet === w);
+              if (existing && !existing.txs.find(t => t.hash === tx.hash)) {
+                existing.txs.push(tx);
+              }
+            } else {
+              // New exchange found via allTxs — add to supplement
+              if (!supplementMap.has(key)) {
+                supplementMap.set(key, { exchAddr: candidate, exchLabel: info.label, exchType: info.type, sourceWallet: w, txs: [] });
+              }
+              const sup = supplementMap.get(key)!;
+              if (!sup.txs.find(t => t.hash === tx.hash)) sup.txs.push(tx);
+            }
+          }
+        }
+        storedExchFlows.push(...supplementMap.values());
+      }
 
       // ── Supplementary: allExchFindings not already covered by storedExchFlows ─
       // Shared commingling nodes (found via the connections graph) that may not
@@ -3039,9 +3076,9 @@ export default function WalletDetail() {
       }
 
       // Fetch transactions for every cluster wallet and detect exchange flows directly.
-      // KEY: we scan the RAW (unfiltered) transactions so no asset-type or amount filter
-      // can hide exchange deposit outflows. walletTxs keeps the filtered set for display.
-      // We check BOTH t.from AND t.to — catches both incoming and outgoing exchange flows.
+      // KEY: scan RAW (unfiltered) txs so no asset/amount filter hides exchange outflows.
+      // Paginate through multiple Horizon pages — the server returns at most 200 ops per
+      // call (Stellar Horizon hard limit), so a single fetch misses older exchange txs.
       setCommingleProgress("Scanning cluster wallet transactions for exchange flows…");
       const walletTxs: Record<string, Tx[]> = {};
       const EXCH_TYPES_SCAN = new Set(["exchange", "bridge", "genesis"]);
@@ -3050,43 +3087,57 @@ export default function WalletDetail() {
         exchAddr: string; exchLabel: string; exchType: string;
         sourceWallet: string; txs: Tx[];
       }>();
-      // target wallet gets 1 000 txs; each comparison wallet gets 500
+
+      // Paginating fetch — follows nextCursor for up to maxPages pages of 200 ops each.
+      // All wallets run in parallel; pages within each wallet are sequential.
+      const fetchPagesForExch = async (w: string, maxPages: number): Promise<Tx[]> => {
+        const acc: Tx[] = [];
+        let cursor: string | null = null;
+        for (let p = 0; p < maxPages; p++) {
+          try {
+            const qs = new URLSearchParams({ chain, limit: "200" });
+            if (cursor) qs.set("cursor", cursor);
+            const resp = await fetch(`/api/wallets/${encodeURIComponent(w)}/transactions?${qs}`);
+            if (!resp.ok) break;
+            const data = await resp.json() as {
+              transactions?: Tx[]; nextCursor?: string | null; hasMore?: boolean;
+            };
+            acc.push(...(data.transactions ?? []));
+            if (!data.hasMore || !data.nextCursor) break;
+            cursor = data.nextCursor;
+          } catch { break; }
+        }
+        return acc;
+      };
+
+      // target wallet: 5 pages (up to 1 000 ops); each comparison wallet: 2 pages (400 ops)
       const clusterFetch = [
-        { w: address, limit: 1000 },
-        ...commingleWallets.map((cw) => ({ w: cw, limit: 500 })),
+        { w: address, maxPages: 5 },
+        ...commingleWallets.map((cw) => ({ w: cw, maxPages: 2 })),
       ];
       await Promise.allSettled(
-        clusterFetch.map(async ({ w, limit }) => {
-          try {
-            const resp = await fetch(
-              `/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=${limit}`
-            );
-            if (!resp.ok) return;
-            const data = await resp.json() as { transactions?: Tx[] };
-            const rawTxs = data.transactions ?? [];
-            // Filtered set for display (walletTxs)
-            const filtered = rawTxs.filter((tx) => chain === "xlm" ? xlmPassesFilter(tx) : true);
-            if (filtered.length > 0) walletTxs[w] = filtered;
-            // Exchange detection — scan every raw tx, no amount/asset filter
-            for (const tx of rawTxs) {
-              if (tx.direction === "self") continue;
-              // Check both sides — an IN flow means an exchange sent us funds;
-              // an OUT flow means we sent funds to the exchange.
-              const candidates = [tx.from, tx.to].filter((a): a is string => !!a && a !== w);
-              for (const candidate of candidates) {
-                const info = KNOWN_LABELS[candidate];
-                if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
-                const key = `${candidate}::${w}`;
-                if (!exchFlowsMap.has(key)) {
-                  exchFlowsMap.set(key, {
-                    exchAddr: candidate, exchLabel: info.label, exchType: info.type,
-                    sourceWallet: w, txs: [],
-                  });
-                }
-                exchFlowsMap.get(key)!.txs.push(tx);
+        clusterFetch.map(async ({ w, maxPages }) => {
+          const rawTxs = await fetchPagesForExch(w, maxPages);
+          // Filtered set for display (walletTxs)
+          const filtered = rawTxs.filter((tx) => chain === "xlm" ? xlmPassesFilter(tx) : true);
+          if (filtered.length > 0) walletTxs[w] = filtered;
+          // Exchange detection — scan every raw tx, both from and to, no amount filter
+          for (const tx of rawTxs) {
+            if (tx.direction === "self") continue;
+            const candidates = [tx.from, tx.to].filter((a): a is string => !!a && a !== w);
+            for (const candidate of candidates) {
+              const info = KNOWN_LABELS[candidate];
+              if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
+              const key = `${candidate}::${w}`;
+              if (!exchFlowsMap.has(key)) {
+                exchFlowsMap.set(key, {
+                  exchAddr: candidate, exchLabel: info.label, exchType: info.type,
+                  sourceWallet: w, txs: [],
+                });
               }
+              exchFlowsMap.get(key)!.txs.push(tx);
             }
-          } catch { /* best-effort */ }
+          }
         })
       );
       // Supplement from reach-map tier-1 (bidirectional exchange nodes that appear in the

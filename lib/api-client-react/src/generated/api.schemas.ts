@@ -74,6 +74,10 @@ export interface TransactionList {
   nextCursor: string | null;
   /** True if additional pages of results are available */
   hasMore: boolean;
+  /** Optional human-readable note about the result (e.g. history not indexed) */
+  message?: string | null;
+  /** Optional URL to a block explorer showing full history for this address */
+  historyLink?: string | null;
 }
 
 export interface WalletNode {

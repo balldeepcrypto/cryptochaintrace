@@ -1126,7 +1126,11 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       // returns only payment-type operations, and may still carry historical data on some
       // Horizon nodes. NOTE: /payments?account= is the GLOBAL endpoint and ignores the
       // account parameter — always use the /accounts/{id}/payments path here.
-      if (data["_empty"] && data["_status"] === 404) {
+      // Track whether the primary /operations endpoint 404'd (merged/closed account).
+      // Used later to attach a helpful message + historyLink if no data is found at all.
+      const wasHorizon404 = data["_empty"] === true && data["_status"] === 404;
+
+      if (wasHorizon404) {
         const paymentsPath = `/accounts/${address}/payments?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorSuffix}`;
         try {
           const fallback = await stellarFetch(paymentsPath);
@@ -1137,7 +1141,17 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       if (data["_empty"]) {
         // Never cache a failed/empty result — invalidate so next request fetches fresh
         if (txCacheKey) txCache.invalidate(txCacheKey);
-        res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit: stellarLimit, nextCursor: null, hasMore: false }));
+        res.json(GetWalletTransactionsResponse.parse({
+          transactions: [], total: 0, page, limit: stellarLimit, nextCursor: null, hasMore: false,
+          // When both /operations and /payments returned nothing for a known-404 account,
+          // tell the frontend to show a direct link to the stellar.expert web explorer.
+          message: wasHorizon404
+            ? "Transaction history not indexed on public Horizon for this account."
+            : null,
+          historyLink: wasHorizon404
+            ? `https://stellar.expert/explorer/public/account/${address}`
+            : null,
+        }));
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];

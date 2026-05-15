@@ -120,6 +120,18 @@ export const GetWalletTransactionsResponse = zod.object({
   hasMore: zod
     .boolean()
     .describe("True if additional pages of results are available"),
+  message: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional human-readable note about the result (e.g. history not indexed)",
+    ),
+  historyLink: zod
+    .string()
+    .nullish()
+    .describe(
+      "Optional URL to a block explorer showing full history for this address",
+    ),
 });
 
 /**

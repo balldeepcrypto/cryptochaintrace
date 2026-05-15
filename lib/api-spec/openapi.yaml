@@ -321,6 +321,14 @@ components:
         hasMore:
           type: boolean
           description: True if additional pages of results are available
+        message:
+          type: string
+          nullable: true
+          description: Optional human-readable note about the result (e.g. history not indexed)
+        historyLink:
+          type: string
+          nullable: true
+          description: Optional URL to a block explorer showing full history for this address
       required:
         - transactions
         - total

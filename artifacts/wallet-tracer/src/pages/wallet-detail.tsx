@@ -2172,6 +2172,9 @@ export default function WalletDetail() {
       },
     }
   );
+  // Message + explorer link returned by the server when Horizon has no history for this XLM address
+  const xlmMessage     = transactionsData?.message     ?? null;
+  const xlmHistoryLink = transactionsData?.historyLink ?? null;
 
   // ── Sync initial React Query page into local state (once per wallet/chain) ──
   // txInitializedRef blocks subsequent RQ background-refetches from overwriting
@@ -3606,7 +3609,16 @@ export default function WalletDetail() {
                   ))
                 ) : groupedRows.length === 0 ? (
                   <tr><td colSpan={8} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">
-                    {allTxs.length > 0 ? `ALL ${allTxs.length} TXS BELOW MIN AMOUNT (${minAmount} ${chain.toUpperCase()})` : "NO TRANSACTIONS FOUND"}
+                    {allTxs.length > 0
+                      ? `ALL ${allTxs.length} TXS BELOW MIN AMOUNT (${minAmount} ${chain.toUpperCase()})`
+                      : xlmMessage
+                        ? <span className="flex flex-col items-center gap-2">
+                            <span>NO TRANSACTIONS FOUND</span>
+                            <span className="text-xs text-muted-foreground/70 font-mono normal-case">{xlmMessage}</span>
+                            {xlmHistoryLink && <a href={xlmHistoryLink} target="_blank" rel="noopener noreferrer" className="text-xs text-primary/70 hover:text-primary underline underline-offset-2 transition-colors">View full history on stellar.expert ↗</a>}
+                          </span>
+                        : "NO TRANSACTIONS FOUND"
+                    }
                   </td></tr>
                 ) : (
                   groupedRows.map((row, idx) => {
@@ -3743,7 +3755,16 @@ export default function WalletDetail() {
                   ))
                 ) : filteredTxs.length === 0 ? (
                   <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground font-mono text-sm">
-                    {allTxs.length > 0 ? `ALL ${allTxs.length} TXS BELOW MIN AMOUNT (${minAmount} ${chain.toUpperCase()})` : "NO TRANSACTIONS FOUND"}
+                    {allTxs.length > 0
+                      ? `ALL ${allTxs.length} TXS BELOW MIN AMOUNT (${minAmount} ${chain.toUpperCase()})`
+                      : xlmMessage
+                        ? <span className="flex flex-col items-center gap-2">
+                            <span>NO TRANSACTIONS FOUND</span>
+                            <span className="text-xs text-muted-foreground/70 font-mono normal-case">{xlmMessage}</span>
+                            {xlmHistoryLink && <a href={xlmHistoryLink} target="_blank" rel="noopener noreferrer" className="text-xs text-primary/70 hover:text-primary underline underline-offset-2 transition-colors">View full history on stellar.expert ↗</a>}
+                          </span>
+                        : "NO TRANSACTIONS FOUND"
+                    }
                   </td></tr>
                 ) : (
                   filteredTxs.map((tx, idx) => {

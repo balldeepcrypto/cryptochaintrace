@@ -1,0 +1,57 @@
+async function fetchXLMWallet(address: string) {
+  const baseUrl = 'https://horizon.stellar.org';
+  
+  try {
+    // Balance + account info (always works)
+    const accountRes = await fetch(`${baseUrl}/accounts/${encodeURIComponent(address)}`);
+    if (!accountRes.ok) throw new Error('Account not found');
+    
+    const account = await accountRes.json();
+    const nativeBalance = account.balances?.find((b: any) => b.asset_type === 'native')?.balance || '0';
+
+    // Try history
+    let transactions: any[] = [];
+    let message = "";
+
+    try {
+      const opsRes = await fetch(`${baseUrl}/accounts/${encodeURIComponent(address)}/operations?limit=100&order=desc`);
+      
+      if (opsRes.ok) {
+        const data = await opsRes.json();
+        const rawRecords = data._embedded?.records || [];
+
+        // Your strong pre-parse filter
+        const filtered = rawRecords.filter((op: any) => 
+          op.source_account === address ||
+          op.from === address ||
+          op.to === address ||
+          op.account === address ||
+          op.funder === address ||
+          op.claimant === address ||
+          op.sponsor === address
+        );
+
+        transactions = filtered
+          .map((op: any) => parseStellarOp(op))
+          .filter((t: any) => t && (t.from === address || t.to === address));
+      } else if (opsRes.status === 404) {
+        message = "Balance loaded successfully. Transaction history not indexed on public Horizon for this account. View full history here:";
+      }
+    } catch (e) {
+      message = "Balance loaded. History temporarily unavailable on public Horizon.";
+    }
+
+    return {
+      address,
+      balance: parseFloat(nativeBalance),
+      transactions,
+      rawAccount: account,
+      message: message || (transactions.length === 0 ? "No transactions found" : undefined),
+      historyLink: "https://stellar.expert/explorer/public/account/" + address   // Direct link for user
+    };
+
+  } catch (error) {
+    console.error('XLM fetch error:', error);
+    throw error;
+  }
+}

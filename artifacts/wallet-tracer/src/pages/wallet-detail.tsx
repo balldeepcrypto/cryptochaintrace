@@ -3049,11 +3049,11 @@ export default function WalletDetail() {
       }
       const segmentTxs: Record<string, Tx | null> = {};
       if (intermedWallets.size > 0) {
-        // Paginating hop fetch — up to 25 pages × 200 ops each (~5 000 ops per hop wallet).
+        // Paginating hop fetch — up to 125 pages × 200 ops each (25 000 ops per hop wallet).
         // All hop wallets run in parallel; pages within each wallet are sequential cursor follows.
         const fetchHopPages = async (fromAddr: string): Promise<void> => {
           let cursor: string | null = null;
-          for (let p = 0; p < 25; p++) {
+          for (let p = 0; p < 125; p++) {
             try {
               const qs = new URLSearchParams({ chain, limit: "200" });
               if (cursor) qs.set("cursor", cursor);

@@ -112,8 +112,8 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   GAAZI4TCR3TY5OJHCTJC2A4QSY6CJWJH5IAJTGKIN2ER7LBNVKOCCWN: { label: "Coinbase XLM",    type: "exchange" },
   GA3CINHTGMUMRVPJPVHYJWQJ2EF7EX2PCRAFN4H4ZPO77WB6RHXEHMJT: { label: "Coinbase XLM 2", type: "exchange" },
   GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37: { label: "Coinbase XLM 3", type: "exchange" },
-  GDT7ARDYZRBXXYOCSQ3MUMISTITSSRWZI6KR2A5L5Q3KB4QIZHGYMTIH: { label: "Coinbase XLM 4", type: "exchange" },
-  GCGMJ63NTBSQKW7OEQ3J2RZH6PYXSTEUK4TVE35IPXLB7XWNI2PUDCY6: { label: "Coinbase XLM 5", type: "exchange" },
+  GDT7ARDYZRBXXYOCSQ3MUMISTITSSRWZI6KR2A5L5Q3KB4QIZHGYMTIH: { label: "Bybit XLM 3",     type: "exchange" },
+  GCGMJ63NTBSQKW7OEQ3J2RZH6PYXSTEUK4TVE35IPXLB7XWNI2PUDCY6: { label: "Uphold XLM 6",    type: "exchange" },
   GDUQXQAR4ECNAYCTGZAS4TH4KJJIZDLXPR5V2YYRFRGGQ3LTXBFTBVW6: { label: "Coinbase XLM 6", type: "exchange" },
   GDF4UGQSY6VHWN7T4XJEZ6WYJEREMZYLNYZ5CCKYVS3V3MNYIBMTB354: { label: "Coinbase XLM 7",  type: "exchange" },
   GCIL6JNOVODHIZGZBYKWSRDRYUVXWF5ZEVMISJQQJBQRMF5FAH6YOD7U: { label: "Coinbase XLM 8",  type: "exchange" },
@@ -132,7 +132,8 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66MEMGHMN: { label: "OKX XLM",          type: "exchange" },
   GDKIJJIKXLOM2NRMPNQZUUYK24ZPVFC6426GZAEP3KUK6KEJLACCWNMX: { label: "MEXC XLM",         type: "exchange" },
   GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4: { label: "Uphold XLM",       type: "exchange" },
-  GBJDVTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O: { label: "Uphold XLM 2",    type: "exchange" },
+  GBJDVTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O:  { label: "Uphold XLM 2",      type: "exchange" },
+  GBJDVTTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O: { label: "Uphold XLM Cold",   type: "exchange" },
   GBW5AENWI5PFJRYEIAIRYDB62MVEHDYHEBXKFN3TI64RSL2L6GYOYFG4: { label: "Uphold XLM 3",    type: "exchange" },
   GDMKMOHKKYS4VTHBCH4TZXNFF7MK7KDA7IEZL6NB36JREVCRNYZJXPTA: { label: "Uphold XLM 4",    type: "exchange" },
   GBP32F37ZHXGSLOE4WAFCLNWQUMY4OUIAUGNBZUF4OD2BG6MS7WKRTSX: { label: "Uphold XLM 5",    type: "exchange" },
@@ -485,6 +486,8 @@ interface CommingleCheckResult {
   totalScanned: number;
   // Best TX for each intermediate hop segment: key = "fromAddr::toAddr"
   segmentTxs: Record<string, Tx | null>;
+  // First-page transactions for each comparison wallet — used for cluster-wide exchange flow detection
+  walletTxs: Record<string, Tx[]>;
 }
 
 const DAG_BATCH = 250;
@@ -1254,17 +1257,28 @@ export default function WalletDetail() {
 
       // ── Consolidated Exchange / Custodial / Bridge / Official flows ────────────
       const allExchFindings = [...t1exch, ...t2exch, ...t3exch, ...t4exch];
-      // Also scan allTxs for DIRECT exchange outflows: known exchange addresses that appear
-      // as counterparties in the target wallet's transactions but are NOT already detected
-      // as shared commingling nodes (i.e. only the target wallet transacts with them).
+      // Scan every wallet in the cluster for direct exchange flows:
+      // target wallet (allTxs) + comparison wallets (walletTxs fetched during scan).
+      // Reports exchange counterparties that are NOT already shared commingling nodes.
+      const walletLabel = (w: string) => {
+        if (w === commingleResult.targetWallet) return "Wallet 1";
+        const idx = commingleResult.comparisonWallets.indexOf(w);
+        return idx >= 0 ? `Wallet ${idx + 2}` : `${w.slice(0, 10)}…`;
+      };
+      const clusterWalletTxs: Array<{ wallet: string; txs: Tx[] }> = [
+        { wallet: commingleResult.targetWallet, txs: allTxs },
+        ...Object.entries(commingleResult.walletTxs ?? {}).map(([w, txs]) => ({ wallet: w, txs })),
+      ];
       const commingledExchAddrs = new Set(allExchFindings.map(f => f.sharedAddress));
-      const directExchFlows: Array<{ addr: string; known: { label: string; type: string }; txs: Tx[] }> = [];
+      const directExchFlows: Array<{ addr: string; known: { label: string; type: string }; txs: Tx[]; sourceWallet: string }> = [];
       for (const [addr, info] of Object.entries(KNOWN_LABELS)) {
         if (!["exchange", "bridge", "genesis"].includes(info.type)) continue;
         if (commingledExchAddrs.has(addr)) continue;
         if (EXCLUDED_ADDRS.has(addr)) continue;
-        const txs = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr);
-        if (txs.length > 0) directExchFlows.push({ addr, known: info, txs });
+        for (const { wallet: sourceWallet, txs: wTxs } of clusterWalletTxs) {
+          const txs = wTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr);
+          if (txs.length > 0) directExchFlows.push({ addr, known: info, txs, sourceWallet });
+        }
       }
       lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
       lines.push("");
@@ -1278,21 +1292,25 @@ export default function WalletDetail() {
         if (directExchFlows.length > 0) {
           lines.push("  DIRECT EXCHANGE FLOWS  (selected wallets ↔ known exchange — not a shared node):");
           lines.push("");
-          directExchFlows.forEach(({ addr, known, txs: _allTxsForAddr }, i) => {
+          directExchFlows.forEach(({ addr, known, txs: flowTxs, sourceWallet }, i) => {
             const isBridge  = known.type === "bridge";
             const isGenesis = known.type === "genesis";
             const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
             const typeDesc  = isBridge ? "Bridge / Infrastructure"
               : isGenesis ? "Official / Foundation Wallet"
               : "Exchange Hot Wallet — direct outflow / inflow to custodian";
+            const wLabel    = walletLabel(sourceWallet);
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${addr}`);
             lines.push(`       Label   : ${known.label.toUpperCase()}  ${flowTag}`);
             lines.push(`       Type    : ${typeDesc}`);
-            lines.push(`       Source  : Direct — Wallet 1 transacts with this exchange directly`);
+            lines.push(`       Source  : Direct — ${wLabel} transacts with this exchange directly`);
             const addrShort = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr;
-            const exchTxs   = bestInOut(addr);
+            // Use the already-filtered txs; pick highest IN and highest OUT
+            const topIn  = flowTxs.filter(t => t.direction === "in" ).sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+            const topOut = flowTxs.filter(t => t.direction === "out").sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+            const exchTxs = [topIn, topOut].filter(Boolean) as Tx[];
             if (exchTxs.length > 0) {
-              lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${addrShort}):`);
+              lines.push(`       Most Significant Transactions (${wLabel} ↔ ${addrShort}):`);
               emitTxs(exchTxs, "       ");
             } else {
               lines.push(`       Transactions: none in loaded history`);
@@ -3007,6 +3025,26 @@ export default function WalletDetail() {
         );
       }
 
+      // Fetch first page of transactions for each comparison wallet so exchange flow
+      // detection in the report can scan the full cluster, not just the target wallet.
+      setCommingleProgress("Fetching comparison wallet transactions for exchange detection…");
+      const walletTxs: Record<string, Tx[]> = {};
+      await Promise.allSettled(
+        commingleWallets.slice(0, 5).map(async (cw) => {
+          try {
+            const resp = await fetch(
+              `/api/wallets/${encodeURIComponent(cw)}/transactions?chain=${chain}&limit=500`
+            );
+            if (!resp.ok) return;
+            const data = await resp.json() as { transactions?: Tx[] };
+            const txs = (data.transactions ?? []).filter((tx) =>
+              chain === "xlm" ? xlmPassesFilter(tx) : true
+            );
+            if (txs.length > 0) walletTxs[cw] = txs;
+          } catch { /* best-effort */ }
+        })
+      );
+
       setCommingleResult({
         targetWallet: address,
         comparisonWallets: commingleWallets,
@@ -3016,6 +3054,7 @@ export default function WalletDetail() {
         tieredCounts,
         totalScanned: targetReach.size,
         segmentTxs,
+        walletTxs,
       });
       setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
     } catch (err) {

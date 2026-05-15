@@ -487,7 +487,7 @@ interface CommingleCheckResult {
   // Best TX for each intermediate hop segment: key = "fromAddr::toAddr"
   segmentTxs: Record<string, Tx | null>;
   // Debug stats per intermediate hop wallet: how many pages/ops were fetched
-  hopFetchStats: Record<string, { pages: number; txs: number }>;
+  hopFetchStats: Record<string, { pages: number; txs: number; failReason?: string }>;
   // Filtered transactions for each cluster wallet (for display purposes)
   walletTxs: Record<string, Tx[]>;
   // First-class exchange flow data detected during the scan from raw transaction history.
@@ -1073,7 +1073,11 @@ export default function WalletDetail() {
         const kn = KNOWN_LABELS[addr];
         const tag = kn ? `  [${kn.label}]` : "";
         lines.push(`  ${addr}${tag}`);
-        lines.push(`    Fetched: ${s.txs} ops across ${s.pages} page${s.pages !== 1 ? "s" : ""}`);
+        if (s.pages === 0) {
+          lines.push(`    FAILED: ${s.failReason ?? "unknown error — 0 pages fetched"}`);
+        } else {
+          lines.push(`    Fetched: ${s.txs} ops across ${s.pages} page${s.pages !== 1 ? "s" : ""}${s.failReason ? `  (stopped: ${s.failReason})` : ""}`);
+        }
       }
       lines.push(`──────────────────────────────────────────────────────────────`);
       lines.push("");
@@ -3063,45 +3067,76 @@ export default function WalletDetail() {
         }
       }
       const segmentTxs: Record<string, Tx | null> = {};
-      const hopFetchStats: Record<string, { pages: number; txs: number }> = {};
+      const hopFetchStats: Record<string, { pages: number; txs: number; failReason?: string }> = {};
       if (intermedWallets.size > 0) {
         // Paginating hop fetch — up to 125 pages × 200 ops each (25 000 ops per hop wallet).
         // All hop wallets run in parallel; pages within each wallet are sequential cursor follows.
-        // Returns { pages, txs } stats so the report can show how deep the fetch actually went.
-        const fetchHopPages = async (fromAddr: string): Promise<{ pages: number; txs: number }> => {
+        // Returns { pages, txs, failReason? } so the report shows exactly why a fetch stopped.
+        const fetchHopPages = async (
+          fromAddr: string,
+        ): Promise<{ pages: number; txs: number; failReason?: string }> => {
+          // Defensive: skip obviously invalid addresses before making any network call.
+          const trimmed = fromAddr.trim();
+          if (!trimmed) return { pages: 0, txs: 0, failReason: "empty address" };
+
           let cursor: string | null = null;
           let pagesUsed = 0;
           let txsTotal = 0;
+          let failReason: string | undefined;
+
           for (let p = 0; p < 125; p++) {
+            let resp: Response;
             try {
               const qs = new URLSearchParams({ chain, limit: "200" });
               if (cursor) qs.set("cursor", cursor);
-              const resp = await fetch(`/api/wallets/${encodeURIComponent(fromAddr)}/transactions?${qs}`);
-              if (!resp.ok) break;
-              const data = await resp.json() as { transactions?: Tx[]; nextCursor?: string | null };
-              const pageTxs = data.transactions ?? [];
-              pagesUsed++;
-              txsTotal += pageTxs.length;
-              for (const tx of pageTxs) {
-                // XLM: enforce allowlist + per-asset minimums at the earliest ingest point.
-                // segmentTxs are fetched independently of allTxs, so commit() doesn't cover them.
-                if (chain === "xlm" && !xlmPassesFilter(tx)) continue;
-                const counterparty = tx.direction === "in" ? tx.from : tx.to;
-                if (!counterparty) continue;
-                // Store both directions so emitHopSegment finds the TX regardless
-                // of which wallet was fetched or which direction the TX flowed.
-                for (const key of [`${fromAddr}::${counterparty}`, `${counterparty}::${fromAddr}`]) {
-                  const prev = segmentTxs[key];
-                  if (!prev || parseFloat(tx.value) > parseFloat(prev.value ?? "0")) {
-                    segmentTxs[key] = tx;
-                  }
+              resp = await fetch(`/api/wallets/${encodeURIComponent(trimmed)}/transactions?${qs}`);
+            } catch (e) {
+              // Network-level failure (timeout, DNS, etc.)
+              failReason = `network error on page ${p + 1}: ${e instanceof Error ? e.message : String(e)}`;
+              break;
+            }
+
+            if (!resp.ok) {
+              // HTTP error — read body for server error detail if available
+              let body = "";
+              try { body = await resp.text(); } catch { /* ignore */ }
+              failReason = `HTTP ${resp.status} on page ${p + 1}${body ? `: ${body.slice(0, 120)}` : ""}`;
+              break;
+            }
+
+            let data: { transactions?: Tx[]; nextCursor?: string | null };
+            try {
+              data = await resp.json() as { transactions?: Tx[]; nextCursor?: string | null };
+            } catch (e) {
+              failReason = `JSON parse error on page ${p + 1}: ${e instanceof Error ? e.message : String(e)}`;
+              break;
+            }
+
+            const pageTxs = data.transactions ?? [];
+            pagesUsed++;
+            txsTotal += pageTxs.length;
+
+            for (const tx of pageTxs) {
+              // XLM: enforce allowlist + per-asset minimums at the earliest ingest point.
+              // segmentTxs are fetched independently of allTxs, so commit() doesn't cover them.
+              if (chain === "xlm" && !xlmPassesFilter(tx)) continue;
+              const counterparty = tx.direction === "in" ? tx.from : tx.to;
+              if (!counterparty) continue;
+              // Store both directions so emitHopSegment finds the TX regardless
+              // of which wallet was fetched or which direction the TX flowed.
+              for (const key of [`${trimmed}::${counterparty}`, `${counterparty}::${trimmed}`]) {
+                const prev = segmentTxs[key];
+                if (!prev || parseFloat(tx.value) > parseFloat(prev.value ?? "0")) {
+                  segmentTxs[key] = tx;
                 }
               }
-              cursor = data.nextCursor ?? null;
-              if (!cursor) break;
-            } catch { break; /* best-effort — stats still reflect pages completed before error */ }
+            }
+
+            cursor = data.nextCursor ?? null;
+            if (!cursor) break;
           }
-          return { pages: pagesUsed, txs: txsTotal };
+
+          return { pages: pagesUsed, txs: txsTotal, ...(failReason ? { failReason } : {}) };
         };
         await Promise.allSettled(
           Array.from(intermedWallets).slice(0, 20).map(async (w) => {

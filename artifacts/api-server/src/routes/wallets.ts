@@ -1122,10 +1122,12 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       let data = await stellarFetch(opsPath);
 
       // 404 = account not found in current ledger (merged/closed account).
-      // Historical payment data is still accessible via the /payments?account= endpoint,
-      // which works for both active and merged accounts and returns only value-transfer ops.
+      // Fall back to /accounts/{id}/payments — same account-scoped endpoint structure,
+      // returns only payment-type operations, and may still carry historical data on some
+      // Horizon nodes. NOTE: /payments?account= is the GLOBAL endpoint and ignores the
+      // account parameter — always use the /accounts/{id}/payments path here.
       if (data["_empty"] && data["_status"] === 404) {
-        const paymentsPath = `/payments?account=${encodeURIComponent(address)}&limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorSuffix}`;
+        const paymentsPath = `/accounts/${address}/payments?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorSuffix}`;
         try {
           const fallback = await stellarFetch(paymentsPath);
           if (!fallback["_empty"]) data = fallback;
@@ -1141,7 +1143,10 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
       const transactions = records
         .map((rec) => parseStellarOp(rec, address, priceUsd))
-        .filter((t): t is NonNullable<typeof t> => t !== null);
+        .filter((t): t is NonNullable<typeof t> => t !== null)
+        // Strict safety filter: only keep transactions where this address is explicitly
+        // the sender or receiver. Guards against any endpoint returning unrelated records.
+        .filter(t => t.from === address || t.to === address);
       const hasMore = records.length === stellarLimit;
       const lastRec = records[records.length - 1];
       const nextCursor = hasMore && lastRec ? String(lastRec["paging_token"] ?? "") : null;

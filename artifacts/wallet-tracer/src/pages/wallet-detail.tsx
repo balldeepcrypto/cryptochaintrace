@@ -3110,10 +3110,10 @@ export default function WalletDetail() {
         return acc;
       };
 
-      // target wallet: 5 pages (up to 1 000 ops); each comparison wallet: 2 pages (400 ops)
+      // target wallet: 10 pages (up to 2 000 ops); each comparison wallet: 5 pages (1 000 ops)
       const clusterFetch = [
-        { w: address, maxPages: 5 },
-        ...commingleWallets.map((cw) => ({ w: cw, maxPages: 2 })),
+        { w: address, maxPages: 10 },
+        ...commingleWallets.map((cw) => ({ w: cw, maxPages: 5 })),
       ];
       await Promise.allSettled(
         clusterFetch.map(async ({ w, maxPages }) => {

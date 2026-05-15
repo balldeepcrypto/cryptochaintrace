@@ -1,0 +1,30 @@
+ULTIMATE FINAL FIX — Force ALL 8 exchange addresses into the dedicated section with full details.
+
+From the latest report (rrnnc, 14:00 UTC):
+- Private commingling is perfect — leave Tier 1–4 and all private wallet logic 100% untouched.
+- Exchange section still only shows 3 (Binance + MEXC + ChangeNOW). Kraken, Coinbase (3 addresses), Uphold regular + cold, Robinhood, and Bybit are STILL MISSING.
+
+Fix both layers permanently:
+1. In runCommingleCheck / fetchPagesForExch: Increase pagination to 10 pages (2,000 operations) for the target wallet and 5 pages (1,000 ops) for every comparison wallet. Fetch raw, unfiltered operations.
+2. In generateCommingleReport: After building exchFlows, run an exhaustive final pass that checks EVERY transaction (from storedExchFlows + allTxs + any remaining pages) against these exact addresses and adds them if missing:
+
+   - Kraken: GA5XIGA5C7QTPTWXQHY6MCJRMTRZDOSHR6EFIBNDQTCQHG262N4GGKTM → [KRAKEN]
+   - Coinbase: GCIL6JNOVODHIZGZBYKWSRDRYUVXWF5ZEVMISJQQJBQRMF5FAH6YOD7U, GDQP2KPQGKIHYJGXNUIYOMHARUARCA7DJT5FO2FFOOKY3B2WSQHG4W37, GDZHDOITT5W2S35LVJZRLUAUXLU7UEDEAN4R7O4VA5FFGKG7RHC4NPSC → [COINBASE]
+   - Robinhood: GB2ES2N326MZK4EGJBKN3ZARCQ5RTFQSAWIJAAKFVIIIJSCC35TXIMLB → [ROBINHOOD]
+   - Uphold: GCGMJ63NTBSQKW7OEQ3J2RZH6PYXSTEUK4TVE35IPXLB7XWNI2PUDCY6 → [UPHOLD]
+   - Uphold Cold: GBJDVTTWUXRNDK35X7A6XYHB2XYXEM7XRH776KK6VYOYY5JL2PJCZPZ3O → [UPHOLD] (COLD WALLET)
+   - Bybit: GDT7ARDYZRBXXYOCSQ3MUMISTITSSRWZI6KR2A5L5Q3KB4QIZHGYMTIH → [BYBIT]
+
+3. In the consolidated “EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS” section, list **every** match with:
+   - Source cluster wallet (Wallet 1, Wallet 3, etc.)
+   - Direction (IN or OUT)
+   - Amount + token
+   - Date
+   - TX hash
+   - Memo (if present)
+   - Label in [BRACKETS]
+   - Up to 10 most significant per exchange per wallet, sorted by amount descending.
+
+Re-run a **fresh** GCP5X5UFY6JL commingle scan (full pagination), load “All History” in the UI if possible, then generate the report. The Exchange Flows section must now show ALL 8 addresses with full details.
+
+This must be chain-agnostic going forward.

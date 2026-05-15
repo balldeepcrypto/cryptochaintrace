@@ -1693,7 +1693,11 @@ export default function WalletDetail() {
 
   // Commit new pagination data: sort newest-first, mutate the ref, trigger re-render.
   function commit(txs: Tx[], cursor: string | null, more: boolean) {
-    const sorted = [...txs].sort(
+    // Apply XLM allowlist at the earliest possible point — before allTxs is ever set.
+    // Every downstream consumer (ledger, commingle, trail, exchange flows, etc.) receives
+    // only the 8 allowed assets at or above their per-asset minimum amounts.
+    const clean = chain === "xlm" ? txs.filter(xlmPassesFilter) : txs;
+    const sorted = [...clean].sort(
       (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
     );
     page.current.txs = sorted;
@@ -1916,7 +1920,8 @@ export default function WalletDetail() {
       while (cursor && accumulated.length < MAX_TOTAL) {
         pageNum++;
         page.current.status = `Loading page ${pageNum} · ${accumulated.length.toLocaleString()} loaded so far…`;
-        setAllTxs([...accumulated].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())); // live sorted update
+        const liveClean = chain === "xlm" ? accumulated.filter(xlmPassesFilter) : accumulated;
+        setAllTxs([...liveClean].sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime())); // live sorted update
 
         const data = await fetchPage(cursor, limit);
         const seen = new Set(accumulated.map((t) => t.hash || `${t.from}:${t.to}:${t.timestamp}`));

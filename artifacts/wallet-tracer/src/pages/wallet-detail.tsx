@@ -716,7 +716,9 @@ export default function WalletDetail() {
         const txsForAddr = allTxs
           .filter(t => {
             const cp = t.direction === "in" ? t.from : t.to;
-            return cp === addr && parseFloat(t.value) >= minAmount;
+            if (cp !== addr) return false;
+            if (chain === "xlm") return xlmPassesFilter(t);
+            return parseFloat(t.value) >= minAmount;
           })
           .slice(0, 12);
 
@@ -1426,7 +1428,10 @@ export default function WalletDetail() {
     };
 
     const bestInOut2 = (addr: string): Tx[] => {
-      const pool = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr);
+      const pool = allTxs.filter(t =>
+        (t.direction === "in" ? t.from : t.to) === addr &&
+        (chain === "xlm" ? xlmPassesFilter(t) : true)
+      );
       const top  = (dir: "in" | "out") =>
         pool.filter(t => t.direction === dir).sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
       return [top("in"), top("out")].filter(Boolean) as Tx[];
@@ -2652,6 +2657,9 @@ export default function WalletDetail() {
               if (!resp.ok) return;
               const data = await resp.json() as { transactions?: Tx[] };
               for (const tx of data.transactions ?? []) {
+                // XLM: enforce allowlist + per-asset minimums at the earliest ingest point.
+                // segmentTxs are fetched independently of allTxs, so commit() doesn't cover them.
+                if (chain === "xlm" && !xlmPassesFilter(tx)) continue;
                 const counterparty = tx.direction === "in" ? tx.from : tx.to;
                 if (!counterparty) continue;
                 // Store both directions so emitHopSegment finds the TX regardless

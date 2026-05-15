@@ -1309,10 +1309,29 @@ export default function WalletDetail() {
 
       // Helper: "Kraken XLM" → [KRAKEN], "Uphold XLM Cold" → [UPHOLD] (COLD WALLET)
       const toBracketLabel = (label: string): string => {
-        const u = label.toUpperCase();
-        const firstWord = u.split(/\s+/)[0];
-        if (u.includes("COLD")) return `[${firstWord}] (COLD WALLET)`;
-        return `[${firstWord}]`;
+        // Map the root exchange name to a clean display label shown in brackets.
+        // Add new entries here as additional exchange addresses are added to KNOWN_LABELS.
+        const DISPLAY_NAMES: Record<string, string> = {
+          Coinbase:   "Coinbase Deposits",
+          Kraken:     "Kraken",
+          Binance:    "Binance",
+          "Binance.US": "Binance.US",
+          MEXC:       "MEXC",
+          Bybit:      "Bybit",
+          Bitfinex:   "Bitfinex",
+          Bitstamp:   "Bitstamp",
+          OKX:        "OKX",
+          Huobi:      "Huobi",
+          Uphold:     "Uphold",
+          ChangeNOW:  "ChangeNOW",
+          // Bridge / infrastructure
+          Stellar:    "Stellar Foundation",
+          // Additional exchanges — extend this list as needed
+        };
+        const firstWord = label.split(/\s+/)[0];
+        const display   = DISPLAY_NAMES[firstWord] ?? firstWord;
+        if (label.toUpperCase().includes("COLD")) return `[${display}] (COLD WALLET)`;
+        return `[${display}]`;
       };
       const walletLabel = (w: string) => {
         if (w === commingleResult.targetWallet) return "Wallet 1";
@@ -1394,18 +1413,31 @@ export default function WalletDetail() {
               ? "Official / Foundation Wallet"
               : "Exchange / Custodian — identity obtainable via legal process (subpoena / court order)";
             const wLabel    = walletLabel(sourceWallet);
+            // Detect whether sourceWallet is an intermediate hop (not in the cluster).
+            // Hop wallets are fetched by fetchHopPages and stored in segmentTxs, so they
+            // may not be the target or any comparison wallet.
+            const isHopWallet = sourceWallet !== commingleResult.targetWallet
+              && !commingleResult.comparisonWallets.includes(sourceWallet);
             const isShared  = allExchFindings.some(f => f.sharedAddress === exchAddr);
             const bracketLbl = toBracketLabel(exchLabel);
             const addrShort  = exchAddr.length > 16 ? `${exchAddr.slice(0, 8)}…${exchAddr.slice(-4)}` : exchAddr;
+            const srcShort   = isHopWallet && sourceWallet.length > 16
+              ? `${sourceWallet.slice(0, 8)}…${sourceWallet.slice(-4)}`
+              : sourceWallet;
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${exchAddr}`);
             lines.push(`       Label   : ${bracketLbl}  ${flowTag}`);
             lines.push(`       Type    : ${typeDesc}`);
-            lines.push(`       Source  : ${wLabel}${isShared ? "  (also shared node with comparison wallets)" : "  (direct — not a shared commingling node)"}`);
+            if (isHopWallet) {
+              lines.push(`       Source  : ${srcShort}  (intermediate / hop wallet — connected to exchange via trail)`);
+            } else {
+              lines.push(`       Source  : ${wLabel}${isShared ? "  (also shared node with comparison wallets)" : "  (direct — not a shared commingling node)"}`);
+            }
             const sorted = [...flowTxs].sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
             const show   = sorted.slice(0, 10);
             const extra  = sorted.length - show.length;
             if (show.length > 0) {
-              lines.push(`       Transactions (${wLabel} ↔ ${bracketLbl} / ${addrShort}) — ${sorted.length} total${extra > 0 ? `, top 10 by amount` : ""}:`);
+              const srcDisplay = isHopWallet ? srcShort : wLabel;
+              lines.push(`       Transactions (${srcDisplay} ↔ ${bracketLbl} / ${addrShort}) — ${sorted.length} total${extra > 0 ? `, top 10 by amount` : ""}:`);
               emitTxs(show, "       ");
               if (extra > 0) lines.push(`         … and ${extra} more transaction(s) to/from this exchange`);
             } else {

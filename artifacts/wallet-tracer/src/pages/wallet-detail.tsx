@@ -2154,15 +2154,20 @@ export default function WalletDetail() {
 
   // Initial page — staleTime: Infinity + refetchOnWindowFocus: false prevent background
   // refetches from racing with accumulated Load More state.
+  // XLM exception: use staleTime:0 + refetchOnMount:true so a stale empty result (from a
+  // previously merged/closed account fetch) is never served permanently — a fresh fetch
+  // always runs on navigation. The txInitializedRef guard below prevents accumulated
+  // Load More pages from being overwritten by a background re-fetch.
+  const xlmChain = chain === "xlm";
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
     address, { chain, page: 1, limit: initLimit },
     {
       query: {
         enabled: !!address,
         queryKey: getGetWalletTransactionsQueryKey(address, { chain, page: 1, limit: initLimit }),
-        staleTime: Infinity,
+        staleTime: xlmChain ? 0 : Infinity,
         refetchOnWindowFocus: false,
-        refetchOnMount: false,
+        refetchOnMount: xlmChain ? true : false,
         refetchOnReconnect: false,
       },
     }

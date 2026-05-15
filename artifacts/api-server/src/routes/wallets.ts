@@ -1117,9 +1117,24 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       // Stellar Horizon /operations endpoint — one record per operation, real amounts
       // (The /transactions envelope endpoint always has value=0; only /operations has actual amounts)
       const stellarLimit = Math.min(limit, 200);
-      const path = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : ""}`;
-      const data = await stellarFetch(path);
+      const cursorSuffix = cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : "";
+      const opsPath = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorSuffix}`;
+      let data = await stellarFetch(opsPath);
+
+      // 404 = account not found in current ledger (merged/closed account).
+      // Historical payment data is still accessible via the /payments?account= endpoint,
+      // which works for both active and merged accounts and returns only value-transfer ops.
+      if (data["_empty"] && data["_status"] === 404) {
+        const paymentsPath = `/payments?account=${encodeURIComponent(address)}&limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorSuffix}`;
+        try {
+          const fallback = await stellarFetch(paymentsPath);
+          if (!fallback["_empty"]) data = fallback;
+        } catch { /* keep data as _empty if fallback also fails */ }
+      }
+
       if (data["_empty"]) {
+        // Never cache a failed/empty result — invalidate so next request fetches fresh
+        if (txCacheKey) txCache.invalidate(txCacheKey);
         res.json(GetWalletTransactionsResponse.parse({ transactions: [], total: 0, page, limit: stellarLimit, nextCursor: null, hasMore: false }));
         return;
       }
@@ -1130,6 +1145,8 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       const hasMore = records.length === stellarLimit;
       const lastRec = records[records.length - 1];
       const nextCursor = hasMore && lastRec ? String(lastRec["paging_token"] ?? "") : null;
+      // Don't cache empty results (all records were non-value ops like manage_offer/change_trust)
+      if (transactions.length === 0 && !hasMore && txCacheKey) txCache.invalidate(txCacheKey);
       res.json(GetWalletTransactionsResponse.parse({
         transactions,
         total: (page - 1) * stellarLimit + transactions.length + (hasMore ? 1 : 0),

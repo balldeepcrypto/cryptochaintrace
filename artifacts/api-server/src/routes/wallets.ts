@@ -1141,11 +1141,28 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
-      const transactions = records
+      // Pre-parse filter: keep only records where this address appears in any role.
+      // Checks every field that Stellar operation types use to reference accounts:
+      //   source_account — transaction submitter (always present)
+      //   from / to      — payment sender / receiver
+      //   account        — create_account target or account_merge source
+      //   funder         — create_account funder
+      //   claimant       — claim_claimable_balance recipient
+      //   sponsor        — create_claimable_balance sponsor
+      const addrRecords = records.filter((rec) =>
+        String(rec["source_account"] ?? "") === address ||
+        String(rec["from"]           ?? "") === address ||
+        String(rec["to"]             ?? "") === address ||
+        String(rec["account"]        ?? "") === address ||
+        String(rec["funder"]         ?? "") === address ||
+        String(rec["claimant"]       ?? "") === address ||
+        String(rec["sponsor"]        ?? "") === address
+      );
+      const transactions = addrRecords
         .map((rec) => parseStellarOp(rec, address, priceUsd))
         .filter((t): t is NonNullable<typeof t> => t !== null)
-        // Strict safety filter: only keep transactions where this address is explicitly
-        // the sender or receiver. Guards against any endpoint returning unrelated records.
+        // Post-parse safety filter: only keep transactions where this address is
+        // the resolved sender or receiver after field mapping.
         .filter(t => t.from === address || t.to === address);
       const hasMore = records.length === stellarLimit;
       const lastRec = records[records.length - 1];

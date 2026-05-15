@@ -1032,24 +1032,41 @@ export default function WalletDetail() {
     // then Amount / full TX hash / Date on separate indented lines.
     const emitTxs = (txs: Tx[], pad: string) => {
       if (txs.length === 0) return;
-      lines.push(`${pad}│`);
-      txs.forEach((tx, ti) => {
-        const isLast   = ti === txs.length - 1;
-        const conn     = isLast ? "└─" : "├─";
-        const childPfx = isLast ? "   " : "│  ";
-        const dir      = tx.direction === "in" ? "IN " : "OUT";
-        const amt      = fmtAmt(tx.value, tx.direction as "in" | "out");
-        const asset    = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
-        const usd      = tx.valueUsd > 0
-          ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
-          : "";
-        lines.push(`${pad}${conn} [${dir}]  From: ${tx.from || "—"} → To: ${tx.to || "—"}`);
-        lines.push(`${pad}${childPfx}  Amount: ${amt} ${asset}${usd}`);
-        lines.push(`${pad}${childPfx}  TX    : ${tx.hash || "(none)"}`);
-        lines.push(`${pad}${childPfx}  Date  : ${fmtDate(tx.timestamp || "")}`);
-        if (tx.destinationTag != null) lines.push(`${pad}${childPfx}  ↳ Destination Tag : ${tx.destinationTag}`);
-        if (tx.memo)                   lines.push(`${pad}${childPfx}  ↳ Memo            : ${tx.memo}`);
-      });
+      // Split into real-value and zero-value (spam / farming) transactions.
+      // Both groups are always shown — zero-value ones are moved to a clearly
+      // labelled subsection so investigators can spot them without noise.
+      const realTxs = txs.filter(t => parseFloat(t.value || "0") !== 0);
+      const spamTxs = txs.filter(t => parseFloat(t.value || "0") === 0);
+      const renderBranch = (block: Tx[]) => {
+        block.forEach((tx, ti) => {
+          const isLast   = ti === block.length - 1;
+          const conn     = isLast ? "└─" : "├─";
+          const childPfx = isLast ? "   " : "│  ";
+          const dir      = tx.direction === "in" ? "IN " : "OUT";
+          const amt      = fmtAmt(tx.value, tx.direction as "in" | "out");
+          const asset    = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
+          const usd      = tx.valueUsd > 0
+            ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+            : "";
+          lines.push(`${pad}${conn} [${dir}]  From: ${tx.from || "—"} → To: ${tx.to || "—"}`);
+          lines.push(`${pad}${childPfx}  Amount: ${amt} ${asset}${usd}`);
+          lines.push(`${pad}${childPfx}  TX    : ${tx.hash || "(none)"}`);
+          lines.push(`${pad}${childPfx}  Date  : ${fmtDate(tx.timestamp || "")}`);
+          if (tx.destinationTag != null) lines.push(`${pad}${childPfx}  ↳ Destination Tag : ${tx.destinationTag}`);
+          if (tx.memo)                   lines.push(`${pad}${childPfx}  ↳ Memo            : ${tx.memo}`);
+        });
+      };
+      // ① Real-value transactions
+      if (realTxs.length > 0) {
+        lines.push(`${pad}│`);
+        renderBranch(realTxs);
+      }
+      // ② Zero-value spam / farming — kept in full, shown in a separate subsection
+      if (spamTxs.length > 0) {
+        lines.push(`${pad}│`);
+        lines.push(`${pad}│  ── Additional Hop Activity (0-value spam / farming — ${spamTxs.length} tx${spamTxs.length !== 1 ? "s" : ""}) ──`);
+        renderBranch(spamTxs);
+      }
     };
 
     // Emit one intermediate hop row: both wallet addresses + best cached TX.
@@ -1546,24 +1563,37 @@ export default function WalletDetail() {
 
     const emitTxBlock = (txs: Tx[], pad: string) => {
       if (txs.length === 0) return;
-      lines.push(`${pad}│`);
-      txs.forEach((tx, ti) => {
-        const isLast   = ti === txs.length - 1;
-        const conn     = isLast ? "└─" : "├─";
-        const childPfx = isLast ? "   " : "│  ";
-        const dir      = tx.direction === "in" ? "IN " : "OUT";
-        const amt      = fmtAmt2(tx.value, tx.direction as "in" | "out");
-        const asset    = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
-        const usd      = tx.valueUsd > 0
-          ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
-          : "";
-        lines.push(`${pad}${conn} [${dir}]  From: ${tx.from ?? "—"} → To: ${tx.to ?? "—"}`);
-        lines.push(`${pad}${childPfx}  Amount: ${amt} ${asset}${usd}`);
-        lines.push(`${pad}${childPfx}  TX    : ${tx.hash ?? "(none)"}`);
-        lines.push(`${pad}${childPfx}  Date  : ${fmtDate(tx.timestamp ?? "")}`);
-        if (tx.destinationTag != null) lines.push(`${pad}${childPfx}  ↳ Destination Tag : ${tx.destinationTag}`);
-        if (tx.memo)                   lines.push(`${pad}${childPfx}  ↳ Memo            : ${tx.memo}`);
-      });
+      // Split: real-value first, zero-value spam in a separate subsection
+      const realTxs = txs.filter(t => parseFloat(t.value || "0") !== 0);
+      const spamTxs = txs.filter(t => parseFloat(t.value || "0") === 0);
+      const renderBranch2 = (block: Tx[]) => {
+        block.forEach((tx, ti) => {
+          const isLast   = ti === block.length - 1;
+          const conn     = isLast ? "└─" : "├─";
+          const childPfx = isLast ? "   " : "│  ";
+          const dir      = tx.direction === "in" ? "IN " : "OUT";
+          const amt      = fmtAmt2(tx.value, tx.direction as "in" | "out");
+          const asset    = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
+          const usd      = tx.valueUsd > 0
+            ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+            : "";
+          lines.push(`${pad}${conn} [${dir}]  From: ${tx.from ?? "—"} → To: ${tx.to ?? "—"}`);
+          lines.push(`${pad}${childPfx}  Amount: ${amt} ${asset}${usd}`);
+          lines.push(`${pad}${childPfx}  TX    : ${tx.hash ?? "(none)"}`);
+          lines.push(`${pad}${childPfx}  Date  : ${fmtDate(tx.timestamp ?? "")}`);
+          if (tx.destinationTag != null) lines.push(`${pad}${childPfx}  ↳ Destination Tag : ${tx.destinationTag}`);
+          if (tx.memo)                   lines.push(`${pad}${childPfx}  ↳ Memo            : ${tx.memo}`);
+        });
+      };
+      if (realTxs.length > 0) {
+        lines.push(`${pad}│`);
+        renderBranch2(realTxs);
+      }
+      if (spamTxs.length > 0) {
+        lines.push(`${pad}│`);
+        lines.push(`${pad}│  ── Additional Hop Activity (0-value spam / farming — ${spamTxs.length} tx${spamTxs.length !== 1 ? "s" : ""}) ──`);
+        renderBranch2(spamTxs);
+      }
     };
 
     const bestInOut2 = (addr: string): Tx[] => {
@@ -1844,28 +1874,40 @@ export default function WalletDetail() {
         lines.push(`  OUT TXs : ${outTxs.length}   Total Sent     : −${totalOut.toFixed(4)} ${chainUp}`);
         lines.push("");
 
-        const sorted = [...txs].sort((a, b) =>
-          new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime()
-        );
-        sorted.forEach((tx, i) => {
-          const isLast = i === sorted.length - 1;
-          const conn    = isLast ? "└─" : "├─";
-          const childPx = isLast ? "   " : "│  ";
-          const dir = tx.direction === "in" ? "IN " : "OUT";
-          const asset = (tx as typeof tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
-          const usd = tx.valueUsd && tx.valueUsd > 0
-            ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
-            : "";
-          lines.push(`${conn} [${dir}]  From: ${tx.from ?? "—"}`);
-          lines.push(`${childPx}         To  : ${tx.to   ?? "—"}`);
-          lines.push(`${childPx}  Amount : ${fmtAmt(tx.value, tx.direction)} ${asset}${usd}`);
-          lines.push(`${childPx}  TX     : ${tx.hash ?? "(no hash)"}`);
-          lines.push(`${childPx}  Date   : ${fmtDate(tx.timestamp ?? "")}`);
-          if ((tx as typeof tx & { destinationTag?: number | null }).destinationTag != null)
-            lines.push(`${childPx}  ↳ Destination Tag : ${(tx as typeof tx & { destinationTag?: number | null }).destinationTag}`);
-          if (tx.memo) lines.push(`${childPx}  ↳ Memo : ${tx.memo}`);
-          if (!isLast) lines.push(childPx);
-        });
+        const sortByDate = (a: Tx, b: Tx) =>
+          new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime();
+        const realSorted = [...txs].filter(t => parseFloat(t.value || "0") !== 0).sort(sortByDate);
+        const spamSorted = [...txs].filter(t => parseFloat(t.value || "0") === 0).sort(sortByDate);
+        const renderExchBranch = (block: (typeof txs), addTrailingBlank: boolean) => {
+          block.forEach((tx, i) => {
+            const isLast = i === block.length - 1;
+            const conn    = isLast ? "└─" : "├─";
+            const childPx = isLast ? "   " : "│  ";
+            const dir = tx.direction === "in" ? "IN " : "OUT";
+            const asset = (tx as typeof tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
+            const usd = tx.valueUsd && tx.valueUsd > 0
+              ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+              : "";
+            lines.push(`${conn} [${dir}]  From: ${tx.from ?? "—"}`);
+            lines.push(`${childPx}         To  : ${tx.to   ?? "—"}`);
+            lines.push(`${childPx}  Amount : ${fmtAmt(tx.value, tx.direction)} ${asset}${usd}`);
+            lines.push(`${childPx}  TX     : ${tx.hash ?? "(no hash)"}`);
+            lines.push(`${childPx}  Date   : ${fmtDate(tx.timestamp ?? "")}`);
+            if ((tx as typeof tx & { destinationTag?: number | null }).destinationTag != null)
+              lines.push(`${childPx}  ↳ Destination Tag : ${(tx as typeof tx & { destinationTag?: number | null }).destinationTag}`);
+            if (tx.memo) lines.push(`${childPx}  ↳ Memo : ${tx.memo}`);
+            if (!isLast) lines.push(childPx);
+          });
+          if (addTrailingBlank) lines.push("");
+        };
+        // ① Real-value transactions (date-sorted, newest first)
+        if (realSorted.length > 0) renderExchBranch(realSorted, spamSorted.length === 0);
+        // ② Zero-value spam / farming — complete, labelled separately
+        if (spamSorted.length > 0) {
+          if (realSorted.length > 0) lines.push("");
+          lines.push(`── Additional Hop Activity (0-value spam / farming — ${spamSorted.length} tx${spamSorted.length !== 1 ? "s" : ""}) ──`);
+          renderExchBranch(spamSorted, true);
+        }
         lines.push("");
       }
     }

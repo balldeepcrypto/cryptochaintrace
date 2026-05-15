@@ -1279,9 +1279,13 @@ export default function WalletDetail() {
         ...Object.entries(commingleResult.walletTxs ?? {}).map(([w, txs]) => ({ wallet: w, txs })),
       ];
       const getTxsFor = (exchAddr: string, sourceWallet: string): Tx[] => {
-        const wTxs = sourceWallet === commingleResult.targetWallet
-          ? allTxs
-          : (commingleResult.walletTxs?.[sourceWallet] ?? []);
+        // Prefer the 500-tx batch fetched during the scan for ALL cluster wallets
+        // (including the target). Fall back to allTxs for the target wallet only if
+        // no fetched batch exists (e.g. legacy result without target walletTxs entry).
+        const fetched = commingleResult.walletTxs?.[sourceWallet];
+        const wTxs = fetched && fetched.length > 0
+          ? fetched
+          : (sourceWallet === commingleResult.targetWallet ? allTxs : []);
         return wTxs.filter(t => (t.direction === "in" ? t.from : t.to) === exchAddr);
       };
       const commingledExchAddrs = new Set(allExchFindings.map(f => f.sharedAddress));
@@ -3060,15 +3064,49 @@ export default function WalletDetail() {
         );
       }
 
-      // Build directExchanges map from the reach maps (authoritative — uses full fetched history).
-      // Only tier-1 entries are "direct" — the wallet itself transacted with this address.
+      // Fetch transactions for all cluster wallets (target + comparisons) for exchange detection.
+      // The /connections API only returns bidirectional relationship nodes, so exchange deposit
+      // addresses (one-directional outflows) never appear in the reach map. Scanning the actual
+      // transactions is the only reliable way to find them.
+      setCommingleProgress("Fetching cluster wallet transactions for exchange detection…");
+      const walletTxs: Record<string, Tx[]> = {};
+      const clusterFetchWallets = [address, ...commingleWallets.slice(0, 5)];
+      await Promise.allSettled(
+        clusterFetchWallets.map(async (w) => {
+          try {
+            const resp = await fetch(
+              `/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=500`
+            );
+            if (!resp.ok) return;
+            const data = await resp.json() as { transactions?: Tx[] };
+            const txs = (data.transactions ?? []).filter((tx) =>
+              chain === "xlm" ? xlmPassesFilter(tx) : true
+            );
+            if (txs.length > 0) walletTxs[w] = txs;
+          } catch { /* best-effort */ }
+        })
+      );
+
+      // Build directExchanges map from two sources:
+      //  (a) Transaction scan of walletTxs — primary, catches all deposit addresses
+      //      (exchange hot-wallets are one-directional and don't appear in the connections graph)
+      //  (b) Reach-map tier-1 — supplementary, covers any exchange that IS bidirectional
       const EXCH_TYPES = new Set(["exchange", "bridge", "genesis"]);
       const directExchanges: Record<string, string[]> = {};
       const addDirectExch = (addr: string, sourceWallet: string) => {
         const info = KNOWN_LABELS[addr];
         if (!info || !EXCH_TYPES.has(info.type)) return;
+        if (directExchanges[addr]?.includes(sourceWallet)) return; // deduplicate
         directExchanges[addr] = [...(directExchanges[addr] ?? []), sourceWallet];
       };
+      // (a) scan fetched transactions — most reliable for exchange deposit detection
+      for (const [w, txs] of Object.entries(walletTxs)) {
+        for (const tx of txs) {
+          const counterparty = tx.direction === "in" ? tx.from : tx.to;
+          if (counterparty) addDirectExch(counterparty, w);
+        }
+      }
+      // (b) supplement from reach-map tier-1 (catches bidirectional exchange nodes)
       for (const [addr, data] of targetReach) {
         if (data.tier === 1) addDirectExch(addr, address);
       }
@@ -3077,26 +3115,6 @@ export default function WalletDetail() {
           if (data.tier === 1) addDirectExch(addr, cw);
         }
       }
-
-      // Fetch first page of transactions for each comparison wallet so exchange flow
-      // detection in the report can scan the full cluster, not just the target wallet.
-      setCommingleProgress("Fetching comparison wallet transactions for exchange detection…");
-      const walletTxs: Record<string, Tx[]> = {};
-      await Promise.allSettled(
-        commingleWallets.slice(0, 5).map(async (cw) => {
-          try {
-            const resp = await fetch(
-              `/api/wallets/${encodeURIComponent(cw)}/transactions?chain=${chain}&limit=500`
-            );
-            if (!resp.ok) return;
-            const data = await resp.json() as { transactions?: Tx[] };
-            const txs = (data.transactions ?? []).filter((tx) =>
-              chain === "xlm" ? xlmPassesFilter(tx) : true
-            );
-            if (txs.length > 0) walletTxs[cw] = txs;
-          } catch { /* best-effort */ }
-        })
-      );
 
       setCommingleResult({
         targetWallet: address,

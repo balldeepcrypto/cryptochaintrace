@@ -1747,7 +1747,32 @@ export default function WalletDetail() {
     const isExchType = (t?: string) =>
       t === "exchange" || t === "bridge" || t === "genesis";
 
-    // Group TXs by exchange counterparty
+    // Clean display-name map — root exchange name → bracket label.
+    // Mirrors the same map in generateCommingleReport / toBracketLabel.
+    // Add new entries here as additional exchange addresses are added to KNOWN_LABELS.
+    const EXCH_DISPLAY: Record<string, string> = {
+      Coinbase:     "Coinbase Deposits",
+      Kraken:       "Kraken",
+      Binance:      "Binance",
+      "Binance.US": "Binance.US",
+      MEXC:         "MEXC",
+      Bybit:        "Bybit",
+      Bitfinex:     "Bitfinex",
+      Bitstamp:     "Bitstamp",
+      OKX:          "OKX",
+      Huobi:        "Huobi",
+      Uphold:       "Uphold",
+      ChangeNOW:    "ChangeNOW",
+      // Bridge / infrastructure
+      Stellar:      "Stellar Foundation",
+      // Additional exchanges — extend this list as needed
+    };
+    const toDisplayLabel = (lbl: string): string => {
+      const firstWord = lbl.split(/\s+/)[0];
+      return EXCH_DISPLAY[firstWord] ?? firstWord;
+    };
+
+    // Group TXs by exchange counterparty — primary source: target wallet's loaded history
     const exchTxMap = new Map<string, typeof allTxs>();
     for (const tx of allTxs) {
       const counterparty = tx.direction === "in" ? tx.from : tx.to;
@@ -1756,6 +1781,33 @@ export default function WalletDetail() {
       if (!kn || !isExchType(kn.type)) continue;
       if (!exchTxMap.has(counterparty)) exchTxMap.set(counterparty, []);
       exchTxMap.get(counterparty)!.push(tx);
+    }
+
+    // Supplement from segmentTxs — hop wallet transactions captured during the Commingle
+    // Check scan (fetchHopPages). If a Commingle Check was run before this report, its
+    // segmentTxs holds hop→exchange TXs (e.g. GAZSPN→Kraken, GD6OZZ→Coinbase) that are
+    // not visible in allTxs (which reflects only the target wallet's own history).
+    // segmentTxs keys are "walletA::walletB" with both directions stored as the same TX.
+    const segData = commingleResult?.segmentTxs ?? {};
+    for (const segKey of Object.keys(segData)) {
+      const cut = segKey.indexOf("::");
+      if (cut < 0) continue;
+      const fa = segKey.slice(0, cut);
+      const ta = segKey.slice(cut + 2);
+      // Check both sides — either address could be the known exchange
+      for (const [exchAddr] of [[fa, ta], [ta, fa]] as [string, string][]) {
+        const kn = KNOWN_LABELS[exchAddr];
+        if (!kn || !isExchType(kn.type)) continue;
+        const tx = segData[segKey];
+        if (!tx) continue;
+        // Dedup by hash before inserting
+        const existing = exchTxMap.get(exchAddr);
+        if (existing) {
+          if (!existing.find(t => t.hash === tx.hash)) existing.push(tx);
+        } else {
+          exchTxMap.set(exchAddr, [tx]);
+        }
+      }
     }
 
     if (exchTxMap.size === 0) {
@@ -1778,10 +1830,11 @@ export default function WalletDetail() {
       for (const [addr, txs] of entries) {
         const kn = KNOWN_LABELS[addr];
         const typeTag = kn?.type === "bridge" ? "BRIDGE" : kn?.type === "genesis" ? "PROTOCOL" : "EXCHANGE";
-        const headerLabel = `[${(kn?.label ?? addr).toUpperCase()}]  ◄ ${typeTag} FLOW`;
+        const displayLbl = toDisplayLabel(kn?.label ?? addr);
+        const headerLabel = `[${displayLbl}]  ◄ ${typeTag} FLOW`;
         lines.push(sep(headerLabel));
         lines.push(`  Address : ${addr}`);
-        lines.push(`  Type    : ${typeTag} · ${kn?.label ?? "Unknown"}`);
+        lines.push(`  Type    : ${typeTag} · ${displayLbl}`);
 
         const inTxs  = txs.filter(t => t.direction === "in");
         const outTxs = txs.filter(t => t.direction === "out");

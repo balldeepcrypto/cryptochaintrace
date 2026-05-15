@@ -388,6 +388,27 @@ interface Tx {
   destinationTag?: number | null;
 }
 
+// ─── XLM asset allowlist + per-asset minimum amounts ─────────────────────────
+// Only these 8 assets are shown for XLM wallets; all others are silently dropped.
+const XLM_ALLOWED_ASSETS: Record<string, number> = {
+  XLM:   1,
+  USDC:  1,
+  VELO:  1000,
+  SHX:   1000,
+  AQUA:  10000,
+  AFR:   10000,
+  LSP:   10000,
+  SSLX:  10000,
+};
+
+/** Returns true when a transaction should be shown for an XLM wallet. */
+function xlmPassesFilter(tx: { tokenSymbol?: string | null; value: string }): boolean {
+  const asset = (tx.tokenSymbol ?? "XLM").toUpperCase();
+  const minAmt = XLM_ALLOWED_ASSETS[asset];
+  if (minAmt === undefined) return false;       // asset not in allowlist — drop
+  return parseFloat(tx.value) >= minAmt;        // below threshold — drop
+}
+
 // ─── Grouped by (address + direction) ─────────────────────────────────────────
 interface GroupedRow {
   address: string;
@@ -944,7 +965,9 @@ export default function WalletDetail() {
       allTxs
         .filter((t) =>
           (t.direction === "in" ? t.from : t.to) === addr &&
-          (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
+          (chain === "xlm"
+            ? xlmPassesFilter(t)
+            : commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
         )
         .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
         .slice(0, limit);
@@ -953,7 +976,9 @@ export default function WalletDetail() {
     const bestInOut = (addr: string): Tx[] => {
       const pool = allTxs.filter((t) =>
         (t.direction === "in" ? t.from : t.to) === addr &&
-        (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
+        (chain === "xlm"
+          ? xlmPassesFilter(t)
+          : commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
       );
       const top = (dir: "in" | "out") =>
         pool.filter((t) => t.direction === dir)
@@ -1914,7 +1939,9 @@ export default function WalletDetail() {
 
   // ── Apply minimum amount filter + view mode sort ──
   const filteredTxs = useMemo(() => {
-    const base = minAmount <= 0 ? allTxs : allTxs.filter((tx) => parseFloat(tx.value) >= minAmount);
+    const base = chain === "xlm"
+      ? allTxs.filter(xlmPassesFilter)
+      : minAmount <= 0 ? allTxs : allTxs.filter((tx) => parseFloat(tx.value) >= minAmount);
     if (viewMode === "mixed") return base; // already newest-first from commit()
     // Partition into IN, OUT, self — each sub-list is already newest-first (stable after partition)
     const ins = base.filter((t) => t.direction === "in");
@@ -1932,7 +1959,7 @@ export default function WalletDetail() {
       const cp = tx.direction === "in" ? tx.from : tx.to;
       if (!cp) continue;
       const val = parseFloat(tx.value) || 0;
-      if (val < minAmount) continue;
+      if (chain === "xlm" ? !xlmPassesFilter(tx) : val < minAmount) continue;
       const key = `${cp}:${tx.direction}`;
       const existing = map.get(key);
       if (existing) {

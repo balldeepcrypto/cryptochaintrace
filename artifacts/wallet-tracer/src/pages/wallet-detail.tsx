@@ -1698,16 +1698,15 @@ export default function WalletDetail() {
 
   // ── Victim → Thief Path Trace report generator ────────────────────────────
   function generatePathTraceReport(
-    wallets: string[],
-    hopData: Array<{ from: string; to: string; txs: Tx[] }>
+    steps: Array<{ wallet: string; txHash: string }>,
+    hopData: Array<{ from: string; to: string; knownHash: string; tx: Tx | null; allTxs: Tx[] }>,
+    expandTxs: Tx[]
   ): string {
     const chainUp = chain.toUpperCase();
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const rule = "─".repeat(66);
     const sepSection = (label = "") =>
-      label
-        ? `\n${rule}\n  ${label}\n${rule}`
-        : rule;
+      label ? `\n${rule}\n  ${label}\n${rule}` : rule;
 
     const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
     const fmtAmt  = (v: string, dir: "in" | "out") => {
@@ -1718,22 +1717,42 @@ export default function WalletDetail() {
       const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
       return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
     };
+    const emitTx = (tx: Tx, pad = "") => {
+      const dir    = tx.direction === "in" ? "IN " : "OUT";
+      const asset  = (tx as Tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
+      const usd    = tx.valueUsd && tx.valueUsd > 0
+        ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD]`
+        : "";
+      const lines: string[] = [];
+      lines.push(`${pad}  Direction : [${dir}]`);
+      lines.push(`${pad}  Amount    : ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}`);
+      lines.push(`${pad}  From      : ${tx.from ?? "—"}`);
+      lines.push(`${pad}  To        : ${tx.to ?? "—"}`);
+      lines.push(`${pad}  TX Hash   : ${tx.hash ?? "(no hash)"}`);
+      lines.push(`${pad}  Date      : ${fmtDate(tx.timestamp ?? "")}`);
+      if ((tx as Tx & { destinationTag?: number | null }).destinationTag != null)
+        lines.push(`${pad}  ↳ Destination Tag : ${(tx as Tx & { destinationTag?: number | null }).destinationTag}`);
+      if (tx.memo) lines.push(`${pad}  ↳ Memo    : ${tx.memo}`);
+      return lines;
+    };
 
+    const walletAddrs = steps.map(s => s.wallet);
     const lines: string[] = [];
     lines.push(`╔══════════════════════════════════════════════════════════════╗`);
     lines.push(`║    VICTIM → THIEF PATH TRACE — CryptoChainTrace             ║`);
     lines.push(`╚══════════════════════════════════════════════════════════════╝`);
     lines.push(`Generated    : ${now}`);
     lines.push(`Chain        : ${chainUp}`);
-    lines.push(`Victim       : ${wallets[0]}`);
-    lines.push(`Thief        : ${wallets[1]}`);
-    wallets.slice(2).forEach((w, i) => {
-      lines.push(`Next Hop ${i + 1}   : ${w}`);
+    steps.forEach((s, i) => {
+      const role = i === 0 ? "VICTIM" : i === 1 ? "THIEF" : `HOP ${i + 1}`;
+      const kn = KNOWN_LABELS[s.wallet];
+      lines.push(`${role.padEnd(12)} : ${s.wallet}${kn ? `  [${kn.label}]` : ""}`);
+      if (s.txHash) lines.push(`${"".padEnd(14)}  TX → ${s.txHash}`);
     });
     lines.push(`Total Hops   : ${hopData.length}`);
     lines.push("");
 
-    // Track origin amount from first hop for taint calculation
+    // ── Per-hop details ────────────────────────────────────────────────────
     let originAmount: number | null = null;
 
     hopData.forEach((hop, idx) => {
@@ -1743,64 +1762,56 @@ export default function WalletDetail() {
       const toRole   = idx === hopData.length - 1 ? "FINAL DESTINATION" : `HOP ${idx + 2}`;
 
       lines.push(sepSection(`HOP ${idx + 1}  —  ${fromRole} → ${toRole}`));
-      lines.push(`  FROM : ${hop.from}${fromKn ? `  [${fromKn.label.toUpperCase()}]` : "  (unidentified)"}`);
-      lines.push(`  TO   : ${hop.to}${toKn   ? `  [${toKn.label.toUpperCase()}]`   : "  (unidentified)"}`);
+      lines.push(`  FROM      : ${hop.from}${fromKn ? `  [${fromKn.label.toUpperCase()}]` : "  (unidentified)"}`);
+      lines.push(`  TO        : ${hop.to}${toKn   ? `  [${toKn.label.toUpperCase()}]`   : "  (unidentified)"}`);
+      if (hop.knownHash) lines.push(`  Known TX  : ${hop.knownHash}`);
       lines.push("");
 
-      if (hop.txs.length === 0) {
-        lines.push(`  ⚠  No transactions found between these wallets in loaded history.`);
-        lines.push(`     Load full TX history on the Hop ${idx + 1} wallet for complete records.`);
+      // Primary TX — the user-specified hash, or best match from fetched history
+      const primaryTx = hop.tx;
+      if (primaryTx) {
+        const amt = parseFloat(primaryTx.value) || 0;
+        if (idx === 0 && originAmount === null && amt > 0) originAmount = amt;
+        const taintPct = originAmount && originAmount > 0 && amt > 0
+          ? ((amt / originAmount) * 100).toFixed(1)
+          : null;
+        if (taintPct !== null) lines.push(`  Taint     : ${taintPct}% of original stolen funds reached this point`);
+        lines.push(`  ─ Transaction Detail ─`);
+        emitTx(primaryTx, "  ").forEach(l => lines.push(l));
+      } else if (hop.knownHash) {
+        lines.push(`  ⚠  TX ${hop.knownHash.slice(0, 16)}…`);
+        lines.push(`     not found in loaded history. Load full TX history on this wallet for full detail.`);
       } else {
-        const totalOut = hop.txs.filter(t => t.direction === "out")
-          .reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-        const totalIn  = hop.txs.filter(t => t.direction === "in")
-          .reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-        const totalFlow = totalOut > 0 ? totalOut : totalIn;
+        lines.push(`  ⚠  No TX hash provided and no matching transaction found between these wallets.`);
+        lines.push(`     Load full TX history on the Hop ${idx + 1} wallet to locate the transaction.`);
+      }
 
-        if (idx === 0 && originAmount === null && totalFlow > 0) originAmount = totalFlow;
-
-        const taintPct =
-          originAmount && originAmount > 0 && totalFlow > 0
-            ? ((totalFlow / originAmount) * 100).toFixed(1)
-            : null;
-
-        lines.push(`  Transactions    : ${hop.txs.length}`);
-        lines.push(`  Total Flow      : ${totalFlow.toFixed(8)} ${chainUp}`);
-        if (taintPct !== null) {
-          lines.push(`  Taint at Hop    : ${taintPct}% of original stolen funds reached this point`);
-        }
+      // Additional transactions between this pair (supporting evidence)
+      const extras = hop.allTxs.filter(t => t.hash !== primaryTx?.hash).slice(0, 5);
+      if (extras.length > 0) {
         lines.push("");
-
-        const sorted = [...hop.txs].sort(
-          (a, b) => new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime()
-        );
-        sorted.forEach((tx, ti) => {
-          const isLast   = ti === sorted.length - 1;
-          const conn     = isLast ? "└─" : "├─";
-          const childPx  = isLast ? "   " : "│  ";
-          const dir      = tx.direction === "in" ? "IN " : "OUT";
-          const asset    = (tx as Tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
-          const usd      = tx.valueUsd && tx.valueUsd > 0
+        lines.push(`  Additional transactions between these wallets (${extras.length} shown):`);
+        extras.forEach((tx, ti) => {
+          const isLast  = ti === extras.length - 1;
+          const conn    = isLast ? "└─" : "├─";
+          const childPx = isLast ? "   " : "│  ";
+          const dir  = tx.direction === "in" ? "IN " : "OUT";
+          const asset = (tx as Tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
+          const usd = tx.valueUsd && tx.valueUsd > 0
             ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD]`
             : "";
-          lines.push(`${conn} [${dir}]  ${fmtDate(tx.timestamp ?? "")}`);
-          lines.push(`${childPx}  Amount  : ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}`);
-          lines.push(`${childPx}  From    : ${tx.from ?? "—"}`);
-          lines.push(`${childPx}  To      : ${tx.to ?? "—"}`);
-          lines.push(`${childPx}  TX Hash : ${tx.hash ?? "(no hash)"}`);
-          if ((tx as Tx & { destinationTag?: number | null }).destinationTag != null)
-            lines.push(`${childPx}  ↳ Destination Tag : ${(tx as Tx & { destinationTag?: number | null }).destinationTag}`);
-          if (tx.memo) lines.push(`${childPx}  ↳ Memo : ${tx.memo}`);
-          if (!isLast) lines.push(childPx);
+          lines.push(`  ${conn} [${dir}]  ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}  ${fmtDate(tx.timestamp ?? "")}`);
+          lines.push(`  ${childPx}  Hash: ${tx.hash ?? "(none)"}`);
+          if (tx.memo) lines.push(`  ${childPx}  Memo: ${tx.memo}`);
         });
       }
       lines.push("");
     });
 
-    // Wallet clustering — flag any address that appears more than once in the path
+    // ── Wallet clustering ─────────────────────────────────────────────────
     lines.push(sepSection("WALLET CLUSTERING"));
     const seenPositions = new Map<string, number[]>();
-    wallets.forEach((w, i) => {
+    walletAddrs.forEach((w, i) => {
       if (!seenPositions.has(w)) seenPositions.set(w, []);
       seenPositions.get(w)!.push(i + 1);
     });
@@ -1817,10 +1828,39 @@ export default function WalletDetail() {
     }
     lines.push("");
 
-    // Final summary
+    // ── Expand from final wallet ──────────────────────────────────────────
+    const lastAddr = walletAddrs[walletAddrs.length - 1];
+    lines.push(sepSection(`EXPAND FROM FINAL WALLET — ${lastAddr}`));
+    if (expandTxs.length === 0) {
+      lines.push("  No further activity found from the final wallet in loaded history.");
+      lines.push("  Load full TX history on the final wallet to expand the trail.");
+    } else {
+      lines.push(`  ${expandTxs.length} further transaction${expandTxs.length !== 1 ? "s" : ""} from the final wallet (newest first):`);
+      lines.push("");
+      expandTxs.forEach((tx, ti) => {
+        const isLast  = ti === expandTxs.length - 1;
+        const conn    = isLast ? "└─" : "├─";
+        const childPx = isLast ? "   " : "│  ";
+        const dir     = tx.direction === "in" ? "IN " : "OUT";
+        const cp      = tx.direction === "in" ? tx.from : tx.to;
+        const cpKn    = cp ? KNOWN_LABELS[cp] : null;
+        const asset   = (tx as Tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
+        const usd     = tx.valueUsd && tx.valueUsd > 0
+          ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD]`
+          : "";
+        lines.push(`${conn} [${dir}]  ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}`);
+        lines.push(`${childPx}  Counterparty : ${cp ?? "—"}${cpKn ? `  [${cpKn.label}]` : ""}`);
+        lines.push(`${childPx}  TX Hash      : ${tx.hash ?? "(no hash)"}`);
+        lines.push(`${childPx}  Date         : ${fmtDate(tx.timestamp ?? "")}`);
+        if (tx.memo) lines.push(`${childPx}  ↳ Memo       : ${tx.memo}`);
+        if (!isLast) lines.push(childPx);
+      });
+    }
+    lines.push("");
+
+    // ── Trail summary ─────────────────────────────────────────────────────
     lines.push(sepSection("TRAIL SUMMARY"));
-    const lastAddr = wallets[wallets.length - 1];
-    const lastKn   = KNOWN_LABELS[lastAddr];
+    const lastKn = KNOWN_LABELS[lastAddr];
     if (lastKn?.type === "exchange") {
       lines.push(`  ✦ FUNDS SENT TO EXCHANGE`);
       lines.push(`    Exchange : ${lastKn.label}`);
@@ -1829,28 +1869,28 @@ export default function WalletDetail() {
       lines.push(`               identity, IP logs, and transaction records.`);
     } else if (lastKn?.type === "bridge") {
       lines.push(`  ✦ FUNDS CROSSED A BRIDGE — trail continues on destination chain`);
-      lines.push(`    Bridge   : ${lastKn.label}`);
-      lines.push(`    Address  : ${lastAddr}`);
-      lines.push(`    Action   : Identify destination chain and continue trace there.`);
+      lines.push(`    Bridge  : ${lastKn.label}`);
+      lines.push(`    Address : ${lastAddr}`);
+      lines.push(`    Action  : Identify destination chain and continue trace there.`);
     } else {
       lines.push(`  ✦ TRAIL ENDS HERE — final wallet is an unidentified private address`);
-      lines.push(`    Address  : ${lastAddr}`);
-      lines.push(`    Action   : Monitor for future activity. Load full TX history and expand trail.`);
+      lines.push(`    Address : ${lastAddr}`);
+      lines.push(`    Action  : Monitor for future activity. Load full TX history and expand trail.`);
     }
     lines.push("");
-    lines.push(`  Victim         : ${wallets[0]}`);
-    lines.push(`  Thief / Target : ${wallets[1]}`);
+    lines.push(`  Victim         : ${walletAddrs[0]}`);
+    lines.push(`  Thief          : ${walletAddrs[1]}`);
     lines.push(`  Total Hops     : ${hopData.length}`);
     if (originAmount !== null) {
-      lines.push(`  Origin Amount  : ${(originAmount as number).toFixed(8)} ${chainUp} (first hop flow)`);
+      lines.push(`  Origin Amount  : ${(originAmount as number).toFixed(8)} ${chainUp} (first hop TX)`);
     }
     lines.push("");
 
     return auditAndSign(lines, {
       reportType: "Victim → Thief Path Trace Report",
       chain: chainUp,
-      target: wallets[0],
-      comparisons: wallets.slice(1),
+      target: walletAddrs[0],
+      comparisons: walletAddrs.slice(1),
       depth: `${hopData.length} hop${hopData.length !== 1 ? "s" : ""}`,
       walletLabels: true,
     });
@@ -1858,8 +1898,10 @@ export default function WalletDetail() {
 
   // ── Run Victim → Thief Path Trace ─────────────────────────────────────────
   async function runPathTrace() {
-    const wallets = pathWallets.map(w => w.trim()).filter(Boolean);
-    if (wallets.length < 2) {
+    const steps = pathSteps
+      .map(s => ({ wallet: s.wallet.trim(), txHash: s.txHash.trim() }))
+      .filter(s => s.wallet);
+    if (steps.length < 2) {
       setPathError("Enter at least a victim wallet and a thief wallet.");
       return;
     }
@@ -1868,54 +1910,96 @@ export default function WalletDetail() {
     setPathProgress("Starting path analysis…");
 
     try {
-      const hopData: Array<{ from: string; to: string; txs: Tx[] }> = [];
+      const hopData: Array<{ from: string; to: string; knownHash: string; tx: Tx | null; allTxs: Tx[] }> = [];
 
-      for (let i = 0; i < wallets.length - 1; i++) {
-        const fromAddr = wallets[i];
-        const toAddr   = wallets[i + 1];
-        setPathProgress(`Fetching hop ${i + 1}/${wallets.length - 1}…`);
+      for (let i = 0; i < steps.length - 1; i++) {
+        const fromAddr  = steps[i].wallet;
+        const toAddr    = steps[i + 1].wallet;
+        const knownHash = steps[i].txHash; // TX hash on the FROM side of this hop
+        setPathProgress(`Fetching hop ${i + 1}/${steps.length - 1}…`);
 
-        // Check allTxs first (current wallet's loaded history)
+        // Search allTxs (loaded history on current wallet) for matching TXs
         const inLoaded = allTxs.filter(t => {
-          const self = t.direction === "in" ? t.to : t.from;
+          const self = t.direction === "in" ? t.to  : t.from;
           const cp   = t.direction === "in" ? t.from : t.to;
           return (self === fromAddr && cp === toAddr) || (self === toAddr && cp === fromAddr);
         });
 
-        let txsForHop: Tx[] = inLoaded;
+        let txPool: Tx[] = inLoaded;
 
-        // If nothing in allTxs, fetch the from-wallet's transactions from API
-        if (txsForHop.length === 0) {
+        // Also fetch directly from the from-wallet if we don't already have enough
+        if (txPool.length === 0 || knownHash) {
           try {
             const resp = await fetch(
               `/api/wallets/${encodeURIComponent(fromAddr)}/transactions?chain=${chain}&limit=50`
             );
             if (resp.ok) {
               const data = await resp.json() as { transactions?: Tx[] };
-              txsForHop = (data.transactions ?? []).filter(t => {
+              const fetched = (data.transactions ?? []).filter(t => {
                 const cp = t.direction === "in" ? t.from : t.to;
                 return cp === toAddr;
               });
+              // Merge: deduplicate by hash
+              const seen = new Set(txPool.map(t => t.hash).filter(Boolean));
+              txPool = [...txPool, ...fetched.filter(t => !seen.has(t.hash))];
             }
           } catch { /* best-effort */ }
         }
 
-        hopData.push({ from: fromAddr, to: toAddr, txs: txsForHop });
+        // Find the primary TX — prefer the user-specified hash; fall back to largest-value match
+        let primaryTx: Tx | null = null;
+        if (knownHash) {
+          primaryTx = txPool.find(t => t.hash === knownHash) ?? null;
+          // If not found by hash in the filtered pool, search all of allTxs by hash directly
+          if (!primaryTx) {
+            primaryTx = allTxs.find(t => t.hash === knownHash) ?? null;
+          }
+        }
+        if (!primaryTx && txPool.length > 0) {
+          primaryTx = txPool.reduce((best, t) =>
+            parseFloat(t.value) > parseFloat(best.value) ? t : best
+          );
+        }
+
+        hopData.push({ from: fromAddr, to: toAddr, knownHash, tx: primaryTx, allTxs: txPool });
       }
 
+      // ── Expand from final wallet ─────────────────────────────────────────
+      setPathProgress("Fetching final-wallet expansion…");
+      const lastAddr = steps[steps.length - 1].wallet;
+      let expandTxs: Tx[] = [];
+      try {
+        // Check allTxs first (already filtered and clean)
+        const inLoadedExpand = allTxs.filter(t => {
+          const self = t.direction === "in" ? t.to : t.from;
+          return self === lastAddr;
+        });
+        if (inLoadedExpand.length > 0) {
+          expandTxs = inLoadedExpand.slice(0, 20);
+        } else {
+          const resp = await fetch(
+            `/api/wallets/${encodeURIComponent(lastAddr)}/transactions?chain=${chain}&limit=25`
+          );
+          if (resp.ok) {
+            const data = await resp.json() as { transactions?: Tx[] };
+            expandTxs = (data.transactions ?? []).slice(0, 20);
+          }
+        }
+      } catch { /* best-effort */ }
+
       setPathProgress("Generating report…");
-      const rpt   = generatePathTraceReport(wallets, hopData);
-      const title = `Victim → Thief Path Trace — ${chain.toUpperCase()} — ${wallets[0].slice(0, 12)}`;
+      const rpt   = generatePathTraceReport(steps, hopData, expandTxs);
+      const title = `Victim → Thief Path Trace — ${chain.toUpperCase()} — ${steps[0].wallet.slice(0, 12)}`;
       setReportContent(rpt);
       setReportTitle(title);
       setReportJsonData({
-        reportType: "path-trace",
-        generatedAt: new Date().toISOString(),
+        reportType:    "path-trace",
+        generatedAt:   new Date().toISOString(),
         chain,
-        victimAddress: wallets[0],
-        thiefAddress:  wallets[1],
-        pathWallets:   wallets,
-        hops:          hopData.map(h => ({ from: h.from, to: h.to, txCount: h.txs.length })),
+        victimAddress: steps[0].wallet,
+        thiefAddress:  steps[1].wallet,
+        pathSteps:     steps,
+        hops:          hopData.map(h => ({ from: h.from, to: h.to, knownHash: h.knownHash, txFound: !!h.tx })),
         reportText:    rpt,
       });
       setShowReportModal(true);
@@ -1975,7 +2059,7 @@ export default function WalletDetail() {
 
   // ── Victim → Thief Path Trace ─────────────────────────────────────────────
   const [showPathPanel,   setShowPathPanel]   = useState(false);
-  const [pathWallets,     setPathWallets]     = useState<string[]>(["", ""]);
+  const [pathSteps,       setPathSteps]       = useState<Array<{wallet:string; txHash:string}>>([{wallet:"",txHash:""},{wallet:"",txHash:""}]);
   const [pathLoading,     setPathLoading]     = useState(false);
   const [pathProgress,    setPathProgress]    = useState("");
   const [pathError,       setPathError]       = useState<string | null>(null);
@@ -5241,16 +5325,26 @@ export default function WalletDetail() {
               </button>
             </div>
             <p className="text-xs font-mono text-muted-foreground mt-1">
-              Enter wallets in order — victim first, then thief, then any additional known hops. The report traces the exact path hop-by-hop with taint percentages.
+              Enter wallets in exact order — victim first, then thief, then any additional known hops.
+              Paste the specific transaction hash (TA) for each step for the most precise evidence trail.
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            {/* Wallet path builder */}
+            {/* Column headers */}
+            <div className="grid grid-cols-[7rem_1fr_1fr_1.5rem] gap-2 items-center px-0.5">
+              <div />
+              <span className="text-[10px] font-mono text-muted-foreground/60 uppercase tracking-wider">Wallet Address</span>
+              <span className="text-[10px] font-mono text-muted-foreground/60 uppercase tracking-wider">Transaction Hash (TA)</span>
+              <div />
+            </div>
+
+            {/* Hop rows */}
             <div className="space-y-2">
-              {pathWallets.map((w, idx) => (
-                <div key={idx} className="flex items-center gap-2">
-                  <div className="w-24 shrink-0">
-                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+              {pathSteps.map((step, idx) => (
+                <div key={idx} className="grid grid-cols-[7rem_1fr_1fr_1.5rem] gap-2 items-center">
+                  {/* Role badge */}
+                  <div className="flex items-center">
+                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border whitespace-nowrap ${
                       idx === 0
                         ? "text-blue-300 bg-blue-950/40 border-blue-500/30"
                         : idx === 1
@@ -5260,33 +5354,45 @@ export default function WalletDetail() {
                       {idx === 0 ? "VICTIM" : idx === 1 ? "THIEF" : `HOP ${idx + 1}`}
                     </span>
                   </div>
+                  {/* Wallet input */}
                   <input
                     type="text"
-                    value={w}
+                    value={step.wallet}
                     onChange={(e) => {
-                      const next = [...pathWallets];
-                      next[idx] = e.target.value;
-                      setPathWallets(next);
+                      const next = pathSteps.map((s, i) => i === idx ? { ...s, wallet: e.target.value } : s);
+                      setPathSteps(next);
                     }}
-                    placeholder={idx === 0 ? "Victim / starting wallet address" : idx === 1 ? "Known thief wallet address" : `Next hop wallet address (optional)`}
-                    className="flex-1 bg-background/50 border border-border/50 text-xs font-mono text-foreground px-3 py-2 rounded focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 placeholder:text-muted-foreground/40"
+                    placeholder={idx === 0 ? "Victim wallet address" : idx === 1 ? "Thief wallet address" : "Next hop wallet address"}
+                    className="bg-background/50 border border-border/50 text-xs font-mono text-foreground px-3 py-2 rounded focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 placeholder:text-muted-foreground/40 min-w-0"
                   />
-                  {idx >= 2 && (
+                  {/* TX hash input */}
+                  <input
+                    type="text"
+                    value={step.txHash}
+                    onChange={(e) => {
+                      const next = pathSteps.map((s, i) => i === idx ? { ...s, txHash: e.target.value } : s);
+                      setPathSteps(next);
+                    }}
+                    placeholder="TX hash (optional but recommended)"
+                    className="bg-background/50 border border-border/50 text-xs font-mono text-foreground px-3 py-2 rounded focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 placeholder:text-muted-foreground/40 min-w-0"
+                  />
+                  {/* Remove button — only for hop 3+ */}
+                  {idx >= 2 ? (
                     <button
-                      onClick={() => setPathWallets(pathWallets.filter((_, i) => i !== idx))}
-                      className="text-muted-foreground hover:text-rose-400 transition-colors shrink-0"
+                      onClick={() => setPathSteps(pathSteps.filter((_, i) => i !== idx))}
+                      className="text-muted-foreground hover:text-rose-400 transition-colors flex items-center justify-center"
                       title="Remove this hop"
                     >
                       <X className="w-3.5 h-3.5" />
                     </button>
-                  )}
+                  ) : <div />}
                 </div>
               ))}
 
-              {/* Add hop button */}
+              {/* Add hop */}
               <button
-                onClick={() => setPathWallets([...pathWallets, ""])}
-                className="flex items-center gap-1.5 text-[11px] font-mono text-rose-400/70 hover:text-rose-300 border border-dashed border-rose-500/20 hover:border-rose-500/40 px-3 py-1.5 rounded w-full justify-center transition-colors"
+                onClick={() => setPathSteps([...pathSteps, { wallet: "", txHash: "" }])}
+                className="flex items-center gap-1.5 text-[11px] font-mono text-rose-400/70 hover:text-rose-300 border border-dashed border-rose-500/20 hover:border-rose-500/40 px-3 py-1.5 rounded w-full justify-center transition-colors mt-1"
               >
                 <Plus className="w-3 h-3" /> ADD NEXT HOP
               </button>
@@ -5307,19 +5413,19 @@ export default function WalletDetail() {
               </div>
             )}
 
-            {/* Generate button */}
+            {/* Generate / Clear */}
             <div className="flex items-center gap-3">
               <Button
                 className="font-mono text-xs bg-rose-700 hover:bg-rose-600 text-white border-0"
                 onClick={runPathTrace}
-                disabled={pathLoading || pathWallets.filter(w => w.trim()).length < 2}
+                disabled={pathLoading || pathSteps.filter(s => s.wallet.trim()).length < 2}
               >
                 {pathLoading
                   ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> TRACING…</>
                   : <><Route className="w-3.5 h-3.5 mr-1.5" /> GENERATE PATH TRACE</>}
               </Button>
               <button
-                onClick={() => setPathWallets(["", ""])}
+                onClick={() => setPathSteps([{ wallet: "", txHash: "" }, { wallet: "", txHash: "" }])}
                 className="text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
               >
                 CLEAR
@@ -5327,8 +5433,9 @@ export default function WalletDetail() {
             </div>
 
             <p className="text-[10px] font-mono text-muted-foreground/50 leading-relaxed">
-              Transactions are looked up from your loaded history first, then fetched directly per hop.
-              Load full TX history on each wallet for the most complete evidence.
+              TX hashes are used to look up the exact transaction for each hop.
+              Transactions are searched in your loaded history first, then fetched directly from the chain.
+              The report also shows all further connections from the final wallet (Expand section).
             </p>
           </CardContent>
         </Card>

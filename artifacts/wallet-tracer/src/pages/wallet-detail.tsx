@@ -486,6 +486,8 @@ interface CommingleCheckResult {
   totalScanned: number;
   // Best TX for each intermediate hop segment: key = "fromAddr::toAddr"
   segmentTxs: Record<string, Tx | null>;
+  // Debug stats per intermediate hop wallet: how many pages/ops were fetched
+  hopFetchStats: Record<string, { pages: number; txs: number }>;
   // Filtered transactions for each cluster wallet (for display purposes)
   walletTxs: Record<string, Tx[]>;
   // First-class exchange flow data detected during the scan from raw transaction history.
@@ -1063,6 +1065,19 @@ export default function WalletDetail() {
     lines.push(`Depth        : 4 tiers   |   Nodes Scanned: ${commingleResult.totalScanned}`);
     lines.push(`Min Tx Amount: ${commingleMinAmount <= 0 ? "None (all transactions included)" : `${commingleMinAmount} ${chainUp} (dust/spam/fees filtered out)`}`);
     lines.push("");
+    const hopStats = commingleResult.hopFetchStats ?? {};
+    const hopEntries = Object.entries(hopStats);
+    if (hopEntries.length > 0) {
+      lines.push(`── HOP WALLET FETCH DEPTH (max 25,000 ops each) ──────────────`);
+      for (const [addr, s] of hopEntries) {
+        const kn = KNOWN_LABELS[addr];
+        const tag = kn ? `  [${kn.label}]` : "";
+        lines.push(`  ${addr}${tag}`);
+        lines.push(`    Fetched: ${s.txs} ops across ${s.pages} page${s.pages !== 1 ? "s" : ""}`);
+      }
+      lines.push(`──────────────────────────────────────────────────────────────`);
+      lines.push("");
+    }
 
     const { findings: rawFindings } = commingleResult;
     // Hard-excluded addresses — stripped from ALL sections of the report entirely.
@@ -3048,11 +3063,15 @@ export default function WalletDetail() {
         }
       }
       const segmentTxs: Record<string, Tx | null> = {};
+      const hopFetchStats: Record<string, { pages: number; txs: number }> = {};
       if (intermedWallets.size > 0) {
         // Paginating hop fetch — up to 125 pages × 200 ops each (25 000 ops per hop wallet).
         // All hop wallets run in parallel; pages within each wallet are sequential cursor follows.
-        const fetchHopPages = async (fromAddr: string): Promise<void> => {
+        // Returns { pages, txs } stats so the report can show how deep the fetch actually went.
+        const fetchHopPages = async (fromAddr: string): Promise<{ pages: number; txs: number }> => {
           let cursor: string | null = null;
+          let pagesUsed = 0;
+          let txsTotal = 0;
           for (let p = 0; p < 125; p++) {
             try {
               const qs = new URLSearchParams({ chain, limit: "200" });
@@ -3060,7 +3079,10 @@ export default function WalletDetail() {
               const resp = await fetch(`/api/wallets/${encodeURIComponent(fromAddr)}/transactions?${qs}`);
               if (!resp.ok) break;
               const data = await resp.json() as { transactions?: Tx[]; nextCursor?: string | null };
-              for (const tx of data.transactions ?? []) {
+              const pageTxs = data.transactions ?? [];
+              pagesUsed++;
+              txsTotal += pageTxs.length;
+              for (const tx of pageTxs) {
                 // XLM: enforce allowlist + per-asset minimums at the earliest ingest point.
                 // segmentTxs are fetched independently of allTxs, so commit() doesn't cover them.
                 if (chain === "xlm" && !xlmPassesFilter(tx)) continue;
@@ -3077,11 +3099,15 @@ export default function WalletDetail() {
               }
               cursor = data.nextCursor ?? null;
               if (!cursor) break;
-            } catch { break; /* best-effort */ }
+            } catch { break; /* best-effort — stats still reflect pages completed before error */ }
           }
+          return { pages: pagesUsed, txs: txsTotal };
         };
         await Promise.allSettled(
-          Array.from(intermedWallets).slice(0, 20).map((w) => fetchHopPages(w))
+          Array.from(intermedWallets).slice(0, 20).map(async (w) => {
+            const stats = await fetchHopPages(w);
+            hopFetchStats[w] = stats;
+          })
         );
       }
 
@@ -3183,6 +3209,7 @@ export default function WalletDetail() {
         tieredCounts,
         totalScanned: targetReach.size,
         segmentTxs,
+        hopFetchStats,
         walletTxs,
         exchFlows,
       });

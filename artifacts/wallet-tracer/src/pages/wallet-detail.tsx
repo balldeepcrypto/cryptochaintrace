@@ -3270,6 +3270,36 @@ export default function WalletDetail() {
           }
         }
       }
+
+      // Supplement from segmentTxs — hop wallet transactions fetched by fetchHopPages.
+      // These cover cases where an INTERMEDIATE wallet (not target/comparison) sent to or
+      // received from a known exchange (e.g. GAZSPN → Kraken, GD6OZZ → Coinbase Deposits).
+      // segmentTxs stores both "fa::ta" and "ta::fa" for the same TX; we deduplicate via
+      // exchFlowsMap.has() before inserting.
+      for (const segKey of Object.keys(segmentTxs)) {
+        const sep = segKey.indexOf("::");
+        if (sep < 0) continue;
+        const fa = segKey.slice(0, sep);
+        const ta = segKey.slice(sep + 2);
+        // Check both sides — either the fa or ta could be the exchange address.
+        for (const [exchAddr, srcAddr] of [[fa, ta], [ta, fa]] as [string, string][]) {
+          const info = KNOWN_LABELS[exchAddr];
+          if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
+          // srcAddr is the hop wallet that transacted with the exchange.
+          const flowKey = `${exchAddr}::${srcAddr}`;
+          if (!exchFlowsMap.has(flowKey)) {
+            const tx = segmentTxs[segKey];
+            exchFlowsMap.set(flowKey, {
+              exchAddr,
+              exchLabel: info.label,
+              exchType:  info.type,
+              sourceWallet: srcAddr,
+              txs: tx ? [tx] : [],
+            });
+          }
+        }
+      }
+
       const exchFlows = [...exchFlowsMap.values()];
 
       setCommingleResult({

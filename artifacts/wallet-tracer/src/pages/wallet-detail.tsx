@@ -17,7 +17,7 @@ import {
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
   AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Check, Heart, MessageSquare,
   Plus, GitMerge, Layers, Flag, FileText, MousePointer2, Download, FileJson,
-  Landmark, Star,
+  Landmark, Star, Route,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -1696,6 +1696,237 @@ export default function WalletDetail() {
     });
   }
 
+  // ── Victim → Thief Path Trace report generator ────────────────────────────
+  function generatePathTraceReport(
+    wallets: string[],
+    hopData: Array<{ from: string; to: string; txs: Tx[] }>
+  ): string {
+    const chainUp = chain.toUpperCase();
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const rule = "─".repeat(66);
+    const sepSection = (label = "") =>
+      label
+        ? `\n${rule}\n  ${label}\n${rule}`
+        : rule;
+
+    const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
+    const fmtAmt  = (v: string, dir: "in" | "out") => {
+      const n = parseFloat(v);
+      const sign = dir === "in" ? "+" : "−";
+      if (!n || isNaN(n)) return `${sign}0.00`;
+      const abs = Math.abs(n);
+      const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+    };
+
+    const lines: string[] = [];
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║    VICTIM → THIEF PATH TRACE — CryptoChainTrace             ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`Generated    : ${now}`);
+    lines.push(`Chain        : ${chainUp}`);
+    lines.push(`Victim       : ${wallets[0]}`);
+    lines.push(`Thief        : ${wallets[1]}`);
+    wallets.slice(2).forEach((w, i) => {
+      lines.push(`Next Hop ${i + 1}   : ${w}`);
+    });
+    lines.push(`Total Hops   : ${hopData.length}`);
+    lines.push("");
+
+    // Track origin amount from first hop for taint calculation
+    let originAmount: number | null = null;
+
+    hopData.forEach((hop, idx) => {
+      const fromKn   = KNOWN_LABELS[hop.from];
+      const toKn     = KNOWN_LABELS[hop.to];
+      const fromRole = idx === 0 ? "VICTIM" : `HOP ${idx + 1}`;
+      const toRole   = idx === hopData.length - 1 ? "FINAL DESTINATION" : `HOP ${idx + 2}`;
+
+      lines.push(sepSection(`HOP ${idx + 1}  —  ${fromRole} → ${toRole}`));
+      lines.push(`  FROM : ${hop.from}${fromKn ? `  [${fromKn.label.toUpperCase()}]` : "  (unidentified)"}`);
+      lines.push(`  TO   : ${hop.to}${toKn   ? `  [${toKn.label.toUpperCase()}]`   : "  (unidentified)"}`);
+      lines.push("");
+
+      if (hop.txs.length === 0) {
+        lines.push(`  ⚠  No transactions found between these wallets in loaded history.`);
+        lines.push(`     Load full TX history on the Hop ${idx + 1} wallet for complete records.`);
+      } else {
+        const totalOut = hop.txs.filter(t => t.direction === "out")
+          .reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const totalIn  = hop.txs.filter(t => t.direction === "in")
+          .reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const totalFlow = totalOut > 0 ? totalOut : totalIn;
+
+        if (idx === 0 && originAmount === null && totalFlow > 0) originAmount = totalFlow;
+
+        const taintPct =
+          originAmount && originAmount > 0 && totalFlow > 0
+            ? ((totalFlow / originAmount) * 100).toFixed(1)
+            : null;
+
+        lines.push(`  Transactions    : ${hop.txs.length}`);
+        lines.push(`  Total Flow      : ${totalFlow.toFixed(8)} ${chainUp}`);
+        if (taintPct !== null) {
+          lines.push(`  Taint at Hop    : ${taintPct}% of original stolen funds reached this point`);
+        }
+        lines.push("");
+
+        const sorted = [...hop.txs].sort(
+          (a, b) => new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime()
+        );
+        sorted.forEach((tx, ti) => {
+          const isLast   = ti === sorted.length - 1;
+          const conn     = isLast ? "└─" : "├─";
+          const childPx  = isLast ? "   " : "│  ";
+          const dir      = tx.direction === "in" ? "IN " : "OUT";
+          const asset    = (tx as Tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
+          const usd      = tx.valueUsd && tx.valueUsd > 0
+            ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD]`
+            : "";
+          lines.push(`${conn} [${dir}]  ${fmtDate(tx.timestamp ?? "")}`);
+          lines.push(`${childPx}  Amount  : ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}`);
+          lines.push(`${childPx}  From    : ${tx.from ?? "—"}`);
+          lines.push(`${childPx}  To      : ${tx.to ?? "—"}`);
+          lines.push(`${childPx}  TX Hash : ${tx.hash ?? "(no hash)"}`);
+          if ((tx as Tx & { destinationTag?: number | null }).destinationTag != null)
+            lines.push(`${childPx}  ↳ Destination Tag : ${(tx as Tx & { destinationTag?: number | null }).destinationTag}`);
+          if (tx.memo) lines.push(`${childPx}  ↳ Memo : ${tx.memo}`);
+          if (!isLast) lines.push(childPx);
+        });
+      }
+      lines.push("");
+    });
+
+    // Wallet clustering — flag any address that appears more than once in the path
+    lines.push(sepSection("WALLET CLUSTERING"));
+    const seenPositions = new Map<string, number[]>();
+    wallets.forEach((w, i) => {
+      if (!seenPositions.has(w)) seenPositions.set(w, []);
+      seenPositions.get(w)!.push(i + 1);
+    });
+    const clusters = [...seenPositions.entries()].filter(([, pos]) => pos.length > 1);
+    if (clusters.length === 0) {
+      lines.push("  No repeated wallets — each hop uses a distinct address.");
+    } else {
+      lines.push(`  ${clusters.length} wallet(s) appear at multiple path positions (potential mixing / address reuse):`);
+      clusters.forEach(([addr, pos]) => {
+        const kn = KNOWN_LABELS[addr];
+        lines.push(`  • ${addr}${kn ? `  [${kn.label}]` : ""}`);
+        lines.push(`    Positions : ${pos.join(", ")}`);
+      });
+    }
+    lines.push("");
+
+    // Final summary
+    lines.push(sepSection("TRAIL SUMMARY"));
+    const lastAddr = wallets[wallets.length - 1];
+    const lastKn   = KNOWN_LABELS[lastAddr];
+    if (lastKn?.type === "exchange") {
+      lines.push(`  ✦ FUNDS SENT TO EXCHANGE`);
+      lines.push(`    Exchange : ${lastKn.label}`);
+      lines.push(`    Address  : ${lastAddr}`);
+      lines.push(`    Action   : File subpoena / KYC request with ${lastKn.label} to obtain account-holder`);
+      lines.push(`               identity, IP logs, and transaction records.`);
+    } else if (lastKn?.type === "bridge") {
+      lines.push(`  ✦ FUNDS CROSSED A BRIDGE — trail continues on destination chain`);
+      lines.push(`    Bridge   : ${lastKn.label}`);
+      lines.push(`    Address  : ${lastAddr}`);
+      lines.push(`    Action   : Identify destination chain and continue trace there.`);
+    } else {
+      lines.push(`  ✦ TRAIL ENDS HERE — final wallet is an unidentified private address`);
+      lines.push(`    Address  : ${lastAddr}`);
+      lines.push(`    Action   : Monitor for future activity. Load full TX history and expand trail.`);
+    }
+    lines.push("");
+    lines.push(`  Victim         : ${wallets[0]}`);
+    lines.push(`  Thief / Target : ${wallets[1]}`);
+    lines.push(`  Total Hops     : ${hopData.length}`);
+    if (originAmount !== null) {
+      lines.push(`  Origin Amount  : ${(originAmount as number).toFixed(8)} ${chainUp} (first hop flow)`);
+    }
+    lines.push("");
+
+    return auditAndSign(lines, {
+      reportType: "Victim → Thief Path Trace Report",
+      chain: chainUp,
+      target: wallets[0],
+      comparisons: wallets.slice(1),
+      depth: `${hopData.length} hop${hopData.length !== 1 ? "s" : ""}`,
+      walletLabels: true,
+    });
+  }
+
+  // ── Run Victim → Thief Path Trace ─────────────────────────────────────────
+  async function runPathTrace() {
+    const wallets = pathWallets.map(w => w.trim()).filter(Boolean);
+    if (wallets.length < 2) {
+      setPathError("Enter at least a victim wallet and a thief wallet.");
+      return;
+    }
+    setPathLoading(true);
+    setPathError(null);
+    setPathProgress("Starting path analysis…");
+
+    try {
+      const hopData: Array<{ from: string; to: string; txs: Tx[] }> = [];
+
+      for (let i = 0; i < wallets.length - 1; i++) {
+        const fromAddr = wallets[i];
+        const toAddr   = wallets[i + 1];
+        setPathProgress(`Fetching hop ${i + 1}/${wallets.length - 1}…`);
+
+        // Check allTxs first (current wallet's loaded history)
+        const inLoaded = allTxs.filter(t => {
+          const self = t.direction === "in" ? t.to : t.from;
+          const cp   = t.direction === "in" ? t.from : t.to;
+          return (self === fromAddr && cp === toAddr) || (self === toAddr && cp === fromAddr);
+        });
+
+        let txsForHop: Tx[] = inLoaded;
+
+        // If nothing in allTxs, fetch the from-wallet's transactions from API
+        if (txsForHop.length === 0) {
+          try {
+            const resp = await fetch(
+              `/api/wallets/${encodeURIComponent(fromAddr)}/transactions?chain=${chain}&limit=50`
+            );
+            if (resp.ok) {
+              const data = await resp.json() as { transactions?: Tx[] };
+              txsForHop = (data.transactions ?? []).filter(t => {
+                const cp = t.direction === "in" ? t.from : t.to;
+                return cp === toAddr;
+              });
+            }
+          } catch { /* best-effort */ }
+        }
+
+        hopData.push({ from: fromAddr, to: toAddr, txs: txsForHop });
+      }
+
+      setPathProgress("Generating report…");
+      const rpt   = generatePathTraceReport(wallets, hopData);
+      const title = `Victim → Thief Path Trace — ${chain.toUpperCase()} — ${wallets[0].slice(0, 12)}`;
+      setReportContent(rpt);
+      setReportTitle(title);
+      setReportJsonData({
+        reportType: "path-trace",
+        generatedAt: new Date().toISOString(),
+        chain,
+        victimAddress: wallets[0],
+        thiefAddress:  wallets[1],
+        pathWallets:   wallets,
+        hops:          hopData.map(h => ({ from: h.from, to: h.to, txCount: h.txs.length })),
+        reportText:    rpt,
+      });
+      setShowReportModal(true);
+    } catch (err) {
+      setPathError(err instanceof Error ? err.message : "Analysis failed — try again");
+    } finally {
+      setPathLoading(false);
+      setPathProgress("");
+    }
+  }
+
   // Commit new pagination data: sort newest-first, mutate the ref, trigger re-render.
   function commit(txs: Tx[], cursor: string | null, more: boolean) {
     // Apply XLM allowlist at the earliest possible point — before allTxs is ever set.
@@ -1740,6 +1971,14 @@ export default function WalletDetail() {
   const [commingleMinAmount, setCommingleMinAmount] = useState(1.0);
   const [commingleMinAmountInput, setCommingleMinAmountInput] = useState("1");
   const comminglePanelRef = useRef<HTMLDivElement>(null);
+  const pathPanelRef      = useRef<HTMLDivElement>(null);
+
+  // ── Victim → Thief Path Trace ─────────────────────────────────────────────
+  const [showPathPanel,   setShowPathPanel]   = useState(false);
+  const [pathWallets,     setPathWallets]     = useState<string[]>(["", ""]);
+  const [pathLoading,     setPathLoading]     = useState(false);
+  const [pathProgress,    setPathProgress]    = useState("");
+  const [pathError,       setPathError]       = useState<string | null>(null);
 
   const addToCommingle = useCallback((addr: string) => {
     if (!addr) return;
@@ -2949,6 +3188,14 @@ export default function WalletDetail() {
               onClick={() => { setShowComminglePanel((v) => !v); if (!showComminglePanel) setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
             >
               <GitMerge className="w-3.5 h-3.5 mr-1.5" /> COMMINGLE CHECK
+            </Button>
+            <Button
+              variant="outline"
+              className={`font-mono text-xs ${showPathPanel ? "border-rose-500/60 text-rose-300 bg-rose-950/30 hover:bg-rose-950/50" : "border-rose-500/30 text-rose-400 hover:bg-rose-950/30 hover:border-rose-500/60"}`}
+              title="Trace funds from victim to thief hop-by-hop with taint analysis"
+              onClick={() => { setShowPathPanel((v) => !v); if (!showPathPanel) setTimeout(() => pathPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
+            >
+              <Route className="w-3.5 h-3.5 mr-1.5" /> VICTIM → THIEF PATH
             </Button>
             <Button
               variant="outline"
@@ -4975,6 +5222,115 @@ export default function WalletDetail() {
 
             </div>
           )}
+        </Card>
+      )}
+
+      {/* ── Victim → Thief Path Trace Panel ──────────────────────────────── */}
+      {showPathPanel && (
+        <Card ref={pathPanelRef} className="bg-card/40 border-rose-500/30 shadow-lg shadow-rose-500/5">
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Route className="w-4 h-4 text-rose-400" />
+                <CardTitle className="text-sm font-mono text-rose-300 tracking-widest uppercase">
+                  Victim → Thief Path Trace
+                </CardTitle>
+              </div>
+              <button onClick={() => setShowPathPanel(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <p className="text-xs font-mono text-muted-foreground mt-1">
+              Enter wallets in order — victim first, then thief, then any additional known hops. The report traces the exact path hop-by-hop with taint percentages.
+            </p>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* Wallet path builder */}
+            <div className="space-y-2">
+              {pathWallets.map((w, idx) => (
+                <div key={idx} className="flex items-center gap-2">
+                  <div className="w-24 shrink-0">
+                    <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded border ${
+                      idx === 0
+                        ? "text-blue-300 bg-blue-950/40 border-blue-500/30"
+                        : idx === 1
+                        ? "text-rose-300 bg-rose-950/40 border-rose-500/30"
+                        : "text-orange-300 bg-orange-950/40 border-orange-500/30"
+                    }`}>
+                      {idx === 0 ? "VICTIM" : idx === 1 ? "THIEF" : `HOP ${idx + 1}`}
+                    </span>
+                  </div>
+                  <input
+                    type="text"
+                    value={w}
+                    onChange={(e) => {
+                      const next = [...pathWallets];
+                      next[idx] = e.target.value;
+                      setPathWallets(next);
+                    }}
+                    placeholder={idx === 0 ? "Victim / starting wallet address" : idx === 1 ? "Known thief wallet address" : `Next hop wallet address (optional)`}
+                    className="flex-1 bg-background/50 border border-border/50 text-xs font-mono text-foreground px-3 py-2 rounded focus:outline-none focus:border-rose-500/50 focus:ring-1 focus:ring-rose-500/20 placeholder:text-muted-foreground/40"
+                  />
+                  {idx >= 2 && (
+                    <button
+                      onClick={() => setPathWallets(pathWallets.filter((_, i) => i !== idx))}
+                      className="text-muted-foreground hover:text-rose-400 transition-colors shrink-0"
+                      title="Remove this hop"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
+              ))}
+
+              {/* Add hop button */}
+              <button
+                onClick={() => setPathWallets([...pathWallets, ""])}
+                className="flex items-center gap-1.5 text-[11px] font-mono text-rose-400/70 hover:text-rose-300 border border-dashed border-rose-500/20 hover:border-rose-500/40 px-3 py-1.5 rounded w-full justify-center transition-colors"
+              >
+                <Plus className="w-3 h-3" /> ADD NEXT HOP
+              </button>
+            </div>
+
+            {/* Error */}
+            {pathError && (
+              <div className="text-xs font-mono text-red-400 bg-red-950/20 border border-red-500/20 rounded px-3 py-2">
+                {pathError}
+              </div>
+            )}
+
+            {/* Progress */}
+            {pathLoading && pathProgress && (
+              <div className="flex items-center gap-2 text-xs font-mono text-rose-300/80">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                {pathProgress}
+              </div>
+            )}
+
+            {/* Generate button */}
+            <div className="flex items-center gap-3">
+              <Button
+                className="font-mono text-xs bg-rose-700 hover:bg-rose-600 text-white border-0"
+                onClick={runPathTrace}
+                disabled={pathLoading || pathWallets.filter(w => w.trim()).length < 2}
+              >
+                {pathLoading
+                  ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> TRACING…</>
+                  : <><Route className="w-3.5 h-3.5 mr-1.5" /> GENERATE PATH TRACE</>}
+              </Button>
+              <button
+                onClick={() => setPathWallets(["", ""])}
+                className="text-[11px] font-mono text-muted-foreground hover:text-foreground transition-colors"
+              >
+                CLEAR
+              </button>
+            </div>
+
+            <p className="text-[10px] font-mono text-muted-foreground/50 leading-relaxed">
+              Transactions are looked up from your loaded history first, then fetched directly per hop.
+              Load full TX history on each wallet for the most complete evidence.
+            </p>
+          </CardContent>
         </Card>
       )}
 

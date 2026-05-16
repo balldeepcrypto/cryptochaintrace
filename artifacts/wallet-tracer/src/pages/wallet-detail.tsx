@@ -47,6 +47,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rwnYLUsoBQX3ECa1A5bSKLdbPoHKnqf63J: { label: "Coinbase XRP 3",  type: "exchange" },
   r4sRyacXpbh4HbagmgfoQq8Q3j8ZJzbZ1J: { label: "Coinbase XRP 4",  type: "exchange" },
   rwpTh9DDa52XkM9nTKp2QrJuCGV5d1mQVP: { label: "Coinbase XRP 5",  type: "exchange" },
+  rwpTh9DDa52XKm9nTKp2QrJuCGV5d1mQVP: { label: "Coinbase XRP 5b", type: "exchange" },
   r3YsZdkznVzYBv141qhwXHDWoPUXLdksNw: { label: "Coinbase XRP 6",  type: "exchange" },
   rLNaPoKeeBjZe2qs6x52yVPZpZ8td4dc6w: { label: "Coinbase XRP 7",  type: "exchange" },
   rUjfTQpvBr6wsGGxMw6sRmRQGG76nvp8Ln: { label: "Coinbase XRP 8",  type: "exchange" },

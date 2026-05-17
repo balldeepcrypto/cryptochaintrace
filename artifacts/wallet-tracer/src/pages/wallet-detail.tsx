@@ -1171,6 +1171,29 @@ export default function WalletDetail() {
     const t4priv = findings.filter((f) => f.tier === 4 && !isExch(f));
     const t4exch = findings.filter((f) => f.tier === 4 && isExch(f));
 
+    // ── Group connectivity — Union-Find over all input wallets ──────────────
+    // Edges come from private findings: each finding links targetWallet ↔ comparison wallets.
+    const allInputWallets = [commingleResult.targetWallet, ...commingleResult.comparisonWallets];
+    const _ufP: Record<string, string> = {};
+    allInputWallets.forEach(w => { _ufP[w] = w; });
+    const _ufFind = (x: string): string => {
+      if (_ufP[x] !== x) _ufP[x] = _ufFind(_ufP[x]);
+      return _ufP[x];
+    };
+    const _ufUnion = (a: string, b: string) => { _ufP[_ufFind(a)] = _ufFind(b); };
+    privFindings.forEach(f => {
+      f.comparisons.forEach(c => { _ufUnion(commingleResult.targetWallet, c.wallet); });
+    });
+    const _compMap: Record<string, string[]> = {};
+    allInputWallets.forEach(w => {
+      const r = _ufFind(w);
+      if (!_compMap[r]) _compMap[r] = [];
+      _compMap[r].push(w);
+    });
+    const _clusters     = Object.values(_compMap).filter(g => g.length >= 2);
+    const connectedWallets = new Set<string>(_clusters.flatMap(g => g));
+    const isolatedWallets  = allInputWallets.filter(w => !connectedWallets.has(w));
+
     lines.push(sep("SUMMARY"));
     lines.push("");
     const dagTeamFindings = privFindings.filter((f) => f.knownInfo?.type === "dag-team");
@@ -1194,10 +1217,12 @@ export default function WalletDetail() {
     } else {
       // Renders every connected wallet's trail + single best TX for a shared node finding.
       const renderSharedNodeWallets = (f: CommingleFinding) => {
+        // Only include wallets that are part of a connected cluster (2+ wallets).
+        // Isolated comparison wallets (no private findings) are excluded.
         const allWallets: Array<{ wLabel: string; wallet: string; path: string[] }> = [
           { wLabel: "WALLET 1", wallet: commingleResult.targetWallet, path: f.targetPath },
           ...f.comparisons.map((c, ci) => ({ wLabel: `WALLET ${ci + 2}`, wallet: c.wallet, path: c.path })),
-        ];
+        ].filter(({ wallet }) => connectedWallets.has(wallet));
         allWallets.forEach(({ wLabel, wallet, path }, wi) => {
           const isLastW = wi === allWallets.length - 1;
           const wConn   = isLastW ? "  └──" : "  ├──";
@@ -1255,6 +1280,43 @@ export default function WalletDetail() {
           lines.push("");
         }
       };
+
+      // ── Group Connectivity Summary ───────────────────────────────────────────
+      lines.push(sep("GROUP CONNECTIVITY SUMMARY"));
+      lines.push("");
+      if (_clusters.length > 0) {
+        _clusters.forEach((cluster) => {
+          lines.push(`  ${cluster.length} of ${allInputWallets.length} input wallets form one connected commingling cluster:`);
+          cluster.forEach(w => {
+            const idx = allInputWallets.indexOf(w);
+            lines.push(`    • Wallet ${idx + 1}: ${w}`);
+          });
+          lines.push("");
+          const clusterSet  = new Set(cluster);
+          const clusterNodes = privFindings.filter(f =>
+            clusterSet.has(commingleResult.targetWallet) &&
+            f.comparisons.some(c => clusterSet.has(c.wallet))
+          );
+          lines.push(`  Connected through ${clusterNodes.length} shared private node${clusterNodes.length !== 1 ? "s" : ""}:`);
+          clusterNodes.slice(0, 8).forEach(f => {
+            const kn = KNOWN_LABELS[f.sharedAddress];
+            lines.push(`    • ${f.sharedAddress}${kn ? `  [${kn.label}]` : ""}  (Tier ${f.tier})`);
+          });
+          if (clusterNodes.length > 8) lines.push(`    … and ${clusterNodes.length - 8} more shared nodes`);
+        });
+      } else {
+        lines.push(`  No private-wallet connections detected.`);
+        lines.push(`  All ${allInputWallets.length} input wallets are isolated from each other.`);
+      }
+      if (isolatedWallets.length > 0) {
+        lines.push("");
+        lines.push(`  The following wallet${isolatedWallets.length !== 1 ? "s were" : " was"} excluded — no connection to any other input wallet:`);
+        isolatedWallets.forEach(w => {
+          const idx = allInputWallets.indexOf(w);
+          lines.push(`    ✗ Wallet ${idx + 1}: ${w}`);
+        });
+      }
+      lines.push("");
 
       // ── Tier 1 ──────────────────────────────────────────────────────────────
       lines.push(sep("TIER 1 — DIRECT SHARED COUNTERPARTIES"));

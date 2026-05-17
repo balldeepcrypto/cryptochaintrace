@@ -2928,11 +2928,19 @@ export default function WalletDetail() {
 
       const commonNodes: TieFinderResult["commonNodes"] = [];
 
-      const toHops = (path: string[], segTxs: Record<string, Tx>): TieFinderHop[] =>
-        path.map((a, i) => ({
-          address: a,
-          tx: i === 0 ? null : (segTxs[`${path[i - 1]}::${a}`] ?? segTxs[`${a}::${path[i - 1]}`] ?? null),
-        }));
+      // Bridge addresses are hard-excluded from hop rendering — same as Commingle Check.
+      const BRIDGE_EXCL = new Set(["DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B"]);
+
+      const toHops = (path: string[], segTxs: Record<string, Tx>): TieFinderHop[] => {
+        const hops: TieFinderHop[] = [];
+        for (let i = 0; i < path.length; i++) {
+          const hopAddr = path[i];
+          if (BRIDGE_EXCL.has(hopAddr)) continue;
+          const tx = i === 0 ? null : (segTxs[`${path[i - 1]}::${hopAddr}`] ?? segTxs[`${hopAddr}::${path[i - 1]}`] ?? null);
+          hops.push({ address: hopAddr, tx });
+        }
+        return hops;
+      };
 
       // Pure set intersection — same as Commingle Check: no minDepth gate.
       for (const [addr, entryA] of reachA) {

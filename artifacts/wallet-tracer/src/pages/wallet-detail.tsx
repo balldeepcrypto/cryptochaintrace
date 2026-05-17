@@ -539,7 +539,7 @@ interface CommingleCheckResult {
   chain: string;
   scannedAt: string;
   findings: CommingleFinding[];
-  tieredCounts: [number, number, number, number];
+  tieredCounts: [number, number, number, number, number, number];
   totalScanned: number;
   // Best TX for each intermediate hop segment: key = "fromAddr::toAddr"
   segmentTxs: Record<string, Tx | null>;
@@ -1125,7 +1125,7 @@ export default function WalletDetail() {
     commingleResult.comparisonWallets.forEach((w, i) => {
       lines.push(`Wallet ${i + 2}     : ${w}`);
     });
-    lines.push(`Depth        : 4 tiers   |   Nodes Scanned: ${commingleResult.totalScanned}`);
+    lines.push(`Depth        : 6 tiers   |   Nodes Scanned: ${commingleResult.totalScanned}`);
     lines.push(`Min Tx Amount: ${commingleMinAmount <= 0 ? "None (all transactions included)" : `${commingleMinAmount} ${chainUp} (dust/spam/fees filtered out)`}`);
     lines.push("");
     const hopStats = commingleResult.hopFetchStats ?? {};
@@ -1170,6 +1170,10 @@ export default function WalletDetail() {
     const t3exch = findings.filter((f) => f.tier === 3 && isExch(f));
     const t4priv = findings.filter((f) => f.tier === 4 && !isExch(f));
     const t4exch = findings.filter((f) => f.tier === 4 && isExch(f));
+    const t5priv = findings.filter((f) => f.tier === 5 && !isExch(f));
+    const t5exch = findings.filter((f) => f.tier === 5 && isExch(f));
+    const t6priv = findings.filter((f) => f.tier === 6 && !isExch(f));
+    const t6exch = findings.filter((f) => f.tier === 6 && isExch(f));
 
     // ── Group connectivity — Union-Find over all input wallets ──────────────
     // Edges come from private findings: each finding links targetWallet ↔ comparison wallets.
@@ -1216,10 +1220,12 @@ export default function WalletDetail() {
     lines.push(`    Tier 2 (depth 2) : ${t2priv.length} private  +  ${t2exch.length} exchange/official`);
     lines.push(`    Tier 3 (depth 3) : ${t3priv.length} private  +  ${t3exch.length} exchange/official`);
     lines.push(`    Tier 4 (depth 4) : ${t4priv.length} private  +  ${t4exch.length} exchange/official`);
+    lines.push(`    Tier 5 (depth 5) : ${t5priv.length} private  +  ${t5exch.length} exchange/official`);
+    lines.push(`    Tier 6 (depth 6) : ${t6priv.length} private  +  ${t6exch.length} exchange/official`);
     lines.push("");
 
     if (findings.length === 0) {
-      lines.push("  No shared nodes found within 4 tiers. Wallets appear unconnected.");
+      lines.push("  No shared nodes found within 6 tiers. Wallets appear unconnected.");
       lines.push("");
     } else {
       // Renders every connected wallet's trail + single best TX for a shared node finding.
@@ -1339,15 +1345,15 @@ export default function WalletDetail() {
       // T2: full trail trace + best IN+OUT to first hop; exchange TX detail in consolidated section
       renderPrivExch(t2priv, t2exch, 20);
 
-      // ── Tier 3–4 ────────────────────────────────────────────────────────────
-      const t34priv = [...t3priv.slice(0, 10), ...t4priv.slice(0, 10)];
-      if (t34priv.length > 0) {
-        lines.push(sep("TIER 3–4 — DEEP SHARED NODES"));
+      // ── Tier 3–6 ────────────────────────────────────────────────────────────
+      const t3to6priv = [...t3priv.slice(0, 10), ...t4priv.slice(0, 10), ...t5priv.slice(0, 5), ...t6priv.slice(0, 5)];
+      if (t3to6priv.length > 0) {
+        lines.push(sep("TIER 3–6 — DEEP SHARED NODES"));
         lines.push("");
-        if (t34priv.length > 0) {
-          lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${t3priv.length + t4priv.length}) — INVESTIGATE`);
+        if (t3to6priv.length > 0) {
+          lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${t3priv.length + t4priv.length + t5priv.length + t6priv.length}) — INVESTIGATE`);
           lines.push("");
-          t34priv.forEach((f, i) => {
+          t3to6priv.forEach((f, i) => {
             const isDagTeamNode = f.knownInfo?.type === "dag-team";
             const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]${dagTag}` : ""}`);
@@ -1356,7 +1362,8 @@ export default function WalletDetail() {
             renderSharedNodeWallets(f);
             lines.push("");
           });
-          if (t3priv.length + t4priv.length > 20) lines.push(`  … and ${t3priv.length + t4priv.length - 20} more`);
+          const deepTotal = t3priv.length + t4priv.length + t5priv.length + t6priv.length;
+          if (deepTotal > 20) lines.push(`  … and ${deepTotal - 20} more`);
           lines.push("");
         }
       }
@@ -1372,7 +1379,7 @@ export default function WalletDetail() {
     lines.push(sep("ASSESSMENT"));
     lines.push("");
     if (findings.length === 0) {
-      lines.push("  LOW RISK — No shared nodes found within 4 tiers of separation.");
+      lines.push("  LOW RISK — No shared nodes found within 6 tiers of separation.");
       lines.push("  The wallets under analysis do not appear to share any common");
       lines.push("  counterparties, intermediaries, or endpoints.");
     } else if (t1priv.length > 0) {
@@ -1395,7 +1402,7 @@ export default function WalletDetail() {
       lines.push("  Wallets share common 2nd-degree private connections. May indicate");
       lines.push("  indirect fund commingling or use of shared intermediaries.");
     } else {
-      lines.push("  LOW-MEDIUM RISK — Shared nodes at Tier 3–4 or exchange-only.");
+      lines.push("  LOW-MEDIUM RISK — Shared nodes at Tier 3–6 or exchange-only.");
       lines.push("  Connections are distal and may reflect shared service usage");
       lines.push("  rather than direct commingling.");
     }
@@ -1405,7 +1412,7 @@ export default function WalletDetail() {
       chain: chainUp,
       target: commingleResult.targetWallet,
       comparisons: commingleResult.comparisonWallets,
-      depth: "4 tiers",
+      depth: "6 tiers",
       minAmount: commingleMinAmount <= 0
         ? "None (all transactions included)"
         : `${commingleMinAmount} ${chainUp}`,
@@ -1486,7 +1493,7 @@ export default function WalletDetail() {
       lines.push(`Wallet ${String(i + 1).padStart(2, " ")}    : ${w}${kn ? `  [${kn.label}]` : ""}`);
     });
     lines.push(`Total Wallets: ${multiResult.trackedWallets.length}`);
-    lines.push(`Depth        : up to 4 hops from each wallet (connections graph)`);
+    lines.push(`Depth        : up to 6 hops from each wallet (connections graph)`);
     lines.push(sep());
     lines.push(`NOTE: TX details are from the currently-loaded wallet's transaction history.`);
     lines.push(`      All wallets are treated equally — no single wallet is the "primary".`);
@@ -1494,12 +1501,12 @@ export default function WalletDetail() {
 
     // ── § 1 — Private Convergence Points ──────────────────────────────────────
     lines.push(sep("PRIVATE CONVERGENCE POINTS"));
-    lines.push(`  Private addresses reached within 4 hops of 2+ tracked wallets.`);
+    lines.push(`  Private addresses reached within 6 hops of 2+ tracked wallets.`);
     lines.push(`  These are the core investigative findings — potential funneling / mixing hubs.`);
     lines.push(`  Exchanges, bridges, and official nodes are EXCLUDED from this report.`);
     lines.push("");
     if (privPoints.length === 0) {
-      lines.push("  No private convergence detected at depth 1–4.");
+      lines.push("  No private convergence detected at depth 1–6.");
       lines.push("  Tracked wallets do not share private intermediaries within scanned depth.");
       lines.push("  Try loading more TX history and re-running for deeper coverage.");
       lines.push("");
@@ -1568,7 +1575,7 @@ export default function WalletDetail() {
       lines.push(`     These represent potential money-funneling / commingling hubs.`);
       lines.push(`     Investigative action: subpoena / KYC for each convergence address listed above.`);
     } else {
-      lines.push(`  No private convergence detected within depth-4.`);
+      lines.push(`  No private convergence detected within depth-6.`);
       lines.push(`  Load more TX history and re-run for broader coverage.`);
     }
     if (exchPoints.length > 0) {
@@ -1582,7 +1589,7 @@ export default function WalletDetail() {
       chain: chainUp,
       target: multiResult.trackedWallets[0] ?? address,
       comparisons: multiResult.trackedWallets.slice(1),
-      depth: "4",
+      depth: "6",
       nodesScanned: multiResult.sharedCounterparties.length + multiResult.commonEndpoints.length,
     });
   }
@@ -2989,7 +2996,7 @@ export default function WalletDetail() {
     const isExchM = (a: string) => ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[a]?.type ?? "");
 
     try {
-      // Build per-wallet map: address → MultiGraphNode (depth 1–4)
+      // Build per-wallet map: address → MultiGraphNode (depth 1–6)
       const walletNodeMaps: Array<{ wallet: string; nodes: Map<string, MultiGraphNode> }> = [];
 
       for (const wallet of allWallets) {
@@ -3072,6 +3079,7 @@ export default function WalletDetail() {
           .sort((a, b) => b.txCount - a.txCount)
           .slice(0, 2);
         const d4results = await Promise.all(top2d3.map((p) => fetchConns(p.address)));
+        const d4privateNodes: MultiGraphNode[] = [];
         for (let pi = 0; pi < top2d3.length; pi++) {
           const peer = top2d3[pi];
           setMultiProgress(`Depth-4: ${peer.address.slice(0, 10)}…`);
@@ -3084,8 +3092,65 @@ export default function WalletDetail() {
               const edge = d4.edges.find((e) =>
                 (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
               const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
-              nodeMap.set(node.address, {
+              const gn: MultiGraphNode = {
                 address: node.address, depth: 4, via: peer.address,
+                pathChain: [...parentChain, node.address],
+                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
+              };
+              nodeMap.set(node.address, gn);
+              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d4privateNodes.push(gn);
+            }
+          }
+        }
+
+        // ── Depth 5: top 2 private depth-4 nodes ─────────────────────────────
+        const top2d4 = [...d4privateNodes]
+          .sort((a, b) => b.txCount - a.txCount)
+          .slice(0, 2);
+        const d5results = await Promise.all(top2d4.map((p) => fetchConns(p.address)));
+        const d5privateNodes: MultiGraphNode[] = [];
+        for (let pi = 0; pi < top2d4.length; pi++) {
+          const peer = top2d4[pi];
+          setMultiProgress(`Depth-5: ${peer.address.slice(0, 10)}…`);
+          const d5 = d5results[pi];
+          const d5peers = d5.nodes
+            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
+            .slice(0, 4);
+          for (const node of d5peers) {
+            if (!nodeMap.has(node.address)) {
+              const edge = d5.edges.find((e) =>
+                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
+              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
+              const gn: MultiGraphNode = {
+                address: node.address, depth: 5, via: peer.address,
+                pathChain: [...parentChain, node.address],
+                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
+              };
+              nodeMap.set(node.address, gn);
+              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d5privateNodes.push(gn);
+            }
+          }
+        }
+
+        // ── Depth 6: top 1 private depth-5 node ──────────────────────────────
+        const top1d5 = [...d5privateNodes]
+          .sort((a, b) => b.txCount - a.txCount)
+          .slice(0, 1);
+        const d6results = await Promise.all(top1d5.map((p) => fetchConns(p.address)));
+        for (let pi = 0; pi < top1d5.length; pi++) {
+          const peer = top1d5[pi];
+          setMultiProgress(`Depth-6: ${peer.address.slice(0, 10)}…`);
+          const d6 = d6results[pi];
+          const d6peers = d6.nodes
+            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
+            .slice(0, 3);
+          for (const node of d6peers) {
+            if (!nodeMap.has(node.address)) {
+              const edge = d6.edges.find((e) =>
+                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
+              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
+              nodeMap.set(node.address, {
+                address: node.address, depth: 6, via: peer.address,
                 pathChain: [...parentChain, node.address],
                 txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
               });
@@ -3145,7 +3210,7 @@ export default function WalletDetail() {
     }
   }, [address, multiWallets, chain]);
 
-  // ── COMMINGLE CHECK — depth-1 through depth-4 BFS across target + comparison wallets ──
+  // ── COMMINGLE CHECK — depth-1 through depth-6 BFS across target + comparison wallets ──
   const runCommingleCheck = useCallback(async () => {
     if (commingleWallets.length === 0) {
       setCommingleError("Add at least one comparison wallet address.");
@@ -3238,6 +3303,38 @@ export default function WalletDetail() {
         }
       }
 
+      setCommingleProgress(`${label}: tier 5…`);
+      // Only expand from private/dag-team tier-4 nodes.
+      const tier4nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 4 && isExpandable(addr)).slice(0, 2);
+      if (tier4nodes.length > 0) {
+        const d5results = await Promise.all(tier4nodes.map(([a]) => fetchConns(a)));
+        for (let i = 0; i < tier4nodes.length; i++) {
+          const [parentAddr, parentData] = tier4nodes[i];
+          for (const n of d5results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 4)) {
+            if (!reach.has(n.address)) {
+              const edge = d5results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
+              reach.set(n.address, { path: [...parentData.path, n.address], tier: 5, txCount: edge?.transactionCount ?? 0 });
+            }
+          }
+        }
+      }
+
+      setCommingleProgress(`${label}: tier 6…`);
+      // Only expand from private/dag-team tier-5 nodes.
+      const tier5nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 5 && isExpandable(addr)).slice(0, 2);
+      if (tier5nodes.length > 0) {
+        const d6results = await Promise.all(tier5nodes.map(([a]) => fetchConns(a)));
+        for (let i = 0; i < tier5nodes.length; i++) {
+          const [parentAddr, parentData] = tier5nodes[i];
+          for (const n of d6results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 3)) {
+            if (!reach.has(n.address)) {
+              const edge = d6results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
+              reach.set(n.address, { path: [...parentData.path, n.address], tier: 6, txCount: edge?.transactionCount ?? 0 });
+            }
+          }
+        }
+      }
+
       return reach;
     };
 
@@ -3282,11 +3379,13 @@ export default function WalletDetail() {
         return b.txCountTarget - a.txCountTarget;
       });
 
-      const tieredCounts: [number, number, number, number] = [
+      const tieredCounts: [number, number, number, number, number, number] = [
         findings.filter((f) => f.tier === 1).length,
         findings.filter((f) => f.tier === 2).length,
         findings.filter((f) => f.tier === 3).length,
         findings.filter((f) => f.tier === 4).length,
+        findings.filter((f) => f.tier === 5).length,
+        findings.filter((f) => f.tier === 6).length,
       ];
 
       // ── Fetch best TX for each intermediate hop segment ────────────────────────
@@ -5357,7 +5456,7 @@ export default function WalletDetail() {
               </button>
             </div>
             <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
-              Scans up to 4 tiers deep from the target and each comparison wallet, then surfaces all shared addresses — direct counterparties, intermediaries, and common endpoints. Generates a police-ready report.
+              Scans up to 6 tiers deep from the target and each comparison wallet, then surfaces all shared addresses — direct counterparties, intermediaries, and common endpoints. Generates a police-ready report.
             </p>
 
             {/* ── Comparison wallet list ── */}
@@ -5431,7 +5530,7 @@ export default function WalletDetail() {
                     {commingleProgress && <span className="opacity-60 truncate max-w-[240px] font-normal">{commingleProgress}</span>}
                   </>
                 ) : (
-                  <><GitMerge className="w-3.5 h-3.5" /> RUN COMMINGLE CHECK (4 TIERS)</>
+                  <><GitMerge className="w-3.5 h-3.5" /> RUN COMMINGLE CHECK (6 TIERS)</>
                 )}
               </button>
               {commingleError && (
@@ -5647,12 +5746,12 @@ export default function WalletDetail() {
                   <span className="w-1.5 h-4 bg-yellow-500 rounded-sm shrink-0" />
                   <span className="text-[10px] font-mono text-yellow-300 font-bold tracking-widest uppercase">§ 3 — Tier 3–4: Deep Shared Nodes</span>
                   <span className="text-[10px] font-mono text-muted-foreground">3rd and 4th degree connections</span>
-                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${(commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3]) > 0 ? "bg-yellow-950/60 text-yellow-200 border-yellow-400/40" : "text-muted-foreground border-border/30"}`}>
-                    {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3]} found
+                  <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${(commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] + commingleResult.tieredCounts[4] + commingleResult.tieredCounts[5]) > 0 ? "bg-yellow-950/60 text-yellow-200 border-yellow-400/40" : "text-muted-foreground border-border/30"}`}>
+                    {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] + commingleResult.tieredCounts[4] + commingleResult.tieredCounts[5]} found
                   </span>
                 </div>
-                {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] === 0 ? (
-                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier 3–4 shared nodes detected.</p>
+                {commingleResult.tieredCounts[2] + commingleResult.tieredCounts[3] + commingleResult.tieredCounts[4] + commingleResult.tieredCounts[5] === 0 ? (
+                  <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier 3–6 shared nodes detected.</p>
                 ) : (() => {
                   const t34priv = commingleResult.findings.filter((f) => f.tier >= 3 && f.knownInfo?.type !== "exchange");
                   return (
@@ -5695,7 +5794,7 @@ export default function WalletDetail() {
               <div className="px-5 py-4 bg-muted/5 flex items-center justify-between gap-3 flex-wrap">
                 <div className="space-y-0.5">
                   <p className="text-[10px] font-mono text-muted-foreground/70">
-                    Scanned at {new Date(commingleResult.scannedAt).toLocaleString()} · {commingleResult.chain.toUpperCase()} · 4 tiers
+                    Scanned at {new Date(commingleResult.scannedAt).toLocaleString()} · {commingleResult.chain.toUpperCase()} · 6 tiers
                   </p>
                   <p className="text-[10px] font-mono text-muted-foreground/50">
                     Comparison wallets: {commingleResult.comparisonWallets.length}

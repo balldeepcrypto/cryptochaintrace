@@ -1154,12 +1154,12 @@ export default function WalletDetail() {
     const EXCLUDED_ADDRS = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
     const findings = rawFindings.filter((f) => !EXCLUDED_ADDRS.has(f.sharedAddress));
     // Separate private wallets from exchange/custodial nodes.
-    // Exchange, bridge, AND genesis are excluded from private commingling —
-    // only unknown private wallets (incl. dag-team) count as commingling evidence.
-    const isExch = (f: CommingleFinding) =>
-      f.knownInfo?.type === "exchange" ||
-      f.knownInfo?.type === "bridge" ||
-      f.knownInfo?.type === "genesis";
+    // Only true exchanges, bridges, hot wallets, and custodial wallets are excluded —
+    // genesis, official, protocol, dag-team, defi, and flagged count as private evidence.
+    const isExch = (f: CommingleFinding) => {
+      const t = f.knownInfo?.type ?? "";
+      return ["exchange", "bridge", "hot", "custodial"].includes(t);
+    };
     const privFindings = findings.filter((f) => !isExch(f));
     const exchFindings = findings.filter((f) => isExch(f));
     const t1priv = findings.filter((f) => f.tier === 1 && !isExch(f));
@@ -1250,8 +1250,6 @@ export default function WalletDetail() {
                 const segTx = bestTxForWallet(path[h - 1], path[h]);
                 if (segTx) {
                   emitTxs([segTx], `${wPfx}  `);
-                } else {
-                  lines.push(`${wPfx}    (no TX record found in fetched history for this hop segment)`);
                 }
               }
             }
@@ -1435,7 +1433,7 @@ export default function WalletDetail() {
     };
     const lines: string[] = [];
     const MULTI_EXCL  = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
-    const isExchType  = (addr: string) => ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[addr]?.type ?? "");
+    const isExchType  = (addr: string) => ["exchange", "bridge", "hot", "custodial"].includes(KNOWN_LABELS[addr]?.type ?? "");
 
     const emitTxBlock = (txs: Tx[], pad: string) => {
       // Apply global spam filter — drop dust, 0-value ops, and below-chain-minimum TXs.

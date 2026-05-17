@@ -837,7 +837,6 @@ export default function WalletDetail() {
   function generateTrailReport(): string {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
-    const short = (a: string) => a.length > 18 ? `${a.slice(0, 10)}...${a.slice(-6)}` : a;
     const sep = (label = "") => label
       ? `\n─── ${label} ${"─".repeat(Math.max(0, 60 - label.length - 5))}`
       : "─".repeat(64);
@@ -867,20 +866,52 @@ export default function WalletDetail() {
     lines.push(sep("TRAIL TREE"));
     lines.push("");
 
+    const fmtTrailAmt = (v: string, dir: string) => {
+      const n   = parseFloat(v);
+      const abs = Math.abs(n);
+      const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      const sign = dir === "in" ? "+" : "−";
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
+    };
     const printNode = (entry: TrailEntry, prefix: string, isLast: boolean) => {
-      const conn = isLast ? "└── " : "├── ";
+      const conn     = isLast ? "└── " : "├── ";
       const childPfx = isLast ? "     " : "│    ";
-      const known = KNOWN_LABELS[entry.address];
-      const isComm = comminglingAddresses.has(entry.address);
-      const flags = [
-        known   ? `← ${known.label.toUpperCase()}` : "",
-        isComm  ? "⚠ COMMINGLING HUB" : "",
+      const known    = KNOWN_LABELS[entry.address];
+      const isComm   = comminglingAddresses.has(entry.address);
+      const flags    = [
+        known       ? `← ${known.label.toUpperCase()}` : "",
+        isComm      ? "⚠ COMMINGLING HUB" : "",
         entry.error ? "! ERROR" : "",
       ].filter(Boolean).join("  ");
-      lines.push(`  ${prefix}${conn}${short(entry.address)}${flags ? "  " + flags : ""}`);
-      lines.push(`  ${prefix}${childPfx}Full: ${entry.address}`);
-      if (entry.txCount > 0)
-        lines.push(`  ${prefix}${childPfx}Txs: ${entry.txCount}   Depth: ${entry.depth}   USD: $${entry.totalValueUsd.toLocaleString()}`);
+      // Full address on connector line — no truncation
+      lines.push(`  ${prefix}${conn}${entry.address}${flags ? "  " + flags : ""}`);
+      lines.push(`  ${prefix}${childPfx}Depth: ${entry.depth}   Txs: ${entry.txCount}   USD: $${entry.totalValueUsd.toLocaleString()}`);
+      // Best IN + OUT transactions for this hop from loaded history
+      const hopPool = allTxs.filter(t =>
+        (t.direction === "in" ? t.from : t.to) === entry.address &&
+        passesSpamFilter(t, chain)
+      );
+      const bestIn  = hopPool.filter(t => t.direction === "in" ).sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+      const bestOut = hopPool.filter(t => t.direction === "out").sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+      const hopTxs  = [bestIn, bestOut].filter(Boolean) as Tx[];
+      if (hopTxs.length > 0) {
+        hopTxs.forEach((tx) => {
+          const dir   = tx.direction === "in" ? "IN " : "OUT";
+          const asset = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
+          const amt   = `${fmtTrailAmt(tx.value, tx.direction)} ${asset}`;
+          const usd   = tx.valueUsd > 0
+            ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+            : "";
+          const date  = tx.timestamp ? tx.timestamp.replace("T", " ").slice(0, 16) + " UTC" : "—";
+          lines.push(`  ${prefix}${childPfx}[${dir}]  ${amt}${usd}`);
+          lines.push(`  ${prefix}${childPfx}       TX   : ${tx.hash ?? "(none)"}`);
+          lines.push(`  ${prefix}${childPfx}       Date : ${date}`);
+          if (tx.destinationTag != null) lines.push(`  ${prefix}${childPfx}       Tag  : ${tx.destinationTag}`);
+          if (tx.memo)                   lines.push(`  ${prefix}${childPfx}       Memo : ${tx.memo}`);
+        });
+      } else {
+        lines.push(`  ${prefix}${childPfx}(no TX history loaded for this hop)`);
+      }
       const children = trailEntries.filter(e => e.parentAddress === entry.address);
       children.forEach((child, ci) => printNode(child, prefix + childPfx, ci === children.length - 1));
     };
@@ -943,6 +974,25 @@ export default function WalletDetail() {
       return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
     };
     const lines: string[] = [];
+
+    // Best single TX between any wallet and a given hop address —
+    // checks segmentTxs, walletTxs for that wallet, then allTxs for the target.
+    const bestTxForWallet = (wallet: string, hopAddr: string): Tx | null => {
+      const segMap = commingleResult.segmentTxs ?? {};
+      const seg    = segMap[`${wallet}::${hopAddr}`] ?? segMap[`${hopAddr}::${wallet}`] ?? null;
+      if (seg) return seg;
+      const wPool  = (commingleResult.walletTxs[wallet] ?? [])
+        .filter(t => (t.direction === "in" ? t.from : t.to) === hopAddr)
+        .sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+      if (wPool.length > 0) return wPool[0];
+      if (wallet === commingleResult.targetWallet) {
+        const pool = allTxs
+          .filter(t => (t.direction === "in" ? t.from : t.to) === hopAddr && passesSpamFilter(t, commingleResult.chain))
+          .sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+        if (pool.length > 0) return pool[0];
+      }
+      return null;
+    };
 
     // Return up to `limit` txs sorted by amount descending (most significant first)
     const keyTxsFor = (addr: string, limit = 5) =>
@@ -1114,9 +1164,45 @@ export default function WalletDetail() {
       lines.push("  No shared nodes found within 4 tiers. Wallets appear unconnected.");
       lines.push("");
     } else {
-      // Helper: render private then exchange sub-sections within a tier.
-      // Private findings: full hop-by-hop trail + best IN+OUT to first available hop.
-      // Exchange findings: address summary only — full TX detail in consolidated section below.
+      // Renders every connected wallet's trail + single best TX for a shared node finding.
+      const renderSharedNodeWallets = (f: CommingleFinding) => {
+        const allWallets: Array<{ wLabel: string; wallet: string; path: string[] }> = [
+          { wLabel: "WALLET 1", wallet: commingleResult.targetWallet, path: f.targetPath },
+          ...f.comparisons.map((c, ci) => ({ wLabel: `WALLET ${ci + 2}`, wallet: c.wallet, path: c.path })),
+        ];
+        allWallets.forEach(({ wLabel, wallet, path }, wi) => {
+          const isLastW = wi === allWallets.length - 1;
+          const wConn   = isLastW ? "  └──" : "  ├──";
+          const wPfx    = isLastW ? "       " : "  │    ";
+          const knW     = KNOWN_LABELS[wallet];
+          lines.push(`${wConn} ${wLabel}  ${wallet}${knW ? `  [${knW.label}]` : ""}`);
+          if (path.length > 0) {
+            lines.push(`${wPfx}Trail:`);
+            path.forEach((addr, pidx) => {
+              const kn  = KNOWN_LABELS[addr];
+              const lbl = kn ? `  [${kn.label}]` : "";
+              if (pidx === 0) {
+                lines.push(`${wPfx}  ${addr}${lbl}  ← ${wLabel}`);
+              } else {
+                lines.push(`${wPfx}  ↓  Hop ${pidx}`);
+                lines.push(`${wPfx}  ${addr}${lbl}${pidx === path.length - 1 ? "  ← SHARED NODE" : ""}`);
+              }
+            });
+          }
+          const hopAddr  = path.length > 1 ? path[1] : f.sharedAddress;
+          const hopShort = hopAddr.length > 16 ? `${hopAddr.slice(0, 8)}…${hopAddr.slice(-4)}` : hopAddr;
+          const bestTx   = bestTxForWallet(wallet, hopAddr);
+          lines.push(`${wPfx}Best TX (${wLabel} ↔ ${hopShort}):`);
+          if (bestTx) {
+            emitTxs([bestTx], wPfx);
+          } else {
+            lines.push(`${wPfx}  (none in fetched history)`);
+          }
+          lines.push("");
+        });
+      };
+
+      // Helper: render private sub-section within a tier.
       const renderPrivExch = (
         priv: CommingleFinding[], exch: CommingleFinding[],
         maxShow: number
@@ -1128,44 +1214,9 @@ export default function WalletDetail() {
             const isDagTeamNode = f.knownInfo?.type === "dag-team";
             const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]${dagTag}` : ""}`);
-            lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
-            lines.push(`       TX Count      : ${f.txCountTarget}`);
-            // Full hop-by-hop trail: targetPath[0] = target wallet, last = shared node
-            if (f.targetPath.length > 0) {
-              lines.push(`       Full Trail:`);
-              f.targetPath.forEach((addr, idx) => {
-                const kn = KNOWN_LABELS[addr];
-                const lbl = kn ? `  [${kn.label}]` : "";
-                if (idx === 0) {
-                  lines.push(`         ${addr}${lbl}  ← WALLET 1`);
-                } else {
-                  lines.push(`         ↓  Hop ${idx}`);
-                  lines.push(`         ${addr}${lbl}${idx === f.targetPath.length - 1 ? "  ← SHARED NODE" : ""}`);
-                }
-              });
-              lines.push("");
-            }
-            // Most significant IN + OUT for the first reachable hop (Wallet 1 ↔ targetPath[1])
-            if (f.targetPath.length > 1) {
-              const hopAddr  = f.targetPath[1];
-              const hopShort = hopAddr.length > 16 ? `${hopAddr.slice(0, 8)}…${hopAddr.slice(-4)}` : hopAddr;
-              const hopRole  = f.tier === 1 ? "shared wallet" : "hop 1";
-              const txs = bestInOut(hopAddr);
-              if (txs.length > 0) {
-                lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${hopShort} — ${hopRole}):`);
-                emitTxs(txs, "       ");
-              } else {
-                lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${hopShort}): none in loaded history`);
-              }
-              // For 3+ hop paths, show each intermediate segment with full TX details.
-              if (f.targetPath.length > 2) {
-                lines.push("");
-                lines.push(`       Intermediate Hops (full path to shared node):`);
-                for (let h = 1; h < f.targetPath.length - 1; h++) {
-                  emitHopSegment(f.targetPath[h], f.targetPath[h + 1], h + 1);
-                }
-              }
-            }
+            lines.push(`       TX Count (W1) : ${f.txCountTarget}   |   Connected by: ${f.comparisons.length + 1} wallet(s)`);
+            lines.push("");
+            renderSharedNodeWallets(f);
             lines.push("");
           });
           if (priv.length > maxShow) lines.push(`  … and ${priv.length - maxShow} more private connections`);
@@ -1201,38 +1252,9 @@ export default function WalletDetail() {
             const isDagTeamNode = f.knownInfo?.type === "dag-team";
             const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]${dagTag}` : ""}`);
-            lines.push(`       Path        : ${fmtPath(f.targetPath)}`);
-            lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
-            if (f.targetPath.length > 1) {
-              lines.push(`       Full Trail:`);
-              f.targetPath.forEach((addr, idx) => {
-                const kn = KNOWN_LABELS[addr];
-                const lbl = kn ? `  [${kn.label}]` : "";
-                if (idx === 0) {
-                  lines.push(`         ${addr}${lbl}  ← WALLET 1`);
-                } else {
-                  lines.push(`         ↓  Hop ${idx}`);
-                  lines.push(`         ${addr}${lbl}${idx === f.targetPath.length - 1 ? "  ← SHARED" : ""}`);
-                }
-              });
-              lines.push("");
-              const hop1      = f.targetPath[1];
-              const hop1short = hop1.length > 16 ? `${hop1.slice(0, 8)}…${hop1.slice(-4)}` : hop1;
-              const hopTxs    = bestInOut(hop1);
-              if (hopTxs.length > 0) {
-                lines.push(`       Most Significant Transactions — Hop 1  (Wallet 1 ↔ ${hop1short}):`);
-                emitTxs(hopTxs, "       ");
-              } else {
-                lines.push(`       Most Significant Transactions — Hop 1  (Wallet 1 ↔ ${hop1short}): none in loaded history`);
-              }
-              if (f.targetPath.length > 2) {
-                lines.push("");
-                lines.push(`       Intermediate Hops (full path to shared node):`);
-                for (let h = 1; h < f.targetPath.length - 1; h++) {
-                  emitHopSegment(f.targetPath[h], f.targetPath[h + 1], h + 1);
-                }
-              }
-            }
+            lines.push(`       TX Count (W1) : ${f.txCountTarget}   |   Connected by: ${f.comparisons.length + 1} wallet(s)`);
+            lines.push("");
+            renderSharedNodeWallets(f);
             lines.push("");
           });
           if (t3priv.length + t4priv.length > 20) lines.push(`  … and ${t3priv.length + t4priv.length - 20} more`);

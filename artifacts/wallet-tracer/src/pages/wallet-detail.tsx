@@ -25,7 +25,7 @@ import { Link } from "wouter";
 // "dag-team" = DAG official entities (DOR Metagraph, DTM, Team Foundation, Treasury,
 //   Validator Tax Pool, Reward Pool). They are LABELLED PROMINENTLY and highlighted in
 //   reports, but they DO count as private commingling evidence (unlike exchange/bridge/genesis).
-const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" }> = {
+const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" }> = {
   // ── XRP ────────────────────────────────────────────────────────────────────
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis",     type: "genesis" },
   r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.",      type: "genesis" },
@@ -267,42 +267,49 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "1Bh2AAQCnSiXqJWTGVTTTVMFAFPjguegYZ":           { label: "Gate.io BTC",   type: "exchange" },
   "1GR9qNz7zgtaW5HwwVpEJWMnGWhsbsieCG":           { label: "MEXC BTC",      type: "exchange" },
   // ── DAG (Constellation Network) ────────────────────────────────────────────
-  // ── DAG Official Entities (type "dag-team") ────────────────────────────────
-  // Labelled + highlighted in reports; count as PRIVATE COMMINGLING (not excluded).
+  // ── DAG Official Entities (type "official") ────────────────────────────────
+  // Labelled in reports; count as PRIVATE COMMINGLING (not excluded like exchanges).
+  // Team Foundation
+  DAG38whfr5CWzMoQg8PajuiukNNojySqyXtZdBhK: { label: "Team Foundation Wallet",    type: "official" },
+  DAG7teqwiZjuBivJi7Mx8AkhwnF6w3Q1poUTCViK: { label: "Team Foundation Wallet",    type: "official" },
+  DAG7uFTujXArFTuTqELGYGcthacpfQykBX7wsgFv: { label: "Team Foundation Wallet",    type: "official" },
+  DAG8MWCDLPxjufRE2tkg3qpWSd7iJKFfsg9H5nCE: { label: "Team Foundation Wallet",    type: "official" },
+  DAG2eFDjZ2CMA3M4KMfLw6Vnn7kaJPJqcSCpHU25: { label: "Team Foundation Wallet",    type: "official" },
+  DAG2ttEXvYHsMP5qu7ejoBTbuCPmHoDhU5fZi3YL: { label: "Team Foundation Wallet",    type: "official" },
+  DAG1ZieMRm7ALEbSjmvwztvtZYu7srPaXwxbC14U: { label: "Team Foundation Wallet",    type: "official" },
+  // Stardust Collective
+  DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh: { label: "Stardust Collective Wallet", type: "official" },
+  DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY: { label: "Stardust Collective Wallet", type: "official" },
+  DAG6qyCvhka9rX9SsAMouHmAoKmADuGW415anB59: { label: "Stardust Collective Wallet", type: "official" },
   // DOR Metagraph
-  DAG0o6WSyvc7XfzujwJB1e25mfyzgXoLYDD6wqnk: { label: "[DOR Metagraph]",            type: "dag-team" },
-  DAG4nBD5J3Pr2uHgtS1sa16PqemHrwCcvjdR31Xe: { label: "[DOR Metagraph 2]",          type: "dag-team" },
-  DAG4YD6rkExLwYyAZzwjYJMxe36PAptKuUKq9uc7: { label: "[DOR Metagraph 3]",          type: "dag-team" },
-  DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM: { label: "[DOR Metagraph 4]",          type: "dag-team" },
-  DAG5fqiGq9L5iLH5R5eV7gBjkucewrcaQ1jVnKYD: { label: "[DOR Metagraph 5]",          type: "dag-team" },
-  DAG5uDuGhPuh4mQZGNLFCEcdy69txSF4iSfFbdWJ: { label: "[DOR Metagraph 6]",          type: "dag-team" },
-  DAG6B5mBMoEu3Habtb2ts3QGUD2UquywrQSLSubU: { label: "[DOR Metagraph 7]",          type: "dag-team" },
+  DAG0o6WSyvc7XfzujwJB1e25mfyzgXoLYDD6wqnk: { label: "DOR Metagraph",             type: "official" },
+  DAG4nBD5J3Pr2uHgtS1sa16PqemHrwCcvjdR31Xe: { label: "DOR Metagraph",             type: "official" },
+  DAG4YD6rkExLwYyAZzwjYJMxe36PAptKuUKq9uc7: { label: "DOR Metagraph",             type: "official" },
+  DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM: { label: "DOR Metagraph",             type: "official" },
+  DAG5fqiGq9L5iLH5R5eV7gBjkucewrcaQ1jVnKYD: { label: "DOR Metagraph",             type: "official" },
+  DAG5uDuGhPuh4mQZGNLFCEcdy69txSF4iSfFbdWJ: { label: "DOR Metagraph",             type: "official" },
+  DAG6B5mBMoEu3Habtb2ts3QGUD2UquywrQSLSubU: { label: "DOR Metagraph",             type: "official" },
+  // DOR Validator Tax
+  DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT: { label: "DOR Validator Tax Pool",    type: "official" },
+  DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW: { label: "DOR Validator Tax",         type: "official" },
   // DTM Enterprise
-  DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE: { label: "[DTM Enterprise]",           type: "dag-team" },
-  DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA: { label: "[DTM Enterprise 2]",         type: "dag-team" },
-  // DOR Validator
-  DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT: { label: "[DOR Validator Tax Pool]",   type: "dag-team" },
-  DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW: { label: "[DOR Validator Tax]",        type: "dag-team" },
+  DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE: { label: "DTM Enterprise Wallet",     type: "official" },
+  DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA: { label: "DTM Enterprise Wallet",     type: "official" },
   // DTM Reward Pool
-  DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "[DTM Reward Pool]",          type: "dag-team" },
-  DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK: { label: "[DTM Reward Pool 2]",        type: "dag-team" },
-  // Stardust / Team Foundation (Constellation)
-  DAG8UsoSR14peffVJKAsf3mqJFnkKSoQEUQDAQKN: { label: "[Stardust Team Foundation]",  type: "dag-team" },
-  DAG07znCvSyM2xhxPZECrGhVF6WVPMvFWe6Z6EWW: { label: "[Stardust Team Fdn 2]",      type: "dag-team" },
-  DAG38whfr5CWzMoQg8PajuiukNNojySqyXtZdBhK: { label: "[Stardust Team Fdn 3]",      type: "dag-team" },
-  DAG7teqwiZjuBivJi7Mx8AkhwnF6w3Q1poUTCViK: { label: "[Stardust Team Fdn 4]",      type: "dag-team" },
-  DAG7uFTujXArFTuTqELGYGcthacpfQykBX7wsgFv: { label: "[Stardust Team Fdn 5]",      type: "dag-team" },
-  DAG8MWCDLPxjufRE2tkg3qpWSd7iJKFfsg9H5nCE: { label: "[Stardust Team Fdn 6]",      type: "dag-team" },
-  DAG3yzY9252n8Fkxix7pZo5TH6F9paxSVLsDARK4: { label: "[Stardust Team Fdn 7]",      type: "dag-team" },
-  DAG2eFDjZ2CMA3M4KMfLw6Vnn7kaJPJqcSCpHU25: { label: "[Stardust Team Fdn 8]",      type: "dag-team" },
-  DAG2ttEXvYHsMP5qu7ejoBTbuCPmHoDhU5fZi3YL: { label: "[Stardust Team Fdn 9]",      type: "dag-team" },
-  DAG1ZieMRm7ALEbSjmvwztvtZYu7srPaXwxbC14U: { label: "[Stardust Team Fdn 10]",     type: "dag-team" },
+  DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "DTM Reward Pool",           type: "official" },
+  DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK: { label: "DTM Reward Pool",           type: "official" },
+  // PylonFi DOR Node
+  DAG7k3M5aAWdV3S3E5nZXvvQyGprkYbVKxz6gGRS: { label: "PylonFi DOR Node",          type: "official" },
+  // Legacy Stardust / Team entries (not yet reclassified)
+  DAG8UsoSR14peffVJKAsf3mqJFnkKSoQEUQDAQKN: { label: "[Stardust Team Foundation]", type: "dag-team" },
+  DAG07znCvSyM2xhxPZECrGhVF6WVPMvFWe6Z6EWW: { label: "[Stardust Team Fdn 2]",     type: "dag-team" },
+  DAG3yzY9252n8Fkxix7pZo5TH6F9paxSVLsDARK4: { label: "[Stardust Team Fdn 7]",     type: "dag-team" },
   // Treasury
-  DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "[DAG Treasury]",             type: "dag-team" },
-  DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "[DAG Treasury 2]",           type: "dag-team" },
+  DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "[DAG Treasury]",            type: "dag-team" },
+  DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "[DAG Treasury 2]",          type: "dag-team" },
   // Bridge / Infrastructure (DAG only)
-  DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Base / Bridge Wallet (Official Constellation)", type: "bridge" },
-  DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz: { label: "DAG Reward / Team Wallet",                     type: "genesis" },
+  DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Official Bridge / Base Wallet", type: "official" },
+  DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz: { label: "DAG Reward / Team Wallet",      type: "genesis"  },
   // DAG Exchanges
   DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf: { label: "MEXC DAG",        type: "exchange" },
   DAG4TETUwraLYX1mYdC8ymUxxWsoNZPffUpDf4Ar: { label: "Gate.io DAG",      type: "exchange" },
@@ -469,7 +476,7 @@ interface MultiGraphNode {
 
 interface MultiSharedEntry {
   address: string;
-  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" };
+  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" };
   appearances: Array<{
     wallet: string;
     depth: number;
@@ -487,7 +494,7 @@ interface MultiAnalysisResult {
   patterns: Array<{
     id: number;
     sharedAddr: string;
-    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" };
+    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" };
     totalTxCount: number;
     totalValueUsd: number;
     paths: Array<{ wallet: string; path: string[] }>;

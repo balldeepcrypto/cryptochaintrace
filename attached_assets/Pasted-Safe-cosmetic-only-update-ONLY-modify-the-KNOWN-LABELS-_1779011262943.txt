@@ -1,0 +1,43 @@
+Safe cosmetic-only update — ONLY modify the KNOWN_LABELS object. Do not change any other code, logic, filtering, reports, or PDF structure.
+
+Add or update the following official DAG project wallets with clean, neutral labels:
+
+```js
+// === OFFICIAL DAG PROJECT WALLETS (neutral labels only) ===
+
+// Team Foundation
+"DAG38whfr5CWzMoQg8PajuiukNNojySqyXtZdBhK": { label: "Team Foundation Wallet", type: "official" },
+"DAG8MWCDLPxjufRE2tkg3qpWSd7iJKFfsg9H5nCE": { label: "Team Foundation Wallet", type: "official" },
+"DAG7teqwiZjuBivJi7Mx8AkhwnF6w3Q1poUTCViK": { label: "Team Foundation Wallet", type: "official" },
+"DAG7uFTujXArFTuTqELGYGcthacpfQykBX7wsgFv": { label: "Team Foundation Wallet", type: "official" },
+"DAG2eFDjZ2CMA3M4KMfLw6Vnn7kaJPJqcSCpHU25": { label: "Team Foundation Wallet", type: "official" },
+"DAG2ttEXvYHsMP5qu7ejoBTbuCPmHoDhU5fZi3YL": { label: "Team Foundation Wallet", type: "official" },
+"DAG1ZieMRm7ALEbSjmvwztvtZYu7srPaXwxbC14U": { label: "Team Foundation Wallet", type: "official" },
+
+// Stardust Collective
+"DAG8vD8BUhCpTnYXEadQVGhHjgxEZZiafbzwmKKh": { label: "Stardust Collective Wallet", type: "official" },
+"DAG8VT7bxjs1XXBAzJGYJDaeyNxuThikHeUTp9XY": { label: "Stardust Collective Wallet", type: "official" },
+"DAG6qyCvhka9rX9SsAMouHmAoKmADuGW415anB59": { label: "Stardust Collective Wallet", type: "official" },
+
+// DTM Enterprise
+"DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE": { label: "DTM Enterprise Wallet", type: "official" },
+"DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA": { label: "DTM Enterprise Wallet", type: "official" },
+
+// DOR / Metagraph / Validator Tax / Reward Pools
+"DAG0o6WSyvc7XfzujwJB1e25mfyzgXoLYDD6wqnk": { label: "DOR Metagraph", type: "official" },
+"DAG4nBD5J3Pr2uHgtS1sa16PqemHrwCcvjdR31Xe": { label: "DOR Metagraph", type: "official" },
+"DAG4YD6rkExLwYyAZzwjYJMxe36PAptKuUKq9uc7": { label: "DOR Metagraph", type: "official" },
+"DAG0CyySf35ftDQDQBnd1bdQ9aPyUdacMghpnCuM": { label: "DOR Metagraph", type: "official" },
+"DAG5fqiGq9L5iLH5R5eV7gBjkucewrcaQ1jVnKYD": { label: "DOR Metagraph", type: "official" },
+"DAG5uDuGhPuh4mQZGNLFCEcdy69txSF4iSfFbdWJ": { label: "DOR Metagraph", type: "official" },
+"DAG6B5mBMoEu3Habtb2ts3QGUD2UquywrQSLSubU": { label: "DOR Metagraph", type: "official" },
+"DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT": { label: "DOR Validator Tax Pool", type: "official" },
+"DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW": { label: "DOR Validator Tax", type: "official" },
+"DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1": { label: "DTM Reward Pool", type: "official" },
+"DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK": { label: "DTM Reward Pool", type: "official" },
+
+// PylonFi DOR Node
+"DAG7k3M5aAWdV3S3E5nZXvvQyGprkYbVKxz6gGRS": { label: "PylonFi DOR Node", type: "official" },
+
+// Official Bridge / Base Wallet
+"DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B": { label: "Official Bridge / Base Wallet", type: "official" },

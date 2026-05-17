@@ -2921,7 +2921,6 @@ export default function WalletDetail() {
 
       setTieProgress("Intersecting reach maps…");
 
-      const minDepth = chain === "dag" ? 3 : 2;
       const commonNodes: TieFinderResult["commonNodes"] = [];
 
       const toHops = (path: string[], segTxs: Record<string, Tx>): TieFinderHop[] =>
@@ -2930,11 +2929,11 @@ export default function WalletDetail() {
           tx: i === 0 ? null : (segTxs[`${path[i - 1]}::${a}`] ?? segTxs[`${a}::${path[i - 1]}`] ?? null),
         }));
 
+      // Pure set intersection — same as Commingle Check: no minDepth gate.
       for (const [addr, entryA] of reachA) {
         if (!reachB.has(addr)) continue;
         if (!isPrivateWallet(addr)) continue;
         const entryB = reachB.get(addr)!;
-        if (entryA.path.length < minDepth || entryB.path.length < minDepth) continue;
         commonNodes.push({
           address: addr,
           pathFromA: toHops(entryA.path, segTxsA),

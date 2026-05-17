@@ -2880,9 +2880,14 @@ export default function WalletDetail() {
           for (const tx of txs) {
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || parentA.has(cp)) continue;
+            // Mark visited regardless — prevents re-processing on future hops.
             parentA.set(cp, { parent: nodeA, tx });
+            // Known exchange/bridge/official addresses: mark visited but never
+            // expand from them (don't add to frontier) and never accept as a
+            // common node. The BFS finds only pure private-wallet paths.
+            if (KNOWN_LABELS[cp]) continue;
             newA.push(cp);
-            if (parentB.has(cp) && !KNOWN_LABELS[cp]) {
+            if (parentB.has(cp)) {
               const pA = reconstructPath(parentA, cp);
               const pB = reconstructPath(parentB, cp);
               const minDepth = chain === "dag" ? 3 : 2;
@@ -2906,9 +2911,14 @@ export default function WalletDetail() {
           for (const tx of txs) {
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || parentB.has(cp)) continue;
+            // Mark visited regardless — prevents re-processing on future hops.
             parentB.set(cp, { parent: nodeB, tx });
+            // Known exchange/bridge/official addresses: mark visited but never
+            // expand from them (don't add to frontier) and never accept as a
+            // common node. The BFS finds only pure private-wallet paths.
+            if (KNOWN_LABELS[cp]) continue;
             newB.push(cp);
-            if (parentA.has(cp) && !KNOWN_LABELS[cp]) {
+            if (parentA.has(cp)) {
               const pA = reconstructPath(parentA, cp);
               const pB = reconstructPath(parentB, cp);
               const minDepth = chain === "dag" ? 3 : 2;

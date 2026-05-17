@@ -3256,14 +3256,16 @@ export default function WalletDetail() {
       // Hard-excluded: never add to reach map, never expand from.
       const HARD_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
 
-      // Nodes that should appear in the reach map but must NEVER be used as expansion
-      // seeds — prevents exchange hot wallets from injecting thousands of false connections.
-      const isExpandable = (addr: string): boolean => {
+      // Private wallet filter — identical to Connection Finder's isPrivateWallet.
+      // Only true exchange/bridge/hot/custodial wallets are excluded from the frontier.
+      // dag-team, genesis, defi, flagged, protocol etc. are all treated as private
+      // and are allowed as both reach-map entries and expansion seeds.
+      const isPrivateWallet = (addr: string): boolean => {
         if (HARD_EXCL.has(addr)) return false;
-        const kn = KNOWN_LABELS[addr];
-        if (!kn) return true;                     // unknown private wallet — expand
-        if (kn.type === "dag-team") return true;  // DAG official entity — expand
-        return false;                             // exchange / bridge / genesis — do not expand
+        const info = KNOWN_LABELS[addr];
+        if (!info) return true; // unknown = private
+        const type = info.type || "";
+        return !["exchange", "bridge", "hot", "custodial"].includes(type);
       };
 
       // ── Tier 1: expand from root wallet ───────────────────────────────────────
@@ -3284,7 +3286,7 @@ export default function WalletDetail() {
       for (let tier = 2; tier <= 6; tier++) {
         setCommingleProgress(`${label}: tier ${tier}…`);
         const prevNodes = Array.from(reach.entries())
-          .filter(([addr, v]) => v.tier === tier - 1 && isExpandable(addr))
+          .filter(([addr, v]) => v.tier === tier - 1 && isPrivateWallet(addr))
           .slice(0, tierLimits[tier - 2]);
         if (prevNodes.length === 0) break;
         const txResults = await Promise.all(prevNodes.map(([a]) => fetchTxs(a)));

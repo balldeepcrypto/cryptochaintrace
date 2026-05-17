@@ -2849,14 +2849,10 @@ export default function WalletDetail() {
     setTieError(null);
     setTieResult(null);
 
-    const parentA = new Map<string, { parent: string | null; tx: Tx | null }>();
-    const parentB = new Map<string, { parent: string | null; tx: Tx | null }>();
-    parentA.set(wA, { parent: null, tx: null });
-    parentB.set(wB, { parent: null, tx: null });
-    let frontierA = [wA];
-    let frontierB = [wB];
+    // Hard-excluded addresses: never added to reach map or accepted as common nodes.
+    const HARD_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
 
-    const fetchCounterparties = async (addr: string): Promise<Tx[]> => {
+    const fetchTxs = async (addr: string): Promise<Tx[]> => {
       try {
         const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
         if (!resp.ok) return [];
@@ -2865,9 +2861,6 @@ export default function WalletDetail() {
       } catch { return []; }
     };
 
-    // Only true exchanges and hot/custodial wallets are excluded as common nodes.
-    // team, stardust, foundation, DOR Metagraph, validator, official, protocol,
-    // genesis, flagged, defi, dag-team etc. are all treated as private wallets.
     const isPrivateWallet = (addr: string): boolean => {
       const info = KNOWN_LABELS[addr];
       if (!info) return true; // unknown = private
@@ -2875,102 +2868,87 @@ export default function WalletDetail() {
       return !["exchange", "bridge", "hot", "custodial"].includes(type);
     };
 
-    const reconstructPath = (
-      visited: Map<string, { parent: string | null; tx: Tx | null }>,
-      end: string
-    ): TieFinderHop[] => {
-      const path: TieFinderHop[] = [];
-      let cur: string | null = end;
-      while (cur !== null) {
-        const e: { parent: string | null; tx: Tx | null } = visited.get(cur)!;
-        path.unshift({ address: cur, tx: e.tx });
-        cur = e.parent;
+    type TieReachEntry = { path: string[]; tier: number };
+    type TieReachMap = Map<string, TieReachEntry>;
+
+    // Build a full 6-tier reach map from a single root wallet — identical logic
+    // to Commingle Check's buildReachMap so both tools find the same nodes.
+    const buildReach = async (
+      wallet: string,
+      label: string,
+    ): Promise<{ reach: TieReachMap; segTxs: Record<string, Tx> }> => {
+      const reach: TieReachMap = new Map();
+      const segTxs: Record<string, Tx> = {};
+
+      // Tier 1: direct counterparties of the root wallet
+      setTieProgress(`${label}: tier 1…`);
+      const rootTxs = await fetchTxs(wallet);
+      for (const tx of rootTxs) {
+        const cp = tx.direction === "in" ? tx.from : tx.to;
+        if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
+        if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+        reach.set(cp, { path: [wallet, cp], tier: 1 });
+        segTxs[`${wallet}::${cp}`] = tx;
       }
-      return path;
+
+      // Tiers 2–6: expand from previous tier's private nodes
+      const tierLimits = [6, 4, 3, 2, 2];
+      for (let tier = 2; tier <= 6; tier++) {
+        setTieProgress(`${label}: tier ${tier}…`);
+        const prevNodes = Array.from(reach.entries())
+          .filter(([addr, v]) => v.tier === tier - 1 && isPrivateWallet(addr))
+          .slice(0, tierLimits[tier - 2]);
+        if (prevNodes.length === 0) break;
+        const txResults = await Promise.all(prevNodes.map(([a]) => fetchTxs(a)));
+        for (let i = 0; i < prevNodes.length; i++) {
+          const [parentAddr, parentData] = prevNodes[i];
+          for (const tx of txResults[i]) {
+            const cp = tx.direction === "in" ? tx.from : tx.to;
+            if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
+            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+            reach.set(cp, { path: [...parentData.path, cp], tier });
+            segTxs[`${parentAddr}::${cp}`] = tx;
+          }
+        }
+      }
+
+      return { reach, segTxs };
     };
 
-    const commonNodes: TieFinderResult["commonNodes"] = [];
-    let nodesScannedA = 1;
-    let nodesScannedB = 1;
-
     try {
-      outer:
-      for (let hop = 1; hop <= tieMaxHops; hop++) {
-        // ── Expand from A ────────────────────────────────────────────────────
-        if (frontierA.length === 0) break;
-        setTieProgress(`Hop ${hop}/${tieMaxHops} — scanning ${frontierA.length} node${frontierA.length !== 1 ? "s" : ""} from Wallet A…`);
-        const newA: string[] = [];
-        for (const nodeA of frontierA) {
-          const txs = await fetchCounterparties(nodeA);
-          nodesScannedA++;
-          for (const tx of txs) {
-            const cp = tx.direction === "in" ? tx.from : tx.to;
-            if (!cp || parentA.has(cp)) continue;
-            // Mark visited regardless — prevents re-processing on future hops.
-            parentA.set(cp, { parent: nodeA, tx });
-            // Non-private addresses (exchange/bridge/official/protocol/genesis):
-            // mark visited but never expand from them and never accept as a
-            // common node. dag-team, defi, and flagged are allowed through.
-            if (!isPrivateWallet(cp)) continue;
-            // Ignore dust/reward transactions as path hops (e.g. 1 DAG distribution
-            // spam on DAG chain). Node is still marked visited above so it won't be
-            // re-queued, but it is excluded from the frontier and common-node check.
-            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
-            newA.push(cp);
-            if (parentB.has(cp)) {
-              const pA = reconstructPath(parentA, cp);
-              const pB = reconstructPath(parentB, cp);
-              const minDepth = chain === "dag" ? 3 : 2;
-              if (pA.length >= minDepth && pB.length >= minDepth) {
-                commonNodes.push({ address: cp, pathFromA: pA, pathFromB: pB });
-                if (commonNodes.length >= 5) break outer;
-              }
-            }
-          }
-        }
-        frontierA = newA;
-        if (commonNodes.length > 0) break;
+      const { reach: reachA, segTxs: segTxsA } = await buildReach(wA, "Wallet A");
+      const { reach: reachB, segTxs: segTxsB } = await buildReach(wB, "Wallet B");
 
-        // ── Expand from B ────────────────────────────────────────────────────
-        if (frontierB.length === 0) break;
-        setTieProgress(`Hop ${hop}/${tieMaxHops} — scanning ${frontierB.length} node${frontierB.length !== 1 ? "s" : ""} from Wallet B…`);
-        const newB: string[] = [];
-        for (const nodeB of frontierB) {
-          const txs = await fetchCounterparties(nodeB);
-          nodesScannedB++;
-          for (const tx of txs) {
-            const cp = tx.direction === "in" ? tx.from : tx.to;
-            if (!cp || parentB.has(cp)) continue;
-            // Mark visited regardless — prevents re-processing on future hops.
-            parentB.set(cp, { parent: nodeB, tx });
-            // Non-private addresses (exchange/bridge/official/protocol/genesis):
-            // mark visited but never expand from them and never accept as a
-            // common node. dag-team, defi, and flagged are allowed through.
-            if (!isPrivateWallet(cp)) continue;
-            // Ignore dust/reward transactions as path hops (e.g. 1 DAG distribution
-            // spam on DAG chain). Node is still marked visited above so it won't be
-            // re-queued, but it is excluded from the frontier and common-node check.
-            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
-            newB.push(cp);
-            if (parentA.has(cp)) {
-              const pA = reconstructPath(parentA, cp);
-              const pB = reconstructPath(parentB, cp);
-              const minDepth = chain === "dag" ? 3 : 2;
-              if (pA.length >= minDepth && pB.length >= minDepth) {
-                commonNodes.push({ address: cp, pathFromA: pA, pathFromB: pB });
-                if (commonNodes.length >= 5) break outer;
-              }
-            }
-          }
-        }
-        frontierB = newB;
-        if (commonNodes.length > 0) break;
+      setTieProgress("Intersecting reach maps…");
+
+      const minDepth = chain === "dag" ? 3 : 2;
+      const commonNodes: TieFinderResult["commonNodes"] = [];
+
+      const toHops = (path: string[], segTxs: Record<string, Tx>): TieFinderHop[] =>
+        path.map((a, i) => ({
+          address: a,
+          tx: i === 0 ? null : (segTxs[`${path[i - 1]}::${a}`] ?? segTxs[`${a}::${path[i - 1]}`] ?? null),
+        }));
+
+      for (const [addr, entryA] of reachA) {
+        if (!reachB.has(addr)) continue;
+        if (!isPrivateWallet(addr)) continue;
+        const entryB = reachB.get(addr)!;
+        if (entryA.path.length < minDepth || entryB.path.length < minDepth) continue;
+        commonNodes.push({
+          address: addr,
+          pathFromA: toHops(entryA.path, segTxsA),
+          pathFromB: toHops(entryB.path, segTxsB),
+        });
+        if (commonNodes.length >= 5) break;
       }
 
       setTieResult({
         walletA: wA, walletB: wB,
         chain, maxHops: tieMaxHops,
-        commonNodes, nodesScannedA, nodesScannedB,
+        commonNodes,
+        nodesScannedA: reachA.size + 1,
+        nodesScannedB: reachB.size + 1,
       });
     } catch (err) {
       setTieError(err instanceof Error ? err.message : "Search failed");

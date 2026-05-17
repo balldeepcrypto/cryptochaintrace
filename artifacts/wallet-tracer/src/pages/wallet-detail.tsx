@@ -1948,9 +1948,10 @@ export default function WalletDetail() {
     if (tieResult.commonNodes.length === 0) {
       lines.push(sep("RESULT — NO CONNECTION FOUND"));
       lines.push("");
-      lines.push(`  NO VERIFIABLE CONNECTION found within ${tieResult.maxHops} hops.`);
-      lines.push(`  Wallet A and Wallet B share no common counterparty within the`);
-      lines.push(`  search depth. Consider increasing Max Hops or loading more TX history.`);
+      lines.push(`  NO VERIFIABLE PRIVATE-WALLET CONNECTION found within ${tieResult.maxHops} hops.`);
+      lines.push(`  Wallet A and Wallet B share no common private-wallet counterparty`);
+      lines.push(`  within the search depth. Exchange/bridge/protocol addresses are`);
+      lines.push(`  excluded. Consider increasing Max Hops or loading more TX history.`);
       lines.push("");
     } else {
       lines.push(sep("RESULT — VERIFIED CONNECTION CONFIRMED"));
@@ -2819,7 +2820,7 @@ export default function WalletDetail() {
             if (!cp || parentA.has(cp)) continue;
             parentA.set(cp, { parent: nodeA, tx });
             newA.push(cp);
-            if (parentB.has(cp)) {
+            if (parentB.has(cp) && !KNOWN_LABELS[cp]) {
               const pA = reconstructPath(parentA, cp);
               const pB = reconstructPath(parentB, cp);
               const minDepth = chain === "dag" ? 3 : 2;
@@ -2845,7 +2846,7 @@ export default function WalletDetail() {
             if (!cp || parentB.has(cp)) continue;
             parentB.set(cp, { parent: nodeB, tx });
             newB.push(cp);
-            if (parentA.has(cp)) {
+            if (parentA.has(cp) && !KNOWN_LABELS[cp]) {
               const pA = reconstructPath(parentA, cp);
               const pB = reconstructPath(parentB, cp);
               const minDepth = chain === "dag" ? 3 : 2;
@@ -5912,7 +5913,7 @@ export default function WalletDetail() {
                   ) : (
                     <>
                       <p className="text-xs font-mono font-bold text-yellow-300 mb-0.5">
-                        NO VERIFIABLE CONNECTION found within {tieResult.maxHops} hops
+                        NO VERIFIABLE PRIVATE-WALLET CONNECTION found within {tieResult.maxHops} hops
                       </p>
                       <p className="text-[10px] font-mono text-muted-foreground">
                         {tieResult.nodesScannedA} nodes scanned from A · {tieResult.nodesScannedB} from B.

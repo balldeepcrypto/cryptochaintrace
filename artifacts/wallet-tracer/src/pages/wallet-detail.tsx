@@ -1182,7 +1182,14 @@ export default function WalletDetail() {
     };
     const _ufUnion = (a: string, b: string) => { _ufP[_ufFind(a)] = _ufFind(b); };
     privFindings.forEach(f => {
-      f.comparisons.forEach(c => { _ufUnion(commingleResult.targetWallet, c.wallet); });
+      // Union ALL input wallets that appear together in this finding — not just each
+      // with targetWallet. This captures Wallet2↔Wallet3 edges when they both share
+      // the same node, and handles transitivity correctly for all equal peers.
+      const walletsInFinding = [commingleResult.targetWallet, ...f.comparisons.map(c => c.wallet)]
+        .filter(w => allInputWallets.includes(w));
+      for (let i = 1; i < walletsInFinding.length; i++) {
+        _ufUnion(walletsInFinding[0], walletsInFinding[i]);
+      }
     });
     const _compMap: Record<string, string[]> = {};
     allInputWallets.forEach(w => {
@@ -1244,7 +1251,7 @@ export default function WalletDetail() {
                 if (segTx) {
                   emitTxs([segTx], `${wPfx}  `);
                 } else {
-                  lines.push(`${wPfx}    TX details not available in current dataset`);
+                  lines.push(`${wPfx}    (no TX record found in fetched history for this hop segment)`);
                 }
               }
             }
@@ -1286,35 +1293,39 @@ export default function WalletDetail() {
       lines.push("");
       if (_clusters.length > 0) {
         _clusters.forEach((cluster) => {
-          lines.push(`  ${cluster.length} of ${allInputWallets.length} input wallets form one connected commingling cluster:`);
+          const allConnected = cluster.length === allInputWallets.length;
+          const prefix = allConnected
+            ? `All ${cluster.length} of ${allInputWallets.length} input wallets form one connected commingling cluster`
+            : `Only ${cluster.length} of ${allInputWallets.length} input wallets are connected`;
+          lines.push(`  ${prefix} through the following shared node(s):`);
           cluster.forEach(w => {
             const idx = allInputWallets.indexOf(w);
             lines.push(`    • Wallet ${idx + 1}: ${w}`);
           });
           lines.push("");
-          const clusterSet  = new Set(cluster);
+          const clusterSet   = new Set(cluster);
           const clusterNodes = privFindings.filter(f =>
-            clusterSet.has(commingleResult.targetWallet) &&
+            clusterSet.has(commingleResult.targetWallet) ||
             f.comparisons.some(c => clusterSet.has(c.wallet))
           );
-          lines.push(`  Connected through ${clusterNodes.length} shared private node${clusterNodes.length !== 1 ? "s" : ""}:`);
+          lines.push(`  Shared private node${clusterNodes.length !== 1 ? "s" : ""} (${clusterNodes.length} total):`);
           clusterNodes.slice(0, 8).forEach(f => {
             const kn = KNOWN_LABELS[f.sharedAddress];
             lines.push(`    • ${f.sharedAddress}${kn ? `  [${kn.label}]` : ""}  (Tier ${f.tier})`);
           });
           if (clusterNodes.length > 8) lines.push(`    … and ${clusterNodes.length - 8} more shared nodes`);
+          if (isolatedWallets.length > 0) {
+            lines.push("");
+            lines.push(`  The following wallet${isolatedWallets.length !== 1 ? "s were" : " was"} excluded — zero connection to any other input wallet:`);
+            isolatedWallets.forEach(w => {
+              const idx = allInputWallets.indexOf(w);
+              lines.push(`    ✗ Wallet ${idx + 1}: ${w}`);
+            });
+          }
         });
       } else {
-        lines.push(`  No private-wallet connections detected.`);
-        lines.push(`  All ${allInputWallets.length} input wallets are isolated from each other.`);
-      }
-      if (isolatedWallets.length > 0) {
-        lines.push("");
-        lines.push(`  The following wallet${isolatedWallets.length !== 1 ? "s were" : " was"} excluded — no connection to any other input wallet:`);
-        isolatedWallets.forEach(w => {
-          const idx = allInputWallets.indexOf(w);
-          lines.push(`    ✗ Wallet ${idx + 1}: ${w}`);
-        });
+        lines.push(`  No private-wallet connections detected between any input wallets.`);
+        lines.push(`  All ${allInputWallets.length} input wallets appear isolated from each other.`);
       }
       lines.push("");
 

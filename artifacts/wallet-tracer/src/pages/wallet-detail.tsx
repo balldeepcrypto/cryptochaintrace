@@ -2860,12 +2860,14 @@ export default function WalletDetail() {
       } catch { return []; }
     };
 
-    // Only private wallets are valid common nodes.
-    // Exchange, bridge, official, protocol, and genesis addresses are excluded —
-    // dag-team, defi, and flagged still count as private wallet connections.
+    // Only true exchanges and hot/custodial wallets are excluded as common nodes.
+    // team, stardust, foundation, DOR Metagraph, validator, official, protocol,
+    // genesis, flagged, defi, dag-team etc. are all treated as private wallets.
     const isPrivateWallet = (addr: string): boolean => {
       const info = KNOWN_LABELS[addr];
-      return !info || !["exchange", "bridge", "official", "protocol", "genesis"].includes(info.type);
+      if (!info) return true; // unknown address = private
+      const type = info.type || "";
+      return !["exchange", "bridge", "hot", "custodial"].includes(type);
     };
 
     const reconstructPath = (

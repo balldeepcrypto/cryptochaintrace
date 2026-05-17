@@ -974,7 +974,7 @@ export default function WalletDetail() {
       reportType: "Trail Trace Report",
       chain: chainUp,
       target: address,
-      depth: "5 hops",
+      depth: "6 hops",
     });
   }
 
@@ -2637,7 +2637,7 @@ export default function WalletDetail() {
 
   // ── Trail trace ──
   const expandTrailNode = useCallback(async (entry: TrailEntry) => {
-    if (fetchingRef.current.has(entry.address) || entry.depth >= 5) return;
+    if (fetchingRef.current.has(entry.address) || entry.depth >= 6) return;
     fetchingRef.current.add(entry.address);
     setTrailEntries((prev) =>
       prev.map((e) => e.address === entry.address ? { ...e, isLoading: true } : e)

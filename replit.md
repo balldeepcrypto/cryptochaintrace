@@ -56,7 +56,7 @@ A crypto blockchain wallet tracing tool with a dark intelligence-dashboard UI. U
 - Load More / Load All History: cursor-based pagination to fetch full transaction history (up to 2000 txs)
 - Counterparty context menu: View Profile, Continue Trail on this Wallet, Save/Remove from Saved, Open in Explorer
 - Saved wallets: bookmark counterparties with `localStorage` persistence, shown with bookmark icon
-- START TRAIL TRACE: recursive depth-5 connection expansion with commingling detection and known exchange labels
+- START TRAIL TRACE: recursive depth-6 connection expansion with commingling detection and known exchange labels
 - TRACE GRAPH: canvas-based force-directed graph of connected wallets
 
 ## Gotchas

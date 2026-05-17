@@ -3256,12 +3256,11 @@ export default function WalletDetail() {
       // Hard-excluded: never add to reach map, never expand from.
       const HARD_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
 
-      // Private wallet filter — identical to Connection Finder's isPrivateWallet.
-      // Only true exchange/bridge/hot/custodial wallets are excluded from the frontier.
-      // dag-team, genesis, defi, flagged, protocol etc. are all treated as private
-      // and are allowed as both reach-map entries and expansion seeds.
+      // Private wallet filter — exact same logic as Connection Finder.
+      // Only exchange/bridge/hot/custodial are non-private (excluded from expansion).
+      // dag-team, genesis, defi, flagged, protocol, unknown → treated as private.
+      // HARD_EXCL addresses are blocked earlier in the BFS loop — no check needed here.
       const isPrivateWallet = (addr: string): boolean => {
-        if (HARD_EXCL.has(addr)) return false;
         const info = KNOWN_LABELS[addr];
         if (!info) return true; // unknown = private
         const type = info.type || "";

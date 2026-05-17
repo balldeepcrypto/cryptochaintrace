@@ -2860,6 +2860,14 @@ export default function WalletDetail() {
       } catch { return []; }
     };
 
+    // Only private wallets are valid common nodes.
+    // Exchange, bridge, official, protocol, and genesis addresses are excluded —
+    // dag-team, defi, and flagged still count as private wallet connections.
+    const isPrivateWallet = (addr: string): boolean => {
+      const info = KNOWN_LABELS[addr];
+      return !info || !["exchange", "bridge", "official", "protocol", "genesis"].includes(info.type);
+    };
+
     const reconstructPath = (
       visited: Map<string, { parent: string | null; tx: Tx | null }>,
       end: string
@@ -2893,10 +2901,10 @@ export default function WalletDetail() {
             if (!cp || parentA.has(cp)) continue;
             // Mark visited regardless — prevents re-processing on future hops.
             parentA.set(cp, { parent: nodeA, tx });
-            // Known exchange/bridge/official addresses: mark visited but never
-            // expand from them (don't add to frontier) and never accept as a
-            // common node. The BFS finds only pure private-wallet paths.
-            if (KNOWN_LABELS[cp]) continue;
+            // Non-private addresses (exchange/bridge/official/protocol/genesis):
+            // mark visited but never expand from them and never accept as a
+            // common node. dag-team, defi, and flagged are allowed through.
+            if (!isPrivateWallet(cp)) continue;
             newA.push(cp);
             if (parentB.has(cp)) {
               const pA = reconstructPath(parentA, cp);
@@ -2924,10 +2932,10 @@ export default function WalletDetail() {
             if (!cp || parentB.has(cp)) continue;
             // Mark visited regardless — prevents re-processing on future hops.
             parentB.set(cp, { parent: nodeB, tx });
-            // Known exchange/bridge/official addresses: mark visited but never
-            // expand from them (don't add to frontier) and never accept as a
-            // common node. The BFS finds only pure private-wallet paths.
-            if (KNOWN_LABELS[cp]) continue;
+            // Non-private addresses (exchange/bridge/official/protocol/genesis):
+            // mark visited but never expand from them and never accept as a
+            // common node. dag-team, defi, and flagged are allowed through.
+            if (!isPrivateWallet(cp)) continue;
             newB.push(cp);
             if (parentA.has(cp)) {
               const pA = reconstructPath(parentA, cp);

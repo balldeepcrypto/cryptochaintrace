@@ -682,8 +682,6 @@ export default function WalletDetail() {
   function generateReport(): string {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
-    const short = (a: string) => a.length > 18 ? `${a.slice(0, 10)}...${a.slice(-6)}` : a;
-    const shortHash = (h: string) => h ? (h.length > 12 ? `${h.slice(0, 10)}...` : h) : "(none)";
     const fmtAmt = (v: string, dir: "in" | "out") => {
       const n = parseFloat(v);
       const sign = dir === "in" ? "+" : "−";
@@ -762,8 +760,7 @@ export default function WalletDetail() {
         const lastTs = rows.reduce((l, r) => r.latestTs > l ? r.latestTs : l, "").slice(0, 10);
         const labelStr = known ? `  ← ${known.label.toUpperCase()}` : "";
 
-        lines.push(`  ${connector} ${dirLabel}  →  ${short(addr)}${labelStr}`);
-        lines.push(`  ${indent}   Full  : ${addr}`);
+        lines.push(`  ${connector} ${dirLabel}  →  ${addr}${labelStr}`);
         lines.push(`  ${indent}   Total : ${totalTxs.toLocaleString("en-US")} tx${totalTxs !== 1 ? "s" : ""}  |  ${fmtVal(totalVal)} ${chainUp}  |  Last: ${lastTs || "—"}`);
 
         // Individual transactions for this counterparty
@@ -780,12 +777,16 @@ export default function WalletDetail() {
           txsForAddr.forEach((tx, ti) => {
             const txConn     = ti === txsForAddr.length - 1 ? "└──" : "├──";
             const txChildPfx = ti === txsForAddr.length - 1 ? "   " : "│  ";
-            const dir   = tx.direction === "in" ? "IN " : "OUT";
-            const amt   = fmtAmt(tx.value, tx.direction as "in" | "out");
-            const asset = tx.tokenSymbol || chainUp;
-            lines.push(`  ${indent}   ${txConn} ${dir}  (TA: ${tx.hash || "(none)"})  ${amt} ${asset}  ${fmtDate(tx.timestamp || "")}`);
-            if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}     ↳ Destination Tag : ${tx.destinationTag}`);
-            if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}     ↳ Memo            : ${tx.memo}`);
+            const dir    = tx.direction === "in" ? "IN " : "OUT";
+            const amt    = fmtAmt(tx.value, tx.direction as "in" | "out");
+            const asset  = tx.tokenSymbol || chainUp;
+            const usd    = tx.valueUsd > 0 ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]` : "";
+            lines.push(`  ${indent}   ${txConn} [${dir}]  From: ${tx.from || "—"} → To: ${tx.to || "—"}`);
+            lines.push(`  ${indent}   ${txChildPfx}      Amount : ${amt} ${asset}${usd}`);
+            lines.push(`  ${indent}   ${txChildPfx}      TX     : ${tx.hash || "(none)"}`);
+            lines.push(`  ${indent}   ${txChildPfx}      Date   : ${fmtDate(tx.timestamp || "")}`);
+            if (tx.destinationTag != null) lines.push(`  ${indent}   ${txChildPfx}      Tag    : ${tx.destinationTag}`);
+            if (tx.memo)                   lines.push(`  ${indent}   ${txChildPfx}      Memo   : ${tx.memo}`);
           });
           const remaining = totalTxs - txsForAddr.length;
           if (remaining > 0) lines.push(`  ${indent}       (+ ${remaining} more transactions not shown)`);
@@ -806,7 +807,7 @@ export default function WalletDetail() {
         lines.push(`  OUTBOUND  (${address.slice(0, 8)}...  →  selected wallets)`);
         for (const r of outRows.slice(0, 10)) {
           const kn = KNOWN_LABELS[r.address];
-          lines.push(`    → ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount.toLocaleString("en-US")} tx  |  ${fmtVal(r.totalValue)} ${chainUp}`);
+          lines.push(`    → ${r.address}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount.toLocaleString("en-US")} tx  |  ${fmtVal(r.totalValue)} ${chainUp}`);
         }
         lines.push("");
       }
@@ -814,7 +815,7 @@ export default function WalletDetail() {
         lines.push(`  INBOUND   (selected wallets  →  ${address.slice(0, 8)}...)`);
         for (const r of inRows.slice(0, 10)) {
           const kn = KNOWN_LABELS[r.address];
-          lines.push(`    ← ${short(r.address)}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount.toLocaleString("en-US")} tx  |  ${fmtVal(r.totalValue)} ${chainUp}`);
+          lines.push(`    ← ${r.address}${kn ? `  [${kn.label}]` : ""}  |  ${r.txCount.toLocaleString("en-US")} tx  |  ${fmtVal(r.totalValue)} ${chainUp}`);
         }
         lines.push("");
       }
@@ -903,11 +904,12 @@ export default function WalletDetail() {
             ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
             : "";
           const date  = tx.timestamp ? tx.timestamp.replace("T", " ").slice(0, 16) + " UTC" : "—";
-          lines.push(`  ${prefix}${childPfx}[${dir}]  ${amt}${usd}`);
-          lines.push(`  ${prefix}${childPfx}       TX   : ${tx.hash ?? "(none)"}`);
-          lines.push(`  ${prefix}${childPfx}       Date : ${date}`);
-          if (tx.destinationTag != null) lines.push(`  ${prefix}${childPfx}       Tag  : ${tx.destinationTag}`);
-          if (tx.memo)                   lines.push(`  ${prefix}${childPfx}       Memo : ${tx.memo}`);
+          lines.push(`  ${prefix}${childPfx}[${dir}]  From: ${tx.from || "—"} → To: ${tx.to || "—"}`);
+          lines.push(`  ${prefix}${childPfx}       Amount : ${amt}${usd}`);
+          lines.push(`  ${prefix}${childPfx}       TX     : ${tx.hash ?? "(none)"}`);
+          lines.push(`  ${prefix}${childPfx}       Date   : ${date}`);
+          if (tx.destinationTag != null) lines.push(`  ${prefix}${childPfx}       Tag    : ${tx.destinationTag}`);
+          if (tx.memo)                   lines.push(`  ${prefix}${childPfx}       Memo   : ${tx.memo}`);
         });
       } else {
         lines.push(`  ${prefix}${childPfx}(no TX history loaded for this hop)`);
@@ -1177,26 +1179,26 @@ export default function WalletDetail() {
           const knW     = KNOWN_LABELS[wallet];
           lines.push(`${wConn} ${wLabel}  ${wallet}${knW ? `  [${knW.label}]` : ""}`);
           if (path.length > 0) {
-            lines.push(`${wPfx}Trail:`);
-            path.forEach((addr, pidx) => {
-              const kn  = KNOWN_LABELS[addr];
-              const lbl = kn ? `  [${kn.label}]` : "";
-              if (pidx === 0) {
+            lines.push(`${wPfx}Trail & Transactions:`);
+            for (let h = 0; h < path.length; h++) {
+              const addr = path[h];
+              const kn   = KNOWN_LABELS[addr];
+              const lbl  = kn ? `  [${kn.label}]` : "";
+              if (h === 0) {
                 lines.push(`${wPfx}  ${addr}${lbl}  ← ${wLabel}`);
               } else {
-                lines.push(`${wPfx}  ↓  Hop ${pidx}`);
-                lines.push(`${wPfx}  ${addr}${lbl}${pidx === path.length - 1 ? "  ← SHARED NODE" : ""}`);
+                lines.push(`${wPfx}  ↓  Hop ${h}`);
+                lines.push(`${wPfx}  ${addr}${lbl}${h === path.length - 1 ? "  ← SHARED NODE" : ""}`);
+                const segTx = bestTxForWallet(path[h - 1], path[h]);
+                if (segTx) {
+                  emitTxs([segTx], `${wPfx}  `);
+                } else {
+                  lines.push(`${wPfx}    (no TX in fetched history for this segment)`);
+                }
               }
-            });
-          }
-          const hopAddr  = path.length > 1 ? path[1] : f.sharedAddress;
-          const hopShort = hopAddr.length > 16 ? `${hopAddr.slice(0, 8)}…${hopAddr.slice(-4)}` : hopAddr;
-          const bestTx   = bestTxForWallet(wallet, hopAddr);
-          lines.push(`${wPfx}Best TX (${wLabel} ↔ ${hopShort}):`);
-          if (bestTx) {
-            emitTxs([bestTx], wPfx);
+            }
           } else {
-            lines.push(`${wPfx}  (none in fetched history)`);
+            lines.push(`${wPfx}  (no path data)`);
           }
           lines.push("");
         });

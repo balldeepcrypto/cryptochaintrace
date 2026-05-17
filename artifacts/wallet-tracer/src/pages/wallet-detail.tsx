@@ -1003,10 +1003,16 @@ export default function WalletDetail() {
       const segMap = commingleResult.segmentTxs ?? {};
       const seg    = segMap[`${wallet}::${hopAddr}`] ?? segMap[`${hopAddr}::${wallet}`] ?? null;
       if (seg) return seg;
+      // Check wallet's own TX pool (wallet's perspective → hopAddr)
       const wPool  = (commingleResult.walletTxs[wallet] ?? [])
         .filter(t => (t.direction === "in" ? t.from : t.to) === hopAddr)
         .sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
       if (wPool.length > 0) return wPool[0];
+      // Also check hopAddr's own TX pool (reverse perspective → wallet)
+      const hPool  = (commingleResult.walletTxs[hopAddr] ?? [])
+        .filter(t => (t.direction === "in" ? t.from : t.to) === wallet)
+        .sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
+      if (hPool.length > 0) return hPool[0];
       if (wallet === commingleResult.targetWallet) {
         const pool = allTxs
           .filter(t => (t.direction === "in" ? t.from : t.to) === hopAddr && passesSpamFilter(t, commingleResult.chain))
@@ -1213,7 +1219,7 @@ export default function WalletDetail() {
                 if (segTx) {
                   emitTxs([segTx], `${wPfx}  `);
                 } else {
-                  lines.push(`${wPfx}    (no TX in fetched history for this segment)`);
+                  lines.push(`${wPfx}    TX details not available in current dataset`);
                 }
               }
             }

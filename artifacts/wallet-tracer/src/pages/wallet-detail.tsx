@@ -503,6 +503,26 @@ interface MultiAnalysisResult {
   }>;
 }
 
+// ─── Connection Finder types ──────────────────────────────────────────────────
+interface TieFinderHop {
+  address: string;
+  tx: Tx | null;
+}
+
+interface TieFinderResult {
+  walletA: string;
+  walletB: string;
+  chain: string;
+  maxHops: number;
+  commonNodes: Array<{
+    address: string;
+    pathFromA: TieFinderHop[];
+    pathFromB: TieFinderHop[];
+  }>;
+  nodesScannedA: number;
+  nodesScannedB: number;
+}
+
 // ─── Commingle Check types ────────────────────────────────────────────────────
 interface CommingleFinding {
   sharedAddress: string;
@@ -1873,6 +1893,107 @@ export default function WalletDetail() {
     });
   }
 
+  // ── Connection Finder Report ───────────────────────────────────────────────
+  function generateTieFinderReport(): string {
+    if (!tieResult) return "";
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const chainUp = tieResult.chain.toUpperCase();
+    const rule = "─".repeat(66);
+    const sep = (label = "") =>
+      label ? `\n${rule}\n  ${label}\n${rule}` : rule;
+    const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
+    const fmtAmt = (v: string, dir: "in" | "out") => {
+      const n = parseFloat(v);
+      const sign = dir === "in" ? "+" : "−";
+      if (!n || isNaN(n)) return `${sign}0.00`;
+      const abs = Math.abs(n);
+      const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+    };
+    const emitTx = (tx: Tx, pad = "") => {
+      const dir   = tx.direction === "in" ? "IN " : "OUT";
+      const asset = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
+      const usd   = tx.valueUsd > 0 ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD]` : "";
+      const out: string[] = [];
+      out.push(`${pad}  Direction : [${dir}]`);
+      out.push(`${pad}  Amount    : ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}`);
+      out.push(`${pad}  From      : ${tx.from || "—"}`);
+      out.push(`${pad}  To        : ${tx.to || "—"}`);
+      out.push(`${pad}  TX Hash   : ${tx.hash || "(none)"}`);
+      out.push(`${pad}  Date      : ${fmtDate(tx.timestamp || "")}`);
+      if ((tx as Tx & { destinationTag?: number | null }).destinationTag != null)
+        out.push(`${pad}  ↳ Dest Tag : ${(tx as Tx & { destinationTag?: number | null }).destinationTag}`);
+      if (tx.memo) out.push(`${pad}  ↳ Memo     : ${tx.memo}`);
+      return out;
+    };
+
+    const lines: string[] = [];
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║      CONNECTION FINDER REPORT — CryptoChainTrace            ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`Generated  : ${now}`);
+    lines.push(`Chain      : ${chainUp}`);
+    lines.push(`Wallet A   : ${tieResult.walletA}`);
+    lines.push(`Wallet B   : ${tieResult.walletB}`);
+    lines.push(`Max Hops   : ${tieResult.maxHops}`);
+    lines.push(`Scanned    : ${tieResult.nodesScannedA} nodes from A  |  ${tieResult.nodesScannedB} nodes from B`);
+    lines.push("");
+
+    if (tieResult.commonNodes.length === 0) {
+      lines.push(sep("RESULT — NO CONNECTION FOUND"));
+      lines.push("");
+      lines.push(`  NO VERIFIABLE CONNECTION found within ${tieResult.maxHops} hops.`);
+      lines.push(`  Wallet A and Wallet B share no common counterparty within the`);
+      lines.push(`  search depth. Consider increasing Max Hops or loading more TX history.`);
+      lines.push("");
+    } else {
+      lines.push(sep("RESULT — VERIFIED CONNECTION CONFIRMED"));
+      lines.push("");
+      lines.push(`  ✔ CONNECTION CONFIRMED — ${tieResult.commonNodes.length} common node(s) found.`);
+      lines.push(`  Both wallets transact through the same intermediate address(es).`);
+      lines.push("");
+
+      tieResult.commonNodes.forEach((node, ni) => {
+        const kn = KNOWN_LABELS[node.address];
+        lines.push(sep(`COMMON NODE ${ni + 1} of ${tieResult!.commonNodes.length}`));
+        lines.push("");
+        lines.push(`  Address  : ${node.address}${kn ? `  [${kn.label.toUpperCase()}]` : "  [PRIVATE WALLET]"}`);
+        lines.push(`  Wallet A reaches this node in ${node.pathFromA.length - 1} hop(s)`);
+        lines.push(`  Wallet B reaches this node in ${node.pathFromB.length - 1} hop(s)`);
+        lines.push("");
+
+        const renderPath = (path: TieFinderHop[], label: string) => {
+          lines.push(`  ── ${label} → Common Node:`);
+          lines.push("");
+          path.forEach((hop, idx) => {
+            const hKn  = KNOWN_LABELS[hop.address];
+            const hLbl = hKn ? `  [${hKn.label}]` : "";
+            if (idx === 0) {
+              lines.push(`  ${hop.address}${hLbl}  ← ${label}`);
+            } else {
+              lines.push(`  ↓  Hop ${idx}`);
+              lines.push(`  ${hop.address}${hLbl}${idx === path.length - 1 ? "  ← COMMON NODE" : ""}`);
+              if (hop.tx) emitTx(hop.tx, "  ").forEach(l => lines.push(l));
+            }
+          });
+          lines.push("");
+        };
+
+        renderPath(node.pathFromA, "WALLET A");
+        renderPath(node.pathFromB, "WALLET B");
+      });
+    }
+
+    return auditAndSign(lines, {
+      reportType: "Connection Finder Report",
+      chain: chainUp,
+      target: tieResult.walletA,
+      comparisons: [tieResult.walletB],
+      depth: `${tieResult.maxHops} hops`,
+      nodesScanned: tieResult.nodesScannedA + tieResult.nodesScannedB,
+    });
+  }
+
   // ── Run Victim → Thief Path Trace ─────────────────────────────────────────
   async function runPathTrace() {
     const steps = pathSteps
@@ -2098,6 +2219,16 @@ export default function WalletDetail() {
   const [originStatus, setOriginStatus] = useState("");
   const originPanelRef = useRef<HTMLDivElement>(null);
   const originAbortRef = useRef<boolean>(false);
+
+  // ── Connection Finder ──
+  const [showTiePanel, setShowTiePanel] = useState(false);
+  const [tieBWallet, setTieBWallet] = useState("");
+  const [tieMaxHops, setTieMaxHops] = useState(6);
+  const [tieLoading, setTieLoading] = useState(false);
+  const [tieProgress, setTieProgress] = useState("");
+  const [tieResult, setTieResult] = useState<TieFinderResult | null>(null);
+  const [tieError, setTieError] = useState<string | null>(null);
+  const tiePanelRef = useRef<HTMLDivElement>(null);
 
   // (multi-wallet state moved above toggleSavedWallet — see above)
 
@@ -2622,6 +2753,118 @@ export default function WalletDetail() {
       setTimeout(() => originPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
     }
   }
+
+  // ── Connection Finder — bidirectional BFS ─────────────────────────────────
+  const runTieFinder = useCallback(async () => {
+    const wA = address.trim();
+    const wB = tieBWallet.trim();
+    if (!wB) { setTieError("Enter Wallet B address."); return; }
+    if (wA === wB) { setTieError("Wallet A and B cannot be the same address."); return; }
+    setTieLoading(true);
+    setTieError(null);
+    setTieResult(null);
+
+    const parentA = new Map<string, { parent: string | null; tx: Tx | null }>();
+    const parentB = new Map<string, { parent: string | null; tx: Tx | null }>();
+    parentA.set(wA, { parent: null, tx: null });
+    parentB.set(wB, { parent: null, tx: null });
+    let frontierA = [wA];
+    let frontierB = [wB];
+
+    const fetchCounterparties = async (addr: string): Promise<Tx[]> => {
+      try {
+        const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
+        if (!resp.ok) return [];
+        const data = await resp.json() as { transactions: Tx[] };
+        return (data.transactions ?? []).filter(t => parseFloat(t.value) > 0);
+      } catch { return []; }
+    };
+
+    const reconstructPath = (
+      visited: Map<string, { parent: string | null; tx: Tx | null }>,
+      end: string
+    ): TieFinderHop[] => {
+      const path: TieFinderHop[] = [];
+      let cur: string | null = end;
+      while (cur !== null) {
+        const e: { parent: string | null; tx: Tx | null } = visited.get(cur)!;
+        path.unshift({ address: cur, tx: e.tx });
+        cur = e.parent;
+      }
+      return path;
+    };
+
+    const commonNodes: TieFinderResult["commonNodes"] = [];
+    let nodesScannedA = 1;
+    let nodesScannedB = 1;
+
+    try {
+      outer:
+      for (let hop = 1; hop <= tieMaxHops; hop++) {
+        // ── Expand from A ────────────────────────────────────────────────────
+        if (frontierA.length === 0) break;
+        setTieProgress(`Hop ${hop}/${tieMaxHops} — scanning ${frontierA.length} node${frontierA.length !== 1 ? "s" : ""} from Wallet A…`);
+        const newA: string[] = [];
+        for (const nodeA of frontierA) {
+          const txs = await fetchCounterparties(nodeA);
+          nodesScannedA++;
+          for (const tx of txs) {
+            const cp = tx.direction === "in" ? tx.from : tx.to;
+            if (!cp || parentA.has(cp)) continue;
+            parentA.set(cp, { parent: nodeA, tx });
+            newA.push(cp);
+            if (parentB.has(cp)) {
+              commonNodes.push({
+                address: cp,
+                pathFromA: reconstructPath(parentA, cp),
+                pathFromB: reconstructPath(parentB, cp),
+              });
+              if (commonNodes.length >= 5) break outer;
+            }
+          }
+        }
+        frontierA = newA;
+        if (commonNodes.length > 0) break;
+
+        // ── Expand from B ────────────────────────────────────────────────────
+        if (frontierB.length === 0) break;
+        setTieProgress(`Hop ${hop}/${tieMaxHops} — scanning ${frontierB.length} node${frontierB.length !== 1 ? "s" : ""} from Wallet B…`);
+        const newB: string[] = [];
+        for (const nodeB of frontierB) {
+          const txs = await fetchCounterparties(nodeB);
+          nodesScannedB++;
+          for (const tx of txs) {
+            const cp = tx.direction === "in" ? tx.from : tx.to;
+            if (!cp || parentB.has(cp)) continue;
+            parentB.set(cp, { parent: nodeB, tx });
+            newB.push(cp);
+            if (parentA.has(cp)) {
+              commonNodes.push({
+                address: cp,
+                pathFromA: reconstructPath(parentA, cp),
+                pathFromB: reconstructPath(parentB, cp),
+              });
+              if (commonNodes.length >= 5) break outer;
+            }
+          }
+        }
+        frontierB = newB;
+        if (commonNodes.length > 0) break;
+      }
+
+      setTieResult({
+        walletA: wA, walletB: wB,
+        chain, maxHops: tieMaxHops,
+        commonNodes, nodesScannedA, nodesScannedB,
+      });
+    } catch (err) {
+      setTieError(err instanceof Error ? err.message : "Search failed");
+    } finally {
+      setTieLoading(false);
+      setTieProgress("");
+      setTimeout(() => tiePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 300);
+    }
+  }, [address, tieBWallet, tieMaxHops, chain]);
 
   // ── Multi-wallet commingling analysis ──
   const runMultiAnalysis = useCallback(async () => {
@@ -3489,6 +3732,14 @@ export default function WalletDetail() {
               title="Save this wallet address into your Commingle Check comparison list"
             >
               <GitMerge className="w-3.5 h-3.5 mr-1.5" /> ADD TO COMMINGLE
+            </Button>
+            <Button
+              variant="outline"
+              className={`font-mono text-xs ${showTiePanel ? "border-sky-500/60 text-sky-300 bg-sky-950/30 hover:bg-sky-950/50" : "border-sky-500/30 text-sky-400 hover:bg-sky-950/30 hover:border-sky-500/60"}`}
+              title="Bidirectional search — find a verifiable connection path between this wallet and any other wallet"
+              onClick={() => { setShowTiePanel((v) => !v); if (!showTiePanel) setTimeout(() => tiePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 100); }}
+            >
+              <Network className="w-3.5 h-3.5 mr-1.5" /> CONNECTION FINDER
             </Button>
             <Button
               variant="outline"
@@ -5501,6 +5752,302 @@ export default function WalletDetail() {
               The report also shows all further connections from the final wallet (Expand section).
             </p>
           </CardContent>
+        </Card>
+      )}
+
+      {/* ── Connection Finder Panel ─────────────────────────────────────────── */}
+      {showTiePanel && (
+        <Card ref={tiePanelRef} className="bg-card/40 border-sky-500/20">
+          <CardHeader className="border-b border-border/40 pb-4 px-5 pt-5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-sky-400 animate-pulse" />
+                <CardTitle className="text-sm font-mono uppercase tracking-widest text-sky-300">
+                  Connection Finder
+                </CardTitle>
+              </div>
+              <div className="flex items-center gap-2">
+                {tieResult && (
+                  <button
+                    onClick={() => {
+                      const rpt = generateTieFinderReport();
+                      const title = `Connection Finder Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
+                      setReportContent(rpt);
+                      setReportTitle(title);
+                      setReportJsonData({ reportType: "connection-finder", generatedAt: new Date().toISOString(), chain, subjectAddress: address, walletInfo: wallet, selectedAddresses: [tieBWallet], reportText: rpt });
+                      setShowReportModal(true);
+                    }}
+                    className="flex items-center gap-1 text-[11px] font-mono text-orange-400 hover:text-orange-300 bg-orange-950/30 hover:bg-orange-950/60 border border-orange-500/30 rounded px-2 py-1 transition-colors"
+                  >
+                    <FileText className="w-3 h-3" /> EXPORT REPORT
+                  </button>
+                )}
+                <button onClick={() => setShowTiePanel(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <p className="text-xs font-mono text-muted-foreground mt-1.5 leading-relaxed">
+              Bidirectional BFS — expands outward from both wallets simultaneously and detects any common node they share. Every hop shows full TX details.
+            </p>
+          </CardHeader>
+
+          {/* ── Input form ── */}
+          <div className="p-5 space-y-4 border-b border-border/30">
+            <div className="grid grid-cols-1 gap-3">
+              {/* Wallet A — pre-filled */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+                  Wallet A — Victim / Theft Wallet (current)
+                </label>
+                <div className="w-full px-3 py-2 rounded border border-border/40 bg-muted/10 text-[11px] font-mono text-sky-200/70 truncate select-all">
+                  {address}
+                </div>
+              </div>
+
+              {/* Wallet B — free input */}
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+                  Wallet B — Suspected Connected Wallet
+                </label>
+                <input
+                  type="text"
+                  value={tieBWallet}
+                  onChange={e => { setTieBWallet(e.target.value); setTieError(null); setTieResult(null); }}
+                  placeholder="Enter wallet address…"
+                  className="w-full px-3 py-2 rounded border border-border/40 bg-muted/10 hover:border-sky-500/40 focus:border-sky-500/60 focus:outline-none text-[11px] font-mono text-foreground placeholder:text-muted-foreground/40 transition-colors"
+                  disabled={tieLoading}
+                />
+              </div>
+
+              {/* Max Hops + Run button row */}
+              <div className="flex items-end gap-3">
+                <div className="space-y-1.5">
+                  <label className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">
+                    Max Hops
+                  </label>
+                  <select
+                    value={tieMaxHops}
+                    onChange={e => setTieMaxHops(Number(e.target.value))}
+                    disabled={tieLoading}
+                    className="px-3 py-2 rounded border border-border/40 bg-muted/10 hover:border-sky-500/40 focus:border-sky-500/60 focus:outline-none text-[11px] font-mono text-foreground transition-colors cursor-pointer"
+                  >
+                    {[4, 5, 6, 7, 8].map(n => (
+                      <option key={n} value={n}>{n} hops</option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  onClick={() => void runTieFinder()}
+                  disabled={tieLoading || !tieBWallet.trim()}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 rounded-lg bg-sky-700 hover:bg-sky-600 active:bg-sky-800 disabled:opacity-40 disabled:cursor-not-allowed text-white font-mono text-xs font-bold tracking-widest transition-colors"
+                >
+                  {tieLoading
+                    ? <><Loader2 className="w-3.5 h-3.5 animate-spin" /> SEARCHING…</>
+                    : <><Network className="w-3.5 h-3.5" /> FIND CONNECTION</>
+                  }
+                </button>
+                {(tieResult || tieError) && !tieLoading && (
+                  <button
+                    onClick={() => { setTieResult(null); setTieError(null); }}
+                    className="px-3 py-2 text-[10px] font-mono text-muted-foreground hover:text-foreground border border-border/30 hover:border-border/60 rounded transition-colors"
+                  >
+                    CLEAR
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* ── Progress bar ── */}
+          {tieLoading && (
+            <div className="px-5 py-2.5 flex items-center gap-3 border-b border-border/30 bg-sky-950/10">
+              <Loader2 className="w-3 h-3 text-sky-400 animate-spin shrink-0" />
+              <span className="text-[11px] font-mono text-sky-300/80 flex-1 truncate">{tieProgress}</span>
+            </div>
+          )}
+
+          {/* ── Error ── */}
+          {tieError && (
+            <div className="mx-5 mt-4 flex items-center gap-2 px-3 py-2 rounded border border-red-500/30 bg-red-950/20 text-[11px] font-mono text-red-300">
+              <AlertTriangle className="w-3.5 h-3.5 shrink-0" /> {tieError}
+            </div>
+          )}
+
+          {/* ── Results ── */}
+          {tieResult && (
+            <div className="p-5 space-y-5">
+
+              {/* Summary bar */}
+              <div className={`flex items-start gap-3 px-4 py-3 rounded-lg border ${
+                tieResult.commonNodes.length > 0
+                  ? "border-sky-500/30 bg-sky-950/20"
+                  : "border-yellow-500/20 bg-yellow-950/10"
+              }`}>
+                <div className={`mt-0.5 shrink-0 ${tieResult.commonNodes.length > 0 ? "text-sky-400" : "text-yellow-400"}`}>
+                  {tieResult.commonNodes.length > 0
+                    ? <Network className="w-4 h-4" />
+                    : <AlertTriangle className="w-4 h-4" />
+                  }
+                </div>
+                <div className="flex-1 min-w-0">
+                  {tieResult.commonNodes.length > 0 ? (
+                    <>
+                      <p className="text-xs font-mono font-bold text-sky-300 mb-0.5">
+                        CONNECTION CONFIRMED — {tieResult.commonNodes.length} common node{tieResult.commonNodes.length !== 1 ? "s" : ""} found
+                      </p>
+                      <p className="text-[10px] font-mono text-muted-foreground">
+                        Both wallets transact through the same intermediate address{tieResult.commonNodes.length !== 1 ? "es" : ""}
+                        &nbsp;·&nbsp; {tieResult.nodesScannedA} nodes scanned from A · {tieResult.nodesScannedB} from B · max {tieResult.maxHops} hops
+                      </p>
+                    </>
+                  ) : (
+                    <>
+                      <p className="text-xs font-mono font-bold text-yellow-300 mb-0.5">
+                        NO VERIFIABLE CONNECTION found within {tieResult.maxHops} hops
+                      </p>
+                      <p className="text-[10px] font-mono text-muted-foreground">
+                        {tieResult.nodesScannedA} nodes scanned from A · {tieResult.nodesScannedB} from B.
+                        Try increasing Max Hops or loading more TX history first.
+                      </p>
+                    </>
+                  )}
+                </div>
+              </div>
+
+              {/* Common node details */}
+              {tieResult.commonNodes.map((node, ni) => {
+                const kn = KNOWN_LABELS[node.address];
+                const chainUp = tieResult!.chain.toUpperCase();
+                const fmtDate = (ts: string) => {
+                  if (!ts) return "—";
+                  const d = new Date(ts);
+                  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+                    + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) + " UTC";
+                };
+                const fmtAmt = (v: string, dir: string) => {
+                  const n = parseFloat(v);
+                  const sign = dir === "in" ? "+" : "−";
+                  if (!n || isNaN(n)) return `${sign}0.00`;
+                  const abs = Math.abs(n);
+                  const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+                  return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
+                };
+
+                const renderTrail = (path: TieFinderHop[], label: string, color: string) => (
+                  <div className="space-y-0">
+                    <div className={`text-[10px] font-mono font-bold ${color} uppercase tracking-wider mb-2`}>
+                      {label} — {path.length - 1} hop{path.length - 1 !== 1 ? "s" : ""}
+                    </div>
+                    <div className="space-y-0">
+                      {path.map((hop, idx) => {
+                        const hopKn  = KNOWN_LABELS[hop.address];
+                        const isRoot = idx === 0;
+                        const isLast = idx === path.length - 1;
+                        return (
+                          <div key={hop.address + idx} className="relative">
+                            {/* Connector line */}
+                            {idx > 0 && (
+                              <div className="flex items-center gap-2 py-0.5 pl-3">
+                                <div className="w-px h-4 bg-border/40 ml-1.5" />
+                                <span className="text-[9px] font-mono text-muted-foreground/50">HOP {idx}</span>
+                              </div>
+                            )}
+                            {/* Address row */}
+                            <div className={`flex items-start gap-2 px-3 py-2 rounded ${
+                              isRoot ? "bg-muted/10 border border-border/20" :
+                              isLast ? "bg-sky-950/20 border border-sky-500/20" :
+                              "bg-muted/5 border border-border/10"
+                            }`}>
+                              <div className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${
+                                isRoot ? "bg-green-400" : isLast ? "bg-sky-400" : "bg-muted-foreground/40"
+                              }`} />
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className="text-[11px] font-mono text-foreground break-all">{hop.address}</span>
+                                  {isRoot && <span className="text-[9px] font-mono text-green-400/80 bg-green-950/30 border border-green-500/20 px-1.5 py-0.5 rounded">{label}</span>}
+                                  {isLast && !isRoot && <span className="text-[9px] font-mono text-sky-400/80 bg-sky-950/30 border border-sky-500/20 px-1.5 py-0.5 rounded">COMMON NODE</span>}
+                                  {hopKn && <span className="text-[9px] font-mono text-blue-300/80 bg-blue-950/30 border border-blue-500/20 px-1.5 py-0.5 rounded">{hopKn.label}</span>}
+                                </div>
+                                {/* TX details for this hop */}
+                                {hop.tx && !isRoot && (
+                                  <div className="mt-1.5 pl-2 border-l border-border/30 space-y-0.5">
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                      <span className={`text-[9px] font-mono px-1 py-0.5 rounded ${
+                                        hop.tx.direction === "in"
+                                          ? "text-green-300 bg-green-950/30 border border-green-500/20"
+                                          : "text-red-300 bg-red-950/30 border border-red-500/20"
+                                      }`}>
+                                        {hop.tx.direction === "in" ? "IN" : "OUT"}
+                                      </span>
+                                      <span className="text-[10px] font-mono text-foreground/90 font-medium">
+                                        {fmtAmt(hop.tx.value, hop.tx.direction)}&nbsp;
+                                        {(hop.tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp}
+                                      </span>
+                                      {hop.tx.valueUsd > 0 && (
+                                        <span className="text-[9px] font-mono text-muted-foreground">
+                                          ${hop.tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[10px] font-mono text-muted-foreground space-y-0.5">
+                                      <div><span className="text-muted-foreground/50">From </span>{hop.tx.from || "—"}</div>
+                                      <div><span className="text-muted-foreground/50">To   </span>{hop.tx.to || "—"}</div>
+                                      <div><span className="text-muted-foreground/50">TX   </span>{hop.tx.hash || "(none)"}</div>
+                                      <div><span className="text-muted-foreground/50">Date </span>{fmtDate(hop.tx.timestamp || "")}</div>
+                                      {(hop.tx as Tx & { destinationTag?: number | null }).destinationTag != null && (
+                                        <div><span className="text-muted-foreground/50">Tag  </span>{(hop.tx as Tx & { destinationTag?: number | null }).destinationTag}</div>
+                                      )}
+                                      {hop.tx.memo && (
+                                        <div><span className="text-muted-foreground/50">Memo </span>{hop.tx.memo}</div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+
+                return (
+                  <div key={node.address + ni} className="rounded-lg border border-sky-500/20 bg-sky-950/5 overflow-hidden">
+                    {/* Common node header */}
+                    <div className="px-4 py-3 border-b border-sky-500/15 bg-sky-950/15 flex items-start gap-3">
+                      <div className="shrink-0 w-5 h-5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center mt-0.5">
+                        <span className="text-[9px] font-mono font-bold text-sky-300">{ni + 1}</span>
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[10px] font-mono text-sky-400/70 uppercase tracking-wider mb-0.5">
+                          Common Node {ni + 1} of {tieResult!.commonNodes.length}
+                          {kn ? ` — ${kn.label.toUpperCase()}` : ""}
+                        </div>
+                        <div className="text-[11px] font-mono text-sky-200 break-all">{node.address}</div>
+                        <div className="text-[9px] font-mono text-muted-foreground mt-1">
+                          Wallet A reaches here in {node.pathFromA.length - 1} hop{node.pathFromA.length - 1 !== 1 ? "s" : ""}
+                          &nbsp;·&nbsp;
+                          Wallet B reaches here in {node.pathFromB.length - 1} hop{node.pathFromB.length - 1 !== 1 ? "s" : ""}
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Two trail columns */}
+                    <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-border/20">
+                      <div className="p-4">
+                        {renderTrail(node.pathFromA, "WALLET A", "text-green-400")}
+                      </div>
+                      <div className="p-4">
+                        {renderTrail(node.pathFromB, "WALLET B", "text-amber-400")}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </Card>
       )}
 

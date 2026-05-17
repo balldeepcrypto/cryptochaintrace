@@ -299,7 +299,9 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "DTM Reward Pool",           type: "official" },
   DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK: { label: "DTM Reward Pool",           type: "official" },
   // PylonFi DOR Node
-  DAG7k3M5aAWdV3S3E5nZXvvQyGprkYbVKxz6gGRS: { label: "PylonFi DOR Node",          type: "official" },
+  DAG7k3M5aAWdV3S3E5nZXvvQyGprkYbVKxz6gGRS: { label: "PylonFi DOR Node",              type: "official" },
+  // Constellation Protocol
+  DAG86Joz5S7hkL8N9yqTuVs5vo1bzQLwF3MUTUMX: { label: "Constellation Protocol Wallet", type: "official" },
   // Legacy Stardust / Team entries (not yet reclassified)
   DAG8UsoSR14peffVJKAsf3mqJFnkKSoQEUQDAQKN: { label: "[Stardust Team Foundation]", type: "dag-team" },
   DAG07znCvSyM2xhxPZECrGhVF6WVPMvFWe6Z6EWW: { label: "[Stardust Team Fdn 2]",     type: "dag-team" },

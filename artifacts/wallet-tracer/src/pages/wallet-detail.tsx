@@ -414,11 +414,15 @@ function xlmPassesFilter(tx: { tokenSymbol?: string | null; value: string }): bo
   return parseFloat(tx.value) >= minAmt;        // below threshold — drop
 }
 
+/** DAG-specific minimum: 1 DAG micro-payments are spam/reward dust — require ≥2 DAG. */
+const MIN_AMOUNT_DAG = 2;
+
 /**
  * Global spam / dust filter applied uniformly across ALL reports and ALL chains.
  * XLM: uses the per-asset allowlist (xlmPassesFilter).
  * BTC / ETH: minimum 0.001 native (small coins — even tiny BTC transfers are meaningful).
- * Everything else (XRP, DAG, HBAR, XDC, Polygon, BSC, …): minimum 1.0 native token.
+ * DAG: minimum 2.0 (1 DAG micro-payments from reward wallets are filtered out).
+ * Everything else (XRP, HBAR, XDC, Polygon, BSC, …): minimum 1.0 native token.
  * 0-value transactions (spam airdrops, farming, fee-only ops) are always dropped.
  */
 function passesSpamFilter(
@@ -428,7 +432,9 @@ function passesSpamFilter(
   if (reportChain === "xlm") return xlmPassesFilter(tx);
   const v = parseFloat(tx.value || "0");
   if (!isFinite(v) || v === 0) return false;
-  const min = (reportChain === "bitcoin" || reportChain === "ethereum") ? 0.001 : 1.0;
+  const min = reportChain === "bitcoin" || reportChain === "ethereum" ? 0.001
+            : reportChain === "dag" ? MIN_AMOUNT_DAG
+            : 1.0;
   return v >= min;
 }
 
@@ -558,7 +564,9 @@ export default function WalletDetail() {
   const [dirFilter, setDirFilter] = useState<DirFilter>("all");
 
   // ── Minimum amount filter — chain-specific default (BTC/ETH show small transfers) ──
-  const defaultMinAmount = ["bitcoin", "ethereum"].includes(chain) ? 0.001 : 1;
+  const defaultMinAmount = chain === "bitcoin" || chain === "ethereum" ? 0.001
+                         : chain === "dag" ? MIN_AMOUNT_DAG
+                         : 1;
   const [minAmount, setMinAmount] = useState(defaultMinAmount);
   const [minAmountInput, setMinAmountInput] = useState(String(defaultMinAmount));
 
@@ -1003,9 +1011,8 @@ export default function WalletDetail() {
       allTxs
         .filter((t) =>
           (t.direction === "in" ? t.from : t.to) === addr &&
-          (chain === "xlm"
-            ? xlmPassesFilter(t)
-            : commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
+          passesSpamFilter(t, commingleResult.chain) &&
+          (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
         )
         .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
         .slice(0, limit);
@@ -1015,9 +1022,8 @@ export default function WalletDetail() {
       // Primary: allTxs — user-loaded history, direction from target's perspective.
       const pool = allTxs.filter((t) =>
         (t.direction === "in" ? t.from : t.to) === addr &&
-        (chain === "xlm"
-          ? xlmPassesFilter(t)
-          : commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
+        passesSpamFilter(t, commingleResult.chain) &&
+        (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
       );
       const top = (dir: "in" | "out") =>
         pool.filter((t) => t.direction === dir)

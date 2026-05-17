@@ -2912,6 +2912,10 @@ export default function WalletDetail() {
             // mark visited but never expand from them and never accept as a
             // common node. dag-team, defi, and flagged are allowed through.
             if (!isPrivateWallet(cp)) continue;
+            // Ignore dust/reward transactions as path hops (e.g. 1 DAG distribution
+            // spam on DAG chain). Node is still marked visited above so it won't be
+            // re-queued, but it is excluded from the frontier and common-node check.
+            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
             newA.push(cp);
             if (parentB.has(cp)) {
               const pA = reconstructPath(parentA, cp);
@@ -2943,6 +2947,10 @@ export default function WalletDetail() {
             // mark visited but never expand from them and never accept as a
             // common node. dag-team, defi, and flagged are allowed through.
             if (!isPrivateWallet(cp)) continue;
+            // Ignore dust/reward transactions as path hops (e.g. 1 DAG distribution
+            // spam on DAG chain). Node is still marked visited above so it won't be
+            // re-queued, but it is excluded from the frontier and common-node check.
+            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
             newB.push(cp);
             if (parentA.has(cp)) {
               const pA = reconstructPath(parentA, cp);

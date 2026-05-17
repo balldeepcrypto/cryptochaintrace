@@ -2870,9 +2870,9 @@ export default function WalletDetail() {
     // genesis, flagged, defi, dag-team etc. are all treated as private wallets.
     const isPrivateWallet = (addr: string): boolean => {
       const info = KNOWN_LABELS[addr];
-      if (!info) return true; // unknown address = private
-      const type = info.type || "";
-      return !["exchange", "bridge", "hot", "custodial"].includes(type);
+      if (!info) return true; // unknown = private
+      const type = (info.type || "").toLowerCase();
+      return !["exchange", "bridge", "hot", "custodial", "official", "protocol", "base"].includes(type);
     };
 
     const reconstructPath = (
@@ -3263,8 +3263,8 @@ export default function WalletDetail() {
       const isPrivateWallet = (addr: string): boolean => {
         const info = KNOWN_LABELS[addr];
         if (!info) return true; // unknown = private
-        const type = info.type || "";
-        return !["exchange", "bridge", "hot", "custodial"].includes(type);
+        const type = (info.type || "").toLowerCase();
+        return !["exchange", "bridge", "hot", "custodial", "official", "protocol", "base"].includes(type);
       };
 
       // ── Tier 1: expand from root wallet ───────────────────────────────────────

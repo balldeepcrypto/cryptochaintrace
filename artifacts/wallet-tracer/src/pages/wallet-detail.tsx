@@ -3232,13 +3232,23 @@ export default function WalletDetail() {
     type ReachNode = { path: string[]; tier: number; txCount: number };
     type ReachMap = Map<string, ReachNode>;
 
-    const fetchConns = async (addr: string) => {
+    // Fetch individual transactions for a wallet — same approach as Connection Finder.
+    // Using /transactions instead of /connections finds counterparties that have only a
+    // few TXs (missed by the aggregated connections endpoint) and gives us TX objects
+    // directly so no separate hop-fetch step is needed.
+    const fetchTxs = async (addr: string): Promise<Tx[]> => {
       try {
-        const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/connections?chain=${chain}`);
-        if (!resp.ok) return { nodes: [] as Array<{ address: string }>, edges: [] as Array<{ from: string; to: string; transactionCount: number }> };
-        return resp.json() as Promise<{ nodes: Array<{ address: string }>; edges: Array<{ from: string; to: string; transactionCount: number }> }>;
-      } catch { return { nodes: [], edges: [] }; }
+        const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
+        if (!resp.ok) return [];
+        const data = await resp.json() as { transactions: Tx[] };
+        return (data.transactions ?? []).filter(t => parseFloat(t.value) > 0);
+      } catch { return []; }
     };
+
+    // Segment TXs accumulated during BFS — keyed "parentAddr::childAddr".
+    // Populated by buildReachMap; replaces the old separate hop-fetch phase.
+    // Used by the report generator for hop-by-hop TX details and exchange flow detection.
+    const segmentTxs: Record<string, Tx> = {};
 
     const buildReachMap = async (wallet: string, label: string): Promise<ReachMap> => {
       const reach: ReachMap = new Map();
@@ -3246,99 +3256,46 @@ export default function WalletDetail() {
       // Hard-excluded: never add to reach map, never expand from.
       const HARD_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
 
-      // Nodes that should appear in the reach map (for exchange-flow detection) but
-      // must NEVER be used as expansion seeds — prevents exchange hot wallets from
-      // injecting their thousands of counterparties as false "private" connections.
+      // Nodes that should appear in the reach map but must NEVER be used as expansion
+      // seeds — prevents exchange hot wallets from injecting thousands of false connections.
       const isExpandable = (addr: string): boolean => {
         if (HARD_EXCL.has(addr)) return false;
         const kn = KNOWN_LABELS[addr];
         if (!kn) return true;                     // unknown private wallet — expand
-        if (kn.type === "dag-team") return true;  // DAG official entity — expand (counts as private)
-        return false;                             // exchange / bridge / genesis — DO NOT expand
+        if (kn.type === "dag-team") return true;  // DAG official entity — expand
+        return false;                             // exchange / bridge / genesis — do not expand
       };
 
+      // ── Tier 1: expand from root wallet ───────────────────────────────────────
       setCommingleProgress(`${label}: tier 1…`);
-      const d1 = await fetchConns(wallet);
-      const tier1 = d1.nodes.filter((n) => n.address !== wallet && !HARD_EXCL.has(n.address)).slice(0, 12);
-      for (const n of tier1) {
-        const edge = d1.edges.find((e) => (e.from === wallet && e.to === n.address) || (e.to === wallet && e.from === n.address));
-        reach.set(n.address, { path: [wallet, n.address], tier: 1, txCount: edge?.transactionCount ?? 0 });
+      const rootTxs = await fetchTxs(wallet);
+      for (const tx of rootTxs) {
+        const cp = tx.direction === "in" ? tx.from : tx.to;
+        if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
+        // Skip dust/reward transactions — same filter as Connection Finder for DAG
+        if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+        reach.set(cp, { path: [wallet, cp], tier: 1, txCount: 1 });
+        segmentTxs[`${wallet}::${cp}`] = tx;
       }
 
-      setCommingleProgress(`${label}: tier 2…`);
-      // Only expand from private/dag-team tier-1 nodes — never from exchange/bridge/genesis.
-      const t2expand = tier1.filter((n) => isExpandable(n.address)).slice(0, 6);
-      const d2results = await Promise.all(t2expand.map((n) => fetchConns(n.address)));
-      for (let i = 0; i < t2expand.length; i++) {
-        const parent = t2expand[i];
-        for (const n of d2results[i].nodes.filter((x) => x.address !== parent.address && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 8)) {
-          if (!reach.has(n.address)) {
-            const edge = d2results[i].edges.find((e) => (e.from === parent.address && e.to === n.address) || (e.to === parent.address && e.from === n.address));
-            reach.set(n.address, { path: [wallet, parent.address, n.address], tier: 2, txCount: edge?.transactionCount ?? 0 });
-          }
-        }
-      }
-
-      setCommingleProgress(`${label}: tier 3…`);
-      // Only expand from private/dag-team tier-2 nodes.
-      const tier2nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 2 && isExpandable(addr)).slice(0, 4);
-      if (tier2nodes.length > 0) {
-        const d3results = await Promise.all(tier2nodes.map(([a]) => fetchConns(a)));
-        for (let i = 0; i < tier2nodes.length; i++) {
-          const [parentAddr, parentData] = tier2nodes[i];
-          for (const n of d3results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 6)) {
-            if (!reach.has(n.address)) {
-              const edge = d3results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
-              reach.set(n.address, { path: [...parentData.path, n.address], tier: 3, txCount: edge?.transactionCount ?? 0 });
-            }
-          }
-        }
-      }
-
-      setCommingleProgress(`${label}: tier 4…`);
-      // Only expand from private/dag-team tier-3 nodes.
-      const tier3nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 3 && isExpandable(addr)).slice(0, 3);
-      if (tier3nodes.length > 0) {
-        const d4results = await Promise.all(tier3nodes.map(([a]) => fetchConns(a)));
-        for (let i = 0; i < tier3nodes.length; i++) {
-          const [parentAddr, parentData] = tier3nodes[i];
-          for (const n of d4results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 5)) {
-            if (!reach.has(n.address)) {
-              const edge = d4results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
-              reach.set(n.address, { path: [...parentData.path, n.address], tier: 4, txCount: edge?.transactionCount ?? 0 });
-            }
-          }
-        }
-      }
-
-      setCommingleProgress(`${label}: tier 5…`);
-      // Only expand from private/dag-team tier-4 nodes.
-      const tier4nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 4 && isExpandable(addr)).slice(0, 2);
-      if (tier4nodes.length > 0) {
-        const d5results = await Promise.all(tier4nodes.map(([a]) => fetchConns(a)));
-        for (let i = 0; i < tier4nodes.length; i++) {
-          const [parentAddr, parentData] = tier4nodes[i];
-          for (const n of d5results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 4)) {
-            if (!reach.has(n.address)) {
-              const edge = d5results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
-              reach.set(n.address, { path: [...parentData.path, n.address], tier: 5, txCount: edge?.transactionCount ?? 0 });
-            }
-          }
-        }
-      }
-
-      setCommingleProgress(`${label}: tier 6…`);
-      // Only expand from private/dag-team tier-5 nodes.
-      const tier5nodes = Array.from(reach.entries()).filter(([addr, v]) => v.tier === 5 && isExpandable(addr)).slice(0, 2);
-      if (tier5nodes.length > 0) {
-        const d6results = await Promise.all(tier5nodes.map(([a]) => fetchConns(a)));
-        for (let i = 0; i < tier5nodes.length; i++) {
-          const [parentAddr, parentData] = tier5nodes[i];
-          for (const n of d6results[i].nodes.filter((x) => x.address !== parentAddr && x.address !== wallet && !HARD_EXCL.has(x.address)).slice(0, 3)) {
-            if (!reach.has(n.address)) {
-              const edge = d6results[i].edges.find((e) => (e.from === parentAddr && e.to === n.address) || (e.to === parentAddr && e.from === n.address));
-              reach.set(n.address, { path: [...parentData.path, n.address], tier: 6, txCount: edge?.transactionCount ?? 0 });
-            }
+      // ── Tiers 2–6: expand from previous tier's expandable private nodes ───────
+      // Frontier limits (how many nodes to expand from) per tier: 6, 4, 3, 2, 2
+      const tierLimits = [6, 4, 3, 2, 2];
+      for (let tier = 2; tier <= 6; tier++) {
+        setCommingleProgress(`${label}: tier ${tier}…`);
+        const prevNodes = Array.from(reach.entries())
+          .filter(([addr, v]) => v.tier === tier - 1 && isExpandable(addr))
+          .slice(0, tierLimits[tier - 2]);
+        if (prevNodes.length === 0) break;
+        const txResults = await Promise.all(prevNodes.map(([a]) => fetchTxs(a)));
+        for (let i = 0; i < prevNodes.length; i++) {
+          const [parentAddr, parentData] = prevNodes[i];
+          for (const tx of txResults[i]) {
+            const cp = tx.direction === "in" ? tx.from : tx.to;
+            if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
+            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+            reach.set(cp, { path: [...parentData.path, cp], tier, txCount: 1 });
+            segmentTxs[`${parentAddr}::${cp}`] = tx;
           }
         }
       }
@@ -3396,112 +3353,9 @@ export default function WalletDetail() {
         findings.filter((f) => f.tier === 6).length,
       ];
 
-      // ── Fetch best TX for each intermediate hop segment ────────────────────────
-      // Intermediate = path positions 1 .. length-2 (between target and shared node).
-      // Segments involving the target wallet itself are already in allTxs (bestInOut).
-      setCommingleProgress("Fetching intermediate hop TX details…");
-      const intermedWallets = new Set<string>();
-      for (const finding of findings) {
-        for (let i = 1; i < finding.targetPath.length - 1; i++) {
-          intermedWallets.add(finding.targetPath[i]);
-        }
-      }
-      const segmentTxs: Record<string, Tx | null> = {};
+      // Hop TX details are captured during BFS (segmentTxs above) — no separate fetch needed.
+      // hopFetchStats kept as empty object so the result shape stays compatible.
       const hopFetchStats: Record<string, { pages: number; txs: number; rateLimitEvents?: number; failReason?: string }> = {};
-      if (intermedWallets.size > 0) {
-        // Paginating hop fetch — up to 125 pages × 200 ops each (25 000 ops per hop wallet).
-        // Wallets are fetched SERIALLY (not parallel) to avoid saturating Stellar Horizon's
-        // 60 req/min limit. A 1 200 ms inter-page delay keeps us well under that cap.
-        // On HTTP 429 the page is retried after honoring the Retry-After header (min 2 000 ms).
-        const hopSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-        const fetchHopPages = async (
-          fromAddr: string,
-        ): Promise<{ pages: number; txs: number; rateLimitEvents?: number; failReason?: string }> => {
-          const trimmed = fromAddr.trim();
-          if (!trimmed) return { pages: 0, txs: 0, failReason: "empty address" };
-
-          let cursor: string | null = null;
-          let pagesUsed = 0;
-          let txsTotal = 0;
-          let rateLimitEvents = 0;
-          let failReason: string | undefined;
-
-          for (let p = 0; p < 125; p++) {
-            let resp: Response;
-            try {
-              const qs = new URLSearchParams({ chain, limit: "200" });
-              if (cursor) qs.set("cursor", cursor);
-              resp = await fetch(`/api/wallets/${encodeURIComponent(trimmed)}/transactions?${qs}`);
-            } catch (e) {
-              failReason = `network error on page ${p + 1}: ${e instanceof Error ? e.message : String(e)}`;
-              break;
-            }
-
-            // Rate-limited: wait the server-specified delay then retry the same page.
-            if (resp.status === 429) {
-              const retryHeader = resp.headers.get("Retry-After");
-              const waitMs = retryHeader ? Math.max(parseInt(retryHeader, 10) * 1000, 2000) : 2000;
-              rateLimitEvents++;
-              await hopSleep(waitMs);
-              p--; // retry same page number on next iteration
-              continue;
-            }
-
-            if (!resp.ok) {
-              let body = "";
-              try { body = await resp.text(); } catch { /* ignore */ }
-              failReason = `HTTP ${resp.status} on page ${p + 1}${body ? `: ${body.slice(0, 120)}` : ""}`;
-              break;
-            }
-
-            let data: { transactions?: Tx[]; nextCursor?: string | null };
-            try {
-              data = await resp.json() as { transactions?: Tx[]; nextCursor?: string | null };
-            } catch (e) {
-              failReason = `JSON parse error on page ${p + 1}: ${e instanceof Error ? e.message : String(e)}`;
-              break;
-            }
-
-            const pageTxs = data.transactions ?? [];
-            pagesUsed++;
-            txsTotal += pageTxs.length;
-
-            for (const tx of pageTxs) {
-              // NOTE: intentionally NO xlmPassesFilter here — segmentTxs must capture
-              // connecting transactions regardless of asset type (DEX tokens, path payments,
-              // non-allowlisted assets all count as real connections between wallets).
-              const counterparty = tx.direction === "in" ? tx.from : tx.to;
-              if (!counterparty) continue;
-              for (const key of [`${trimmed}::${counterparty}`, `${counterparty}::${trimmed}`]) {
-                const prev = segmentTxs[key];
-                if (!prev || parseFloat(tx.value) > parseFloat(prev.value ?? "0")) {
-                  segmentTxs[key] = tx;
-                }
-              }
-            }
-
-            cursor = data.nextCursor ?? null;
-            // Break before sleeping if there is no next page.
-            if (!cursor) break;
-            // 1 200 ms between pages — keeps requests well under Horizon's 60/min limit.
-            await hopSleep(1200);
-          }
-
-          return {
-            pages: pagesUsed,
-            txs: txsTotal,
-            ...(rateLimitEvents > 0 ? { rateLimitEvents } : {}),
-            ...(failReason ? { failReason } : {}),
-          };
-        };
-
-        // Serial wallet loop — one wallet at a time so all page requests share
-        // the same rate-limit budget instead of exhausting it in parallel.
-        for (const w of Array.from(intermedWallets).slice(0, 20)) {
-          hopFetchStats[w] = await fetchHopPages(w);
-        }
-      }
 
       // Fetch transactions for every cluster wallet and detect exchange flows directly.
       // KEY: scan RAW (unfiltered) txs so no asset/amount filter hides exchange outflows.

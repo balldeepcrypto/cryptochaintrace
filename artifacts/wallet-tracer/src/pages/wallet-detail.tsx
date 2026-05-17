@@ -2850,7 +2850,12 @@ export default function WalletDetail() {
     setTieResult(null);
 
     // Hard-excluded addresses: never added to reach map or accepted as common nodes.
-    const HARD_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
+    // DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz — noisy reward wallet
+    // DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B — Official Bridge / Base Wallet (bridge leak)
+    const HARD_EXCL = new Set([
+      "DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz",
+      "DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B",
+    ]);
 
     const fetchTxs = async (addr: string): Promise<Tx[]> => {
       try {

@@ -2872,7 +2872,7 @@ export default function WalletDetail() {
       const info = KNOWN_LABELS[addr];
       if (!info) return true; // unknown = private
       const type = (info.type || "").toLowerCase();
-      return !["exchange", "bridge", "hot", "custodial", "official", "protocol", "base"].includes(type);
+      return !["exchange", "bridge", "hot", "custodial"].includes(type);
     };
 
     const reconstructPath = (
@@ -3253,8 +3253,13 @@ export default function WalletDetail() {
     const buildReachMap = async (wallet: string, label: string): Promise<ReachMap> => {
       const reach: ReachMap = new Map();
 
-      // Hard-excluded: never add to reach map, never expand from.
-      const HARD_EXCL = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
+      // Hard-excluded: never add to reach map, never expand from, never shown as shared node.
+      // DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz — noisy reward wallet
+      // DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B — Official Bridge / Base Wallet (bridge leak)
+      const HARD_EXCL = new Set([
+        "DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz",
+        "DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B",
+      ]);
 
       // Private wallet filter — exact same logic as Connection Finder.
       // Only exchange/bridge/hot/custodial are non-private (excluded from expansion).

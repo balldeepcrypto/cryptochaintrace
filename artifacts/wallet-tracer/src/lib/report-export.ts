@@ -6,7 +6,7 @@ function escHtml(s: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function renderReportHtml(content: string): string {
+export function renderReportHtml(content: string): string {
   return content
     .split("\n")
     .map((line) => {
@@ -68,15 +68,29 @@ function renderReportHtml(content: string): string {
       if (line.includes(": trace ") && line.includes("separately"))
         return `<div class="hop-note-line">${esc}</div>`;
 
-      // ── Commingle report TX direction lines: ├─ [IN ]  From: ... → To: ... ──
+      // ── TX direction lines — all report formats ────────────────────────────
+      // Connection Finder / Path Trace: "  Direction : [IN ]" or "  Direction : [OUT]"
+      if (tr.startsWith("Direction") && line.includes("[IN ]"))
+        return `<div class="tx-in">${esc}</div>`;
+      if (tr.startsWith("Direction") && line.includes("[OUT]"))
+        return `<div class="tx-out">${esc}</div>`;
+      // Commingle / Trail / Investigative / Exchange Flows: "├─ [IN ]  From: ..."
       if (line.includes("[IN ]") && line.includes("From:"))
         return `<div class="tx-in">${esc}</div>`;
       if (line.includes("[OUT]") && line.includes("From:"))
         return `<div class="tx-out">${esc}</div>`;
 
-      // Commingle TX detail lines: Amount / TX hash / Date (indented below direction)
-      if ((line.includes("  Amount:") || line.includes("  TX    :") || line.includes("  Date  :")) &&
-          !line.includes("TX Count") && !line.includes("TX Count"))
+      // ── TX detail lines — all report formats ──────────────────────────────
+      // Covers every spacing variant used across Commingle, Trail, Investigative,
+      // Exchange Flows, Connection Finder, and Path Trace generators.
+      if (!line.includes("TX Count") && !line.includes("Wallet") && (
+          line.includes("  Amount:")     || line.includes("  Amount :") || line.includes("  Amount    :") ||
+          line.includes("  TX    :")     || line.includes("  TX     :") || line.includes("  TX Hash") ||
+          line.includes("  Date  :")     || line.includes("  Date   :") || line.includes("  Date      :") ||
+          line.includes("  From      :") || line.includes("  To        :") || line.includes("  To  :") ||
+          line.includes("  Tag    :")    || line.includes("  Memo   :") ||
+          line.includes("  Taint     :") || line.includes("  Origin Amount")
+        ))
         return `<div class="tx-detail">${esc}</div>`;
 
       // ── Legacy TX lines (trail reports, wallet detail reports) ──
@@ -114,7 +128,7 @@ function renderReportHtml(content: string): string {
     .join("");
 }
 
-const PDF_CSS = `
+export const PDF_CSS = `
   * { box-sizing: border-box; margin: 0; padding: 0; }
 
   @media print {

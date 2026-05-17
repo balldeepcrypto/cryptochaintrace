@@ -2814,12 +2814,13 @@ export default function WalletDetail() {
             parentA.set(cp, { parent: nodeA, tx });
             newA.push(cp);
             if (parentB.has(cp)) {
-              commonNodes.push({
-                address: cp,
-                pathFromA: reconstructPath(parentA, cp),
-                pathFromB: reconstructPath(parentB, cp),
-              });
-              if (commonNodes.length >= 5) break outer;
+              const pA = reconstructPath(parentA, cp);
+              const pB = reconstructPath(parentB, cp);
+              const minDepth = chain === "dag" ? 3 : 2;
+              if (pA.length >= minDepth && pB.length >= minDepth) {
+                commonNodes.push({ address: cp, pathFromA: pA, pathFromB: pB });
+                if (commonNodes.length >= 5) break outer;
+              }
             }
           }
         }
@@ -2839,12 +2840,13 @@ export default function WalletDetail() {
             parentB.set(cp, { parent: nodeB, tx });
             newB.push(cp);
             if (parentA.has(cp)) {
-              commonNodes.push({
-                address: cp,
-                pathFromA: reconstructPath(parentA, cp),
-                pathFromB: reconstructPath(parentB, cp),
-              });
-              if (commonNodes.length >= 5) break outer;
+              const pA = reconstructPath(parentA, cp);
+              const pB = reconstructPath(parentB, cp);
+              const minDepth = chain === "dag" ? 3 : 2;
+              if (pA.length >= minDepth && pB.length >= minDepth) {
+                commonNodes.push({ address: cp, pathFromA: pA, pathFromB: pB });
+                if (commonNodes.length >= 5) break outer;
+              }
             }
           }
         }

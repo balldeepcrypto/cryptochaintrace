@@ -820,68 +820,12 @@ export default function WalletDetail() {
       }
     }
 
-    // Exchange / Custodial / Bridge / Official flows:
-    // Union of (a) selected wallets that are known exchanges, and
-    // (b) any known exchange address that appears in allTxs but wasn't explicitly selected.
-    const selectedExchSet = new Set(addrs.filter(a =>
-      ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[a]?.type ?? "")
-    ));
-    const txOnlyExchAddrs = Object.keys(KNOWN_LABELS).filter(a => {
-      const t = KNOWN_LABELS[a]?.type;
-      if (!t || !["exchange", "bridge", "genesis"].includes(t)) return false;
-      if (selectedExchSet.has(a)) return false;
-      return allTxs.some(tx => (tx.direction === "in" ? tx.from : tx.to) === a);
-    });
-    const allExchangeAddrs = [...Array.from(selectedExchSet), ...txOnlyExchAddrs];
-    lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
+    lines.push(sep("NOTE — EXCHANGE / BRIDGE / OFFICIAL FLOWS"));
     lines.push("");
-    if (allExchangeAddrs.length === 0) {
-      lines.push("  No exchange, bridge, or official flows detected in loaded history.");
-      lines.push("");
-    } else {
-      for (const addr of allExchangeAddrs) {
-        const known     = KNOWN_LABELS[addr]!;
-        const isBridge  = known.type === "bridge";
-        const isGenesis = known.type === "genesis";
-        const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
-        const txsForAddr = allTxs.filter(t => (t.direction === "in" ? t.from : t.to) === addr);
-        const totalTxs  = txsForAddr.length;
-        const totalVal  = txsForAddr.reduce((s, t) => s + parseFloat(t.value || "0"), 0);
-        const memos     = txsForAddr.filter(t => t.memo).map(t => t.memo!).slice(0, 5);
-        const destTags  = txsForAddr.filter(t => t.destinationTag != null).map(t => t.destinationTag!).slice(0, 5);
-        const bestIn    = txsForAddr.filter(t => t.direction === "in").sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
-        const bestOut   = txsForAddr.filter(t => t.direction === "out").sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
-        const bestTxs   = [bestIn, bestOut].filter(Boolean) as Tx[];
-        const addrShort = addr.length > 16 ? `${addr.slice(0, 8)}…${addr.slice(-4)}` : addr;
-        lines.push(`  ├── ${addr}`);
-        lines.push(`  │       ${flowTag}  ${known.label.toUpperCase()}`);
-        lines.push(`  │       Txs in loaded history: ${totalTxs}  |  Total: ${fmtVal(totalVal)} ${chainUp}`);
-        if (destTags.length > 0) lines.push(`  │       ↳ Destination Tags (subpoena): ${destTags.join("  |  ")}`);
-        if (memos.length > 0)    lines.push(`  │       ↳ Memos         (subpoena): ${memos.join("  |  ")}`);
-        if (bestTxs.length > 0) {
-          lines.push(`  │       Most Significant Transactions (target ↔ ${addrShort}):`);
-          bestTxs.forEach(t => {
-            const n   = parseFloat(t.value);
-            const abs = Math.abs(n);
-            const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
-            const sign = t.direction === "in" ? "+" : "−";
-            const amt  = `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })} ${chainUp}`;
-            const dir  = t.direction === "in" ? "[IN ]" : "[OUT]";
-            const from = t.direction === "in" ? (t.from ?? "—") : address;
-            const to   = t.direction === "in" ? address : (t.to ?? "—");
-            lines.push(`  │         ${dir}  From: ${from}`);
-            lines.push(`  │                →  To: ${to}`);
-            lines.push(`  │               TX    : ${t.hash ?? "—"}`);
-            lines.push(`  │               Amount: ${amt}`);
-            if (t.timestamp) lines.push(`  │               Date  : ${t.timestamp.replace("T", " ").slice(0, 16)} UTC`);
-            if (t.memo)      lines.push(`  │               Memo  : ${t.memo}`);
-          });
-        } else {
-          lines.push(`  │       Transactions: none in loaded history`);
-        }
-        lines.push("");
-      }
-    }
+    lines.push("  Exchange, bridge, and official flows are excluded from this report.");
+    lines.push("  Use the EXCHANGE FLOWS REPORT (button on the wallet page) to view");
+    lines.push("  all transactions touching known exchange and custodial addresses.");
+    lines.push("");
 
     return auditAndSign(lines, {
       reportType: "Wallet Profile Report",
@@ -966,27 +910,12 @@ export default function WalletDetail() {
       lines.push("");
     }
 
-    lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
+    lines.push(sep("NOTE — EXCHANGE / BRIDGE / OFFICIAL FLOWS"));
     lines.push("");
-    const exchNodes = trailEntries.filter((e) =>
-      ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[e.address]?.type ?? "")
-    );
-    if (exchNodes.length === 0) {
-      lines.push("  No exchange, bridge, or official flows detected in this trace.");
-      lines.push("");
-    } else {
-      for (const e of exchNodes) {
-        const known = KNOWN_LABELS[e.address]!;
-        const flowTag = known.type === "bridge" ? "◄ BRIDGE FLOW"
-          : known.type === "genesis" ? "◄ OFFICIAL WALLET"
-          : "◄ EXCHANGE FLOW";
-        lines.push(`  ├── ${e.address}`);
-        lines.push(`  │       ${flowTag}  ${known.label.toUpperCase()}`);
-        lines.push(`  │       Depth: ${e.depth}   Txs: ${e.txCount}   USD: $${e.totalValueUsd.toLocaleString()}`);
-        if (e.parentAddress) lines.push(`  │       Reached via: ${e.parentAddress}`);
-      }
-      lines.push("");
-    }
+    lines.push("  Exchange, bridge, and official flows are excluded from this report.");
+    lines.push("  Use the EXCHANGE FLOWS REPORT (button on the wallet page) to view");
+    lines.push("  all transactions touching known exchange and custodial addresses.");
+    lines.push("");
 
     return auditAndSign(lines, {
       reportType: "Trail Trace Report",
@@ -1242,22 +1171,7 @@ export default function WalletDetail() {
           if (priv.length > maxShow) lines.push(`  … and ${priv.length - maxShow} more private connections`);
           lines.push("");
         }
-        if (exch.length > 0) {
-          lines.push(`  ── EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS (${exch.length}) — See consolidated section below ──`);
-          lines.push("");
-          exch.slice(0, maxShow).forEach((f, i) => {
-            const isBridge  = f.knownInfo?.type === "bridge";
-            const isGenesis = f.knownInfo?.type === "genesis";
-            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  [${(f.knownInfo?.label ?? "UNKNOWN").toUpperCase()}] ${flowTag}`);
-            lines.push(`       Shared with   : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
-            lines.push(`       Path          : ${fmtPath(f.targetPath)}`);
-            lines.push("");
-          });
-          if (exch.length > maxShow) lines.push(`  … and ${exch.length - maxShow} more exchange connections`);
-          lines.push("");
-        }
-        if (priv.length === 0 && exch.length === 0) {
+        if (priv.length === 0) {
           lines.push("  None found.");
           lines.push("");
         }
@@ -1277,8 +1191,7 @@ export default function WalletDetail() {
 
       // ── Tier 3–4 ────────────────────────────────────────────────────────────
       const t34priv = [...t3priv.slice(0, 10), ...t4priv.slice(0, 10)];
-      const t34exch = [...t3exch.slice(0, 10), ...t4exch.slice(0, 10)];
-      if (t34priv.length > 0 || t34exch.length > 0) {
+      if (t34priv.length > 0) {
         lines.push(sep("TIER 3–4 — DEEP SHARED NODES"));
         lines.push("");
         if (t34priv.length > 0) {
@@ -1325,195 +1238,14 @@ export default function WalletDetail() {
           if (t3priv.length + t4priv.length > 20) lines.push(`  … and ${t3priv.length + t4priv.length - 20} more`);
           lines.push("");
         }
-        if (t34exch.length > 0) {
-          lines.push(`  ── EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS (${t3exch.length + t4exch.length}) — See consolidated section below ──`);
-          lines.push("");
-          t34exch.forEach((f, i) => {
-            const isBridge  = f.knownInfo?.type === "bridge";
-            const isGenesis = f.knownInfo?.type === "genesis";
-            const flowTag   = isBridge ? "◄ BRIDGE FLOW" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})  [${(f.knownInfo?.label ?? "UNKNOWN").toUpperCase()}] ${flowTag}`);
-            lines.push(`       Path        : ${fmtPath(f.targetPath)}`);
-            lines.push(`       Shared with : ${f.comparisons.map((c) => c.wallet).join("\n                    ")}`);
-            lines.push("");
-          });
-          if (t3exch.length + t4exch.length > 20) lines.push(`  … and ${t3exch.length + t4exch.length - 20} more`);
-          lines.push("");
-        }
       }
 
-      // ── Consolidated Exchange / Custodial / Bridge / Official flows ────────────
-      const allExchFindings = [...t1exch, ...t2exch, ...t3exch, ...t4exch];
-
-      // Helper: "Kraken XLM" → [KRAKEN], "Uphold XLM Cold" → [UPHOLD] (COLD WALLET)
-      const toBracketLabel = (label: string): string => {
-        // Map the root exchange name to a clean display label shown in brackets.
-        // Add new entries here as additional exchange addresses are added to KNOWN_LABELS.
-        const DISPLAY_NAMES: Record<string, string> = {
-          Coinbase:   "Coinbase Deposits",
-          Kraken:     "Kraken",
-          Binance:    "Binance",
-          "Binance.US": "Binance.US",
-          MEXC:       "MEXC",
-          Bybit:      "Bybit",
-          Bitfinex:   "Bitfinex",
-          Bitstamp:   "Bitstamp",
-          OKX:        "OKX",
-          Huobi:      "Huobi",
-          Uphold:     "Uphold",
-          ChangeNOW:  "ChangeNOW",
-          // Bridge / infrastructure
-          Stellar:    "Stellar Foundation",
-          // Additional exchanges — extend this list as needed
-        };
-        const firstWord = label.split(/\s+/)[0];
-        const display   = DISPLAY_NAMES[firstWord] ?? firstWord;
-        if (label.toUpperCase().includes("COLD")) return `[${display}] (COLD WALLET)`;
-        return `[${display}]`;
-      };
-      const walletLabel = (w: string) => {
-        if (w === commingleResult.targetWallet) return "Wallet 1";
-        const idx = commingleResult.comparisonWallets.indexOf(w);
-        return idx >= 0 ? `Wallet ${idx + 2}` : `${w.slice(0, 10)}…`;
-      };
-
-      // ── Primary source: first-class exchFlows stored during the scan ─────────
-      // These were detected by scanning raw (unfiltered) transactions from every
-      // cluster wallet, checking both t.from and t.to against KNOWN_LABELS.
-      // The scan paginates through multiple Horizon pages, but allTxs (fully
-      // loaded user history) may reach even further back — merge both sources.
-      const storedExchFlows = commingleResult.exchFlows ?? [];
-
-      // ── Safety net: scan allTxs for the target wallet ─────────────────────
-      // allTxs = everything the user has loaded (may be ALL history if they
-      // hit Load All History). Supplements storedExchFlows for exchanges whose
-      // transactions are older than the 5-page scan window.
-      {
-        const EXCH_TYPES_RPT = new Set(["exchange", "bridge", "genesis"]);
-        const storedKeys = new Set(storedExchFlows.map(f => `${f.exchAddr}::${f.sourceWallet}`));
-        const supplementMap = new Map<string, typeof storedExchFlows[number]>();
-        for (const tx of allTxs) {
-          if (tx.direction === "self") continue;
-          const w = commingleResult.targetWallet;
-          const candidates = [tx.from, tx.to].filter((a): a is string => !!a && a !== w);
-          for (const candidate of candidates) {
-            const info = KNOWN_LABELS[candidate];
-            if (!info || !EXCH_TYPES_RPT.has(info.type)) continue;
-            const key = `${candidate}::${w}`;
-            if (storedKeys.has(key)) {
-              // Already in storedExchFlows — add tx if not already present
-              const existing = storedExchFlows.find(f => f.exchAddr === candidate && f.sourceWallet === w);
-              if (existing && !existing.txs.find(t => t.hash === tx.hash)) {
-                existing.txs.push(tx);
-              }
-            } else {
-              // New exchange found via allTxs — add to supplement
-              if (!supplementMap.has(key)) {
-                supplementMap.set(key, { exchAddr: candidate, exchLabel: info.label, exchType: info.type, sourceWallet: w, txs: [] });
-              }
-              const sup = supplementMap.get(key)!;
-              if (!sup.txs.find(t => t.hash === tx.hash)) sup.txs.push(tx);
-            }
-          }
-        }
-        storedExchFlows.push(...supplementMap.values());
-      }
-
-      // ── Supplementary: allExchFindings not already covered by storedExchFlows ─
-      // Shared commingling nodes (found via the connections graph) that may not
-      // appear in the recent transaction window used for storedExchFlows.
-      const storedAddrs = new Set(storedExchFlows.map(f => f.exchAddr));
-      const extraSharedExch = allExchFindings.filter(f => !storedAddrs.has(f.sharedAddress));
-
-      lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
+      lines.push(sep("NOTE — EXCHANGE / BRIDGE / OFFICIAL FLOWS"));
       lines.push("");
-
-      if (storedExchFlows.length === 0 && extraSharedExch.length === 0) {
-        lines.push("  No exchange, bridge, or official flows detected.");
-        lines.push("  The selected wallets do not route funds through any known exchange,");
-        lines.push("  custodian, bridge, or official protocol node in scanned history.");
-        lines.push("");
-      } else {
-        const totalFlows = storedExchFlows.length + extraSharedExch.length;
-        lines.push(`  ${totalFlows} exchange/bridge/custodial flow(s) detected across ${commingleResult.comparisonWallets.length + 1} wallets.`);
-        lines.push("  For exchanges with KYC/AML: subpoena identity records using TX hash + memo.");
-        lines.push("");
-
-        // ① Flows detected from raw transaction history (primary, exhaustive)
-        if (storedExchFlows.length > 0) {
-          storedExchFlows.forEach(({ exchAddr, exchLabel, exchType, sourceWallet, txs: flowTxs }, i) => {
-            const isBridge  = exchType === "bridge";
-            const isGenesis = exchType === "genesis";
-            const flowTag   = isBridge ? "◄ BRIDGE" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE";
-            const typeDesc  = isBridge
-              ? "Bridge / Infrastructure"
-              : isGenesis
-              ? "Official / Foundation Wallet"
-              : "Exchange / Custodian — identity obtainable via legal process (subpoena / court order)";
-            const wLabel    = walletLabel(sourceWallet);
-            // Detect whether sourceWallet is an intermediate hop (not in the cluster).
-            // Hop wallets are fetched by fetchHopPages and stored in segmentTxs, so they
-            // may not be the target or any comparison wallet.
-            const isHopWallet = sourceWallet !== commingleResult.targetWallet
-              && !commingleResult.comparisonWallets.includes(sourceWallet);
-            const isShared  = allExchFindings.some(f => f.sharedAddress === exchAddr);
-            const bracketLbl = toBracketLabel(exchLabel);
-            const addrShort  = exchAddr.length > 16 ? `${exchAddr.slice(0, 8)}…${exchAddr.slice(-4)}` : exchAddr;
-            const srcShort   = isHopWallet && sourceWallet.length > 16
-              ? `${sourceWallet.slice(0, 8)}…${sourceWallet.slice(-4)}`
-              : sourceWallet;
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${exchAddr}`);
-            lines.push(`       Label   : ${bracketLbl}  ${flowTag}`);
-            lines.push(`       Type    : ${typeDesc}`);
-            if (isHopWallet) {
-              lines.push(`       Source  : ${srcShort}  (intermediate / hop wallet — connected to exchange via trail)`);
-            } else {
-              lines.push(`       Source  : ${wLabel}${isShared ? "  (also shared node with comparison wallets)" : "  (direct — not a shared commingling node)"}`);
-            }
-            const sorted = [...flowTxs].sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
-            const show   = sorted.slice(0, 10);
-            const extra  = sorted.length - show.length;
-            if (show.length > 0) {
-              const srcDisplay = isHopWallet ? srcShort : wLabel;
-              lines.push(`       Transactions (${srcDisplay} ↔ ${bracketLbl} / ${addrShort}) — ${sorted.length} total${extra > 0 ? `, top 10 by amount` : ""}:`);
-              emitTxs(show, "       ");
-              if (extra > 0) lines.push(`         … and ${extra} more transaction(s) to/from this exchange`);
-            } else {
-              lines.push(`       Transactions: none in scanned window (detected via connection graph)`);
-            }
-            lines.push("");
-          });
-        }
-
-        // ② Extra shared exchange nodes from the commingling graph
-        if (extraSharedExch.length > 0) {
-          lines.push("  ADDITIONAL SHARED EXCHANGE NODES (commingling graph — not in recent tx window):");
-          lines.push("");
-          extraSharedExch.slice(0, 20).forEach((f, i) => {
-            const isBridge  = f.knownInfo?.type === "bridge";
-            const isGenesis = f.knownInfo?.type === "genesis";
-            const flowTag   = isBridge ? "◄ BRIDGE" : isGenesis ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE";
-            const bracketLbl = toBracketLabel(f.knownInfo?.label ?? f.sharedAddress);
-            const addrShort  = f.sharedAddress.length > 16 ? `${f.sharedAddress.slice(0, 8)}…${f.sharedAddress.slice(-4)}` : f.sharedAddress;
-            lines.push(`  ${String(storedExchFlows.length + i + 1).padStart(2, "0")}. ${f.sharedAddress}`);
-            lines.push(`       Label   : ${bracketLbl}  ${flowTag}`);
-            lines.push(`       Tier    : ${f.tier}  (depth ${f.tier} from Wallet 1)`);
-            lines.push(`       Path    : ${fmtPath(f.targetPath)}`);
-            lines.push(`       Shared  : ${f.comparisons.map((c) => c.wallet).join(", ")}`);
-            const txAddr  = f.targetPath[1] ?? f.sharedAddress;
-            const txs     = bestInOut(txAddr);
-            if (txs.length > 0) {
-              lines.push(`       Most Significant Transactions (Wallet 1 ↔ ${addrShort}):`);
-              emitTxs(txs, "       ");
-            } else {
-              lines.push(`       Transactions: none in loaded history`);
-            }
-            lines.push("");
-          });
-          if (extraSharedExch.length > 20) lines.push(`  … and ${extraSharedExch.length - 20} more`);
-          lines.push("");
-        }
-      }
+      lines.push("  Exchange, bridge, and official flows are excluded from this report.");
+      lines.push("  Use the dedicated EXCHANGE FLOWS REPORT to view all transactions");
+      lines.push("  touching known exchange, bridge, and official protocol addresses.");
+      lines.push("");
     }
 
     lines.push(sep("ASSESSMENT"));
@@ -1643,7 +1375,7 @@ export default function WalletDetail() {
     lines.push(sep("PRIVATE CONVERGENCE POINTS"));
     lines.push(`  Private addresses reached within 4 hops of 2+ tracked wallets.`);
     lines.push(`  These are the core investigative findings — potential funneling / mixing hubs.`);
-    lines.push(`  Exchanges, bridges, and official nodes are EXCLUDED (see next section).`);
+    lines.push(`  Exchanges, bridges, and official nodes are EXCLUDED from this report.`);
     lines.push("");
     if (privPoints.length === 0) {
       lines.push("  No private convergence detected at depth 1–4.");
@@ -1657,64 +1389,48 @@ export default function WalletDetail() {
         const teamNote = kn?.type === "dag-team" ? "  ◄ OFFICIAL DAG ENTITY — labeled, not anonymous" : "";
         lines.push(`  ${String(i + 1).padStart(2, "0")}. ${entry.address}${label}${teamNote}`);
         lines.push(`       Shared by : ${entry.appearances.length}/${multiResult.trackedWallets.length} tracked wallets`);
-        entry.appearances.forEach((app) => {
-          const idx    = multiResult.trackedWallets.indexOf(app.wallet);
-          const wLabel = idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`;
-          let depthDesc: string;
-          if (app.depth === 1) {
-            depthDesc = "depth-1 (direct counterparty)";
-          } else if (app.pathChain.length > 2) {
-            const hops = app.pathChain.slice(1, -1)
-              .map(a => a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-4)}` : a)
-              .join(" → ");
-            depthDesc = `depth-${app.depth} via ${hops}`;
+        lines.push("");
+        entry.appearances.forEach((app, appIdx) => {
+          const idx      = multiResult.trackedWallets.indexOf(app.wallet);
+          const wLabel   = idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`;
+          const isLast   = appIdx === entry.appearances.length - 1;
+          const conn     = isLast ? "└──" : "├──";
+          const childPfx = isLast ? "    " : "│   ";
+          // Full trail: pathChain[0] = tracked wallet … pathChain[last] = shared node
+          const trail: string[] = app.pathChain.length > 1
+            ? app.pathChain.map((a, si) => {
+                const kl  = KNOWN_LABELS[a];
+                const lbl = kl ? `  [${kl.label}]` : "";
+                if (si === 0) return `${a}${lbl}  ← ${wLabel}`;
+                if (si === app.pathChain.length - 1) return `${a}${lbl}  ← SHARED NODE`;
+                return `${a}${lbl}`;
+              })
+            : [`${app.wallet}  ← ${wLabel}`, `${entry.address}  ← SHARED NODE`];
+          lines.push(`       ${conn} ${wLabel}  |  ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  depth-${app.depth}${app.totalValueUsd > 0 ? `  |  $${app.totalValueUsd.toFixed(2)} USD` : ""}`);
+          lines.push(`       ${childPfx}  Trail:`);
+          trail.forEach((step, si) => {
+            if (si === 0) {
+              lines.push(`       ${childPfx}    ${step}`);
+            } else {
+              lines.push(`       ${childPfx}    ↓  Hop ${si}`);
+              lines.push(`       ${childPfx}    ${step}`);
+            }
+          });
+          // Best TX: use first hop in the path (closest connection point)
+          const hopAddr  = app.pathChain.length > 1 ? app.pathChain[1] : entry.address;
+          const hopShort = hopAddr.length > 16 ? `${hopAddr.slice(0, 8)}…${hopAddr.slice(-4)}` : hopAddr;
+          const bestTxs  = bestInOut2(hopAddr);
+          if (bestTxs.length > 0) {
+            lines.push(`       ${childPfx}  Best TX  (${wLabel} ↔ ${hopShort}):`);
+            emitTxBlock(bestTxs, `       ${childPfx}  `);
           } else {
-            depthDesc = `depth-${app.depth} via ${app.via ?? "?"}`;
+            lines.push(`       ${childPfx}  Best TX  : no loaded history for this hop`);
           }
-          lines.push(`       ├── ${wLabel}: ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  ${depthDesc}`);
-          if (app.totalValueUsd > 0) lines.push(`       │     Value : $${app.totalValueUsd.toFixed(2)} USD`);
+          lines.push("");
         });
-        const primaryTxs = bestInOut2(entry.address);
-        if (primaryTxs.length > 0) {
-          const addrShort = entry.address.length > 16 ? `${entry.address.slice(0, 8)}…${entry.address.slice(-4)}` : entry.address;
-          lines.push(`       └── PRIMARY TX DETAILS  (target ↔ ${addrShort}):`);
-          emitTxBlock(primaryTxs, "       ");
-        }
         lines.push("");
       });
       if (privPoints.length > 30) lines.push(`  … and ${privPoints.length - 30} more private convergence points`);
-      lines.push("");
-    }
-
-    // ── § 2 — Exchange / Custodial / Bridge / Official Flows ──────────────────
-    lines.push(sep("EXCHANGE / CUSTODIAL / BRIDGE / OFFICIAL FLOWS"));
-    lines.push(`  Known exchange/bridge/protocol addresses shared across 2+ tracked wallets.`);
-    lines.push(`  These appear in the outflow graph of multiple wallets — possible shared on-ramp/off-ramp.`);
-    lines.push("");
-    if (exchPoints.length === 0) {
-      lines.push("  No shared exchange/custodial flows detected.");
-      lines.push("  Tracked wallets do not route through the same known exchange within depth-4.");
-      lines.push("");
-    } else {
-      exchPoints.slice(0, 20).forEach((entry, i) => {
-        const kn      = KNOWN_LABELS[entry.address];
-        const flowTag = kn?.type === "bridge" ? "◄ BRIDGE FLOW" : kn?.type === "genesis" ? "◄ OFFICIAL WALLET" : "◄ EXCHANGE FLOW";
-        lines.push(`  ${String(i + 1).padStart(2, "0")}. ${entry.address}`);
-        lines.push(`       Label   : ${(kn?.label ?? "UNKNOWN").toUpperCase()}  ${flowTag}`);
-        lines.push(`       Shared  : ${entry.appearances.length}/${multiResult.trackedWallets.length} wallets`);
-        entry.appearances.forEach((app) => {
-          const idx    = multiResult.trackedWallets.indexOf(app.wallet);
-          const wLabel = idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`;
-          lines.push(`       ├── ${wLabel}: ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  depth-${app.depth}`);
-          if (app.totalValueUsd > 0) lines.push(`       │     Value : $${app.totalValueUsd.toFixed(2)} USD`);
-        });
-        const primaryTxs = bestInOut2(entry.address);
-        if (primaryTxs.length > 0) {
-          lines.push(`       └── PRIMARY TX DETAILS:`);
-          emitTxBlock(primaryTxs, "       ");
-        }
-        lines.push("");
-      });
       lines.push("");
     }
 
@@ -5091,7 +4807,6 @@ export default function WalletDetail() {
                 const allUniq2 = [...multiResult.sharedCounterparties, ...multiResult.commonEndpoints]
                   .filter(s => { if (seen2.has(s.address)) return false; seen2.add(s.address); return !EXCL2.has(s.address); });
                 const privNodes = allUniq2.filter(s => !isExch2(s.address));
-                const exchNodes = allUniq2.filter(s => isExch2(s.address));
                 return (
                   <>
                     {/* ── § 1 Private Convergence Points ── */}
@@ -5132,18 +4847,29 @@ export default function WalletDetail() {
                                     {entry.appearances.length}/{multiResult.trackedWallets.length} wallets
                                   </span>
                                 </div>
-                                <div className="flex flex-wrap gap-2">
+                                <div className="space-y-1.5 mt-1">
                                   {entry.appearances.map((app) => {
-                                    const idx = multiResult.trackedWallets.indexOf(app.wallet);
-                                    const c   = WALLET_COLORS[idx % WALLET_COLORS.length];
+                                    const idx      = multiResult.trackedWallets.indexOf(app.wallet);
+                                    const c        = WALLET_COLORS[idx % WALLET_COLORS.length];
+                                    const wLabel   = idx === 0 ? "PRIMARY" : `W${idx + 1}`;
+                                    const trailStr = app.pathChain.length > 1
+                                      ? app.pathChain.map(a => a.length > 14 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a).join(" → ")
+                                      : `${app.wallet.length > 14 ? `${app.wallet.slice(0, 6)}…${app.wallet.slice(-4)}` : app.wallet} → ${entry.address.length > 14 ? `${entry.address.slice(0, 6)}…${entry.address.slice(-4)}` : entry.address}`;
                                     return (
-                                      <div key={app.wallet} className={`flex items-center gap-1.5 ${c.bg} border ${c.border} rounded px-2 py-1 text-[10px] font-mono`}>
-                                        <div className={`w-1.5 h-1.5 rounded-full ${c.dot} shrink-0`} />
-                                        <span className={`${c.text} font-bold`}>{idx === 0 ? "PRIMARY" : `W${idx + 1}`}</span>
-                                        <span className="text-muted-foreground/60">·</span>
-                                        <span className="text-foreground font-bold">{app.txCount} tx</span>
-                                        <span className={`text-[10px] font-mono ${app.depth === 1 ? "text-yellow-400/80" : "text-muted-foreground/60"}`}>d{app.depth}</span>
-                                        {app.totalValueUsd > 0 && <span className="text-muted-foreground">${app.totalValueUsd.toFixed(0)}</span>}
+                                      <div key={app.wallet} className={`rounded px-2 py-1.5 border ${c.border} ${c.bg} text-[10px] font-mono`}>
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                          <div className={`w-1.5 h-1.5 rounded-full ${c.dot} shrink-0`} />
+                                          <span className={`${c.text} font-bold shrink-0`}>{wLabel}</span>
+                                          <span className="text-muted-foreground/60">·</span>
+                                          <span className="text-foreground font-bold">{app.txCount} tx</span>
+                                          <span className={`${app.depth === 1 ? "text-yellow-400/80" : "text-muted-foreground/60"}`}>d{app.depth}</span>
+                                          {app.totalValueUsd > 0 && <span className="text-muted-foreground/70">${app.totalValueUsd.toFixed(0)}</span>}
+                                        </div>
+                                        {app.pathChain.length > 1 && (
+                                          <div className="mt-0.5 text-muted-foreground/50 text-[9px] truncate" title={trailStr}>
+                                            {trailStr}
+                                          </div>
+                                        )}
                                       </div>
                                     );
                                   })}
@@ -5155,58 +4881,6 @@ export default function WalletDetail() {
                       )}
                     </div>
 
-                    {/* ── § 2 Exchange / Custodial Flows ── */}
-                    <div className="p-5">
-                      <div className="flex items-center gap-2 mb-3 flex-wrap">
-                        <span className="w-1.5 h-4 bg-blue-500 rounded-sm shrink-0" />
-                        <span className="text-[10px] font-mono text-blue-300 font-bold tracking-widest uppercase">§ 2 — Exchange / Custodial Flows</span>
-                        <span className="text-[10px] font-mono text-muted-foreground">known exchanges/bridges shared by 2+ wallets</span>
-                        <span className={`ml-auto text-[10px] font-mono px-2 py-0.5 rounded border font-bold ${exchNodes.length > 0 ? "bg-blue-950/60 text-blue-200 border-blue-400/40" : "text-muted-foreground border-border/30"}`}>
-                          {exchNodes.length} found
-                        </span>
-                      </div>
-                      {exchNodes.length === 0 ? (
-                        <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">
-                          No shared exchange/custodial flows. Wallets may use different exchanges or routes.
-                        </p>
-                      ) : (
-                        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                          {exchNodes.slice(0, 20).map((entry, i) => {
-                            const kn = entry.knownInfo ?? KNOWN_LABELS[entry.address];
-                            return (
-                              <div key={entry.address} className="bg-blue-950/15 border border-blue-500/20 rounded-lg p-3">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] font-mono bg-blue-900/70 text-blue-200 px-1.5 py-0.5 rounded border border-blue-400/40 font-bold shrink-0">
-                                    #{i + 1}
-                                  </span>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: entry.address, x: r.left, y: r.bottom + 4 }); }}
-                                    className="text-primary/80 hover:text-primary text-xs font-mono hover:underline transition-colors"
-                                  >
-                                    {entry.address.length > 24 ? `${entry.address.slice(0, 12)}…${entry.address.slice(-6)}` : entry.address}
-                                  </button>
-                                  {kn && getKnownBadge(kn, "md")}
-                                  {savedWallets.has(entry.address) && <Bookmark className="w-2.5 h-2.5 text-yellow-400 fill-yellow-400 shrink-0" />}
-                                  <div className="ml-auto flex gap-1.5 flex-wrap">
-                                    {entry.appearances.map((app) => {
-                                      const idx = multiResult.trackedWallets.indexOf(app.wallet);
-                                      const c   = WALLET_COLORS[idx % WALLET_COLORS.length];
-                                      return (
-                                        <div key={app.wallet} className={`flex items-center gap-1 ${c.bg} border ${c.border} rounded px-1.5 py-0.5 text-[10px] font-mono`}>
-                                          <div className={`w-1 h-1 rounded-full ${c.dot}`} />
-                                          <span className={`${c.text} font-bold`}>{idx === 0 ? "P" : `W${idx + 1}`}</span>
-                                          <span className="text-muted-foreground/60">d{app.depth}</span>
-                                        </div>
-                                      );
-                                    })}
-                                  </div>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
-                    </div>
                   </>
                 );
               })()}
@@ -5299,8 +4973,6 @@ export default function WalletDetail() {
                 {commingleResult && (
                   <span className="text-xs font-mono text-muted-foreground">
                     <span className="text-green-400/80">{commingleResult.findings.filter((f) => f.knownInfo?.type !== "exchange").length} private</span>
-                    {" + "}
-                    <span className="text-blue-400/70">{commingleResult.findings.filter((f) => f.knownInfo?.type === "exchange").length} exchange</span>
                     {" · "}{commingleResult.totalScanned} scanned
                   </span>
                 )}
@@ -5404,7 +5076,7 @@ export default function WalletDetail() {
                 <div className="flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-3 flex-wrap">
                     <div className="text-xs font-mono text-amber-300/80">
-                      Scan complete · <span className="text-green-400/80">{commingleResult.findings.filter((f) => f.knownInfo?.type !== "exchange").length} private</span> + <span className="text-blue-400/70">{commingleResult.findings.filter((f) => f.knownInfo?.type === "exchange").length} exchange</span> · {commingleResult.totalScanned} addresses mapped
+                      Scan complete · <span className="text-green-400/80">{commingleResult.findings.filter((f) => f.knownInfo?.type !== "exchange").length} private</span> · {commingleResult.totalScanned} addresses mapped
                     </div>
                     {commingleResult.tieredCounts[0] > 0 && (
                       <span className="flex items-center gap-1 text-[10px] font-mono text-red-300 bg-red-950/50 border border-red-500/30 px-2 py-0.5 rounded font-bold">
@@ -5500,7 +5172,6 @@ export default function WalletDetail() {
                   </p>
                 ) : (() => {
                   const t1priv = commingleResult.findings.filter((f) => f.tier === 1 && f.knownInfo?.type !== "exchange");
-                  const t1exch = commingleResult.findings.filter((f) => f.tier === 1 && f.knownInfo?.type === "exchange");
                   return (
                     <div className="space-y-3">
                       {t1priv.length > 0 && (
@@ -5538,34 +5209,6 @@ export default function WalletDetail() {
                           </div>
                         </div>
                       )}
-                      {t1exch.length > 0 && (
-                        <div className={t1priv.length > 0 ? "pt-2 border-t border-border/30" : ""}>
-                          <div className="text-[10px] font-mono text-blue-400/70 font-bold tracking-wider mb-2 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-blue-400/70 shrink-0" />
-                            Exchange / Custodial Flows ({t1exch.length}) — On-ramp / Off-ramp
-                          </div>
-                          <div className="space-y-1.5">
-                            {t1exch.map((f, i) => (
-                              <div key={f.sharedAddress} className="bg-blue-950/15 border border-blue-500/20 rounded-lg p-3">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] font-mono bg-blue-900/60 text-blue-200 px-1.5 py-0.5 rounded border border-blue-400/40 font-bold shrink-0">#{i + 1}</span>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
-                                    className="text-blue-300/70 hover:text-blue-200 text-xs font-mono hover:underline transition-colors"
-                                  >
-                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
-                                  </button>
-                                  {f.knownInfo && getKnownBadge(f.knownInfo, "md")}
-                                  <span className="ml-auto text-[10px] font-mono text-blue-400/60 font-bold shrink-0">Exchange Flow</span>
-                                </div>
-                                <div className="text-[10px] font-mono text-muted-foreground/50 pl-1 mt-1">
-                                  <span className="text-muted-foreground/40">Path: </span>{f.targetPath.map((a) => a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a).join(" → ")}
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })()}
@@ -5585,7 +5228,6 @@ export default function WalletDetail() {
                   <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier-2 shared nodes.</p>
                 ) : (() => {
                   const t2priv = commingleResult.findings.filter((f) => f.tier === 2 && f.knownInfo?.type !== "exchange");
-                  const t2exch = commingleResult.findings.filter((f) => f.tier === 2 && f.knownInfo?.type === "exchange");
                   return (
                     <div className="space-y-3">
                       {t2priv.length > 0 && (
@@ -5619,34 +5261,6 @@ export default function WalletDetail() {
                           </div>
                         </div>
                       )}
-                      {t2exch.length > 0 && (
-                        <div className={t2priv.length > 0 ? "pt-2 border-t border-border/30" : ""}>
-                          <div className="text-[10px] font-mono text-blue-400/60 font-bold tracking-wider mb-1.5 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-blue-400/60 shrink-0" />
-                            Exchange / Custodial ({t2exch.length}) — On-ramp / Off-ramp
-                          </div>
-                          <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                            {t2exch.slice(0, 20).map((f, i) => (
-                              <div key={f.sharedAddress} className="bg-blue-950/10 border border-blue-500/15 rounded-lg p-2.5">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] font-mono text-blue-400/50 shrink-0">#{i + 1}</span>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
-                                    className="text-blue-300/60 hover:text-blue-200 text-xs font-mono hover:underline transition-colors"
-                                  >
-                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
-                                  </button>
-                                  {f.knownInfo && getKnownBadge(f.knownInfo)}
-                                  <span className="ml-auto text-[10px] font-mono text-blue-400/50 shrink-0">Exchange</span>
-                                </div>
-                              </div>
-                            ))}
-                            {t2exch.length > 20 && (
-                              <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {t2exch.length - 20} more</p>
-                            )}
-                          </div>
-                        </div>
-                      )}
                     </div>
                   );
                 })()}
@@ -5666,7 +5280,6 @@ export default function WalletDetail() {
                   <p className="text-[11px] font-mono text-muted-foreground/40 pl-3 leading-relaxed">No tier 3–4 shared nodes detected.</p>
                 ) : (() => {
                   const t34priv = commingleResult.findings.filter((f) => f.tier >= 3 && f.knownInfo?.type !== "exchange");
-                  const t34exch = commingleResult.findings.filter((f) => f.tier >= 3 && f.knownInfo?.type === "exchange");
                   return (
                     <div className="space-y-3">
                       {t34priv.length > 0 && (
@@ -5694,34 +5307,6 @@ export default function WalletDetail() {
                             ))}
                             {t34priv.length > 20 && (
                               <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {t34priv.length - 20} more — see full report</p>
-                            )}
-                          </div>
-                        </div>
-                      )}
-                      {t34exch.length > 0 && (
-                        <div className={t34priv.length > 0 ? "pt-2 border-t border-border/30" : ""}>
-                          <div className="text-[10px] font-mono text-blue-400/50 font-bold tracking-wider mb-1.5 flex items-center gap-1.5">
-                            <span className="w-2 h-2 rounded-full bg-blue-400/50 shrink-0" />
-                            Exchange / Custodial ({t34exch.length})
-                          </div>
-                          <div className="space-y-1.5 max-h-36 overflow-y-auto pr-1">
-                            {t34exch.slice(0, 15).map((f, i) => (
-                              <div key={f.sharedAddress} className="bg-blue-950/8 border border-blue-500/10 rounded-lg p-2.5">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[10px] font-mono text-blue-400/40 shrink-0">#{i + 1}</span>
-                                  <span className="text-[10px] font-mono text-blue-400/50 border border-blue-500/15 px-1 py-0.5 rounded shrink-0">T{f.tier}</span>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); setActiveMenu({ addr: f.sharedAddress, x: r.left, y: r.bottom + 4 }); }}
-                                    className="text-blue-300/50 hover:text-blue-200 text-xs font-mono hover:underline transition-colors"
-                                  >
-                                    {f.sharedAddress.length > 20 ? `${f.sharedAddress.slice(0, 10)}…${f.sharedAddress.slice(-6)}` : f.sharedAddress}
-                                  </button>
-                                  {f.knownInfo && getKnownBadge(f.knownInfo)}
-                                </div>
-                              </div>
-                            ))}
-                            {t34exch.length > 15 && (
-                              <p className="text-[10px] font-mono text-muted-foreground/50 pl-3">… and {t34exch.length - 15} more</p>
                             )}
                           </div>
                         </div>

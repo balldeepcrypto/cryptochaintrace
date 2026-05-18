@@ -1799,7 +1799,7 @@ export default function WalletDetail() {
     };
 
     const isExchType = (t?: string) =>
-      t === "exchange" || t === "bridge" || t === "genesis" || t === "hot" || t === "custodial";
+      t === "exchange" || t === "bridge" || t === "genesis";
     const EXCH_DISPLAY: Record<string, string> = {
       Coinbase: "Coinbase Deposits", Kraken: "Kraken", Binance: "Binance",
       "Binance.US": "Binance.US", MEXC: "MEXC", Bybit: "Bybit", Bitfinex: "Bitfinex",
@@ -1867,18 +1867,33 @@ export default function WalletDetail() {
         lines.push(`  Type     : ${typeTag} · ${displayLbl}`);
 
         const allTxsForExch = Array.from(wMap.values()).flat();
-        const totalIn  = allTxsForExch.filter(t => t.direction === "in").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-        const totalOut = allTxsForExch.filter(t => t.direction === "out").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-        lines.push(`  Combined : ${allTxsForExch.length} tx${allTxsForExch.length !== 1 ? "s" : ""} across ${wMap.size} wallet${wMap.size !== 1 ? "s" : ""}   IN: +${totalIn.toFixed(4)}   OUT: −${totalOut.toFixed(4)} ${chainUp}`);
+        const inTxsAll  = allTxsForExch.filter(t => t.direction === "in");
+        const outTxsAll = allTxsForExch.filter(t => t.direction === "out");
+        const totalIn   = inTxsAll.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const totalOut  = outTxsAll.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const totalInUsd  = inTxsAll.reduce((s, t) => s + (t.valueUsd > 0 ? t.valueUsd : 0), 0);
+        const totalOutUsd = outTxsAll.reduce((s, t) => s + (t.valueUsd > 0 ? t.valueUsd : 0), 0);
+        const usdInStr  = totalInUsd  > 0 ? `  [$${totalInUsd.toLocaleString("en-US",  { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]` : "";
+        const usdOutStr = totalOutUsd > 0 ? `  [$${totalOutUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]` : "";
+        lines.push(`  Combined : ${allTxsForExch.length} tx${allTxsForExch.length !== 1 ? "s" : ""} across ${wMap.size} wallet${wMap.size !== 1 ? "s" : ""}`);
+        lines.push(`  IN  TXs  : ${inTxsAll.length}   Total Received : +${totalIn.toFixed(4)} ${chainUp}${usdInStr}`);
+        lines.push(`  OUT TXs  : ${outTxsAll.length}   Total Sent     : −${totalOut.toFixed(4)} ${chainUp}${usdOutStr}`);
 
         // Per-wallet stats line
         walletList.forEach((w, wi) => {
           const wtxs = wMap.get(w);
           if (!wtxs || wtxs.length === 0) return;
-          const wIn  = wtxs.filter(t => t.direction === "in").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-          const wOut = wtxs.filter(t => t.direction === "out").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const wInT  = wtxs.filter(t => t.direction === "in");
+          const wOutT = wtxs.filter(t => t.direction === "out");
+          const wIn   = wInT.reduce((s, t)  => s + (parseFloat(t.value) || 0), 0);
+          const wOut  = wOutT.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const wInUsd  = wInT.reduce((s, t)  => s + (t.valueUsd > 0 ? t.valueUsd : 0), 0);
+          const wOutUsd = wOutT.reduce((s, t) => s + (t.valueUsd > 0 ? t.valueUsd : 0), 0);
+          const wUsdStr = (wInUsd > 0 || wOutUsd > 0)
+            ? `   USD: IN $${wInUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} / OUT $${wOutUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+            : "";
           const wLabel = wi === 0 ? "PRIMARY" : `W${wi + 1}`;
-          lines.push(`  ${wLabel.padEnd(7)}: ${wtxs.length} tx${wtxs.length !== 1 ? "s" : ""}   IN: +${wIn.toFixed(4)}   OUT: −${wOut.toFixed(4)} ${chainUp}`);
+          lines.push(`  ${wLabel.padEnd(7)}: IN ${wInT.length} tx (+${wIn.toFixed(4)})   OUT ${wOutT.length} tx (−${wOut.toFixed(4)}) ${chainUp}${wUsdStr}`);
         });
         lines.push(``);
 
@@ -3840,10 +3855,10 @@ export default function WalletDetail() {
                     await Promise.all(
                       multiWallets.map(async (w) => {
                         try {
-                          const resp = await fetch(`/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=50`);
+                          const resp = await fetch(`/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=200`);
                           if (!resp.ok) { walletTxMap.set(w, []); return; }
                           const data = await resp.json() as { transactions: Tx[] };
-                          walletTxMap.set(w, (data.transactions ?? []).filter(t => parseFloat(t.value) > 0));
+                          walletTxMap.set(w, data.transactions ?? []);
                         } catch { walletTxMap.set(w, []); }
                       })
                     );

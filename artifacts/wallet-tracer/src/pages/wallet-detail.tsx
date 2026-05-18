@@ -312,6 +312,11 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   // Bridge / Infrastructure (DAG only)
   DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Official Bridge / Base Wallet", type: "official" },
   DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz: { label: "DAG Reward / Team Wallet",      type: "genesis"  },
+  // Constellation Foundation Wallets
+  DAG7R5sZCC87GB2C7oxsLE7EvSkPZyCGtPEqd25n: { label: "Constellation Foundation / Legacy Distribution Wallet", type: "official" },
+  DAG8MKzFQkgwxzAMAV1CPyNRwx3stvLTgkKu4QJW: { label: "Constellation Foundation / Reward Distribution Wallet", type: "official" },
+  DAG72buDf2jPtHXBZqb2gdcGaWx9JkPYTX1YmSSS: { label: "Constellation Foundation / Core Wallet",                type: "official" },
+  DAG6stSuh8C46VVHvFybyCjdC4UPu42xXq2Si9Z3: { label: "Constellation Distribution Wallet (Node Rewards)",      type: "official" },
   // DAG Exchanges
   DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf: { label: "MEXC DAG",        type: "exchange" },
   DAG4TETUwraLYX1mYdC8ymUxxWsoNZPffUpDf4Ar: { label: "Gate.io DAG",      type: "exchange" },

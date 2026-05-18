@@ -1439,7 +1439,10 @@ export default function WalletDetail() {
       return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
     };
     const lines: string[] = [];
-    const MULTI_EXCL  = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
+    const MULTI_EXCL  = new Set([
+      "DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz",
+      "DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B",
+    ]);
     const isExchType  = (addr: string) => ["exchange", "bridge", "hot", "custodial"].includes(KNOWN_LABELS[addr]?.type ?? "");
 
     const emitTxBlock = (txs: Tx[], pad: string) => {
@@ -2982,220 +2985,119 @@ export default function WalletDetail() {
     setMultiError(null);
     setMultiResult(null);
 
-    const fetchConns = async (addr: string) => {
+    // Hard-excluded — identical to Connection Finder and Commingle Check.
+    const HARD_EXCL = new Set([
+      "DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz",
+      "DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B",
+    ]);
+
+    const fetchTxs = async (addr: string): Promise<Tx[]> => {
       try {
-        const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/connections?chain=${chain}`);
-        if (!resp.ok) return { nodes: [] as Array<{ address: string }>, edges: [] as Array<{ from: string; to: string; totalValueUsd: number; transactionCount: number }> };
-        return resp.json() as Promise<{ nodes: Array<{ address: string }>; edges: Array<{ from: string; to: string; totalValueUsd: number; transactionCount: number }> }>;
-      } catch { return { nodes: [], edges: [] }; }
+        const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
+        if (!resp.ok) return [];
+        const data = await resp.json() as { transactions: Tx[] };
+        return (data.transactions ?? []).filter(t => parseFloat(t.value) > 0);
+      } catch { return []; }
     };
 
-    const EXCL_M = new Set(["DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz"]);
-    const isExchM = (a: string) => ["exchange", "bridge", "genesis"].includes(KNOWN_LABELS[a]?.type ?? "");
+    const isPrivateWallet = (addr: string): boolean => {
+      const info = KNOWN_LABELS[addr];
+      if (!info) return true;
+      const type = (info.type || "").toLowerCase();
+      return !["exchange", "bridge", "hot", "custodial"].includes(type);
+    };
+
+    // Full 6-tier reach map — identical logic to Connection Finder and Commingle Check.
+    const buildReach = async (
+      wallet: string,
+      label: string,
+    ): Promise<Map<string, { path: string[]; tier: number }>> => {
+      const reach = new Map<string, { path: string[]; tier: number }>();
+
+      setMultiProgress(`${label}: tier 1…`);
+      const rootTxs = await fetchTxs(wallet);
+      for (const tx of rootTxs) {
+        const cp = tx.direction === "in" ? tx.from : tx.to;
+        if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
+        if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+        reach.set(cp, { path: [wallet, cp], tier: 1 });
+      }
+
+      const tierLimits = [6, 4, 3, 2, 2];
+      for (let tier = 2; tier <= 6; tier++) {
+        setMultiProgress(`${label}: tier ${tier}…`);
+        const prevNodes = Array.from(reach.entries())
+          .filter(([addr, v]) => v.tier === tier - 1 && isPrivateWallet(addr))
+          .slice(0, tierLimits[tier - 2]);
+        if (prevNodes.length === 0) break;
+        const txResults = await Promise.all(prevNodes.map(([a]) => fetchTxs(a)));
+        for (let i = 0; i < prevNodes.length; i++) {
+          const [, parentData] = prevNodes[i];
+          for (const tx of txResults[i]) {
+            const cp = tx.direction === "in" ? tx.from : tx.to;
+            if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
+            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+            reach.set(cp, { path: [...parentData.path, cp], tier });
+          }
+        }
+      }
+
+      return reach;
+    };
 
     try {
-      // Build per-wallet map: address → MultiGraphNode (depth 1–6)
-      const walletNodeMaps: Array<{ wallet: string; nodes: Map<string, MultiGraphNode> }> = [];
-
-      for (const wallet of allWallets) {
-        setMultiProgress(`Depth-1: ${wallet.slice(0, 10)}…`);
-        const nodeMap = new Map<string, MultiGraphNode>();
-
-        // ── Depth 1 ─────────────────────────────────────────────────────────
-        const d1 = await fetchConns(wallet);
-        const d1peers = d1.nodes
-          .filter((n) => n.address !== wallet && !allWallets.includes(n.address))
-          .slice(0, 12);
-        for (const peer of d1peers) {
-          const edge = d1.edges.find((e) =>
-            (e.from === wallet && e.to === peer.address) || (e.to === wallet && e.from === peer.address));
-          nodeMap.set(peer.address, {
-            address: peer.address, depth: 1, via: wallet,
-            pathChain: [wallet, peer.address],
-            txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
-          });
-        }
-
-        // ── Depth 2: top 6 depth-1 peers in parallel ─────────────────────────
-        const top6d1 = d1peers.slice(0, 6);
-        const d2results = await Promise.all(top6d1.map((p) => fetchConns(p.address)));
-        const d2privateNodes: MultiGraphNode[] = [];
-        for (let pi = 0; pi < top6d1.length; pi++) {
-          const peer = top6d1[pi];
-          setMultiProgress(`Depth-2: ${peer.address.slice(0, 10)}…`);
-          const d2 = d2results[pi];
-          const d2peers = d2.nodes
-            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
-            .slice(0, 8);
-          for (const node of d2peers) {
-            if (!nodeMap.has(node.address)) {
-              const edge = d2.edges.find((e) =>
-                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
-              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
-              const gn: MultiGraphNode = {
-                address: node.address, depth: 2, via: peer.address,
-                pathChain: [...parentChain, node.address],
-                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
-              };
-              nodeMap.set(node.address, gn);
-              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d2privateNodes.push(gn);
-            }
-          }
-        }
-
-        // ── Depth 3: top 3 private depth-2 nodes ─────────────────────────────
-        const top3d2 = [...d2privateNodes]
-          .sort((a, b) => b.txCount - a.txCount)
-          .slice(0, 3);
-        const d3results = await Promise.all(top3d2.map((p) => fetchConns(p.address)));
-        const d3privateNodes: MultiGraphNode[] = [];
-        for (let pi = 0; pi < top3d2.length; pi++) {
-          const peer = top3d2[pi];
-          setMultiProgress(`Depth-3: ${peer.address.slice(0, 10)}…`);
-          const d3 = d3results[pi];
-          const d3peers = d3.nodes
-            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
-            .slice(0, 6);
-          for (const node of d3peers) {
-            if (!nodeMap.has(node.address)) {
-              const edge = d3.edges.find((e) =>
-                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
-              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
-              const gn: MultiGraphNode = {
-                address: node.address, depth: 3, via: peer.address,
-                pathChain: [...parentChain, node.address],
-                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
-              };
-              nodeMap.set(node.address, gn);
-              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d3privateNodes.push(gn);
-            }
-          }
-        }
-
-        // ── Depth 4: top 2 private depth-3 nodes ─────────────────────────────
-        const top2d3 = [...d3privateNodes]
-          .sort((a, b) => b.txCount - a.txCount)
-          .slice(0, 2);
-        const d4results = await Promise.all(top2d3.map((p) => fetchConns(p.address)));
-        const d4privateNodes: MultiGraphNode[] = [];
-        for (let pi = 0; pi < top2d3.length; pi++) {
-          const peer = top2d3[pi];
-          setMultiProgress(`Depth-4: ${peer.address.slice(0, 10)}…`);
-          const d4 = d4results[pi];
-          const d4peers = d4.nodes
-            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
-            .slice(0, 5);
-          for (const node of d4peers) {
-            if (!nodeMap.has(node.address)) {
-              const edge = d4.edges.find((e) =>
-                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
-              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
-              const gn: MultiGraphNode = {
-                address: node.address, depth: 4, via: peer.address,
-                pathChain: [...parentChain, node.address],
-                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
-              };
-              nodeMap.set(node.address, gn);
-              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d4privateNodes.push(gn);
-            }
-          }
-        }
-
-        // ── Depth 5: top 2 private depth-4 nodes ─────────────────────────────
-        const top2d4 = [...d4privateNodes]
-          .sort((a, b) => b.txCount - a.txCount)
-          .slice(0, 2);
-        const d5results = await Promise.all(top2d4.map((p) => fetchConns(p.address)));
-        const d5privateNodes: MultiGraphNode[] = [];
-        for (let pi = 0; pi < top2d4.length; pi++) {
-          const peer = top2d4[pi];
-          setMultiProgress(`Depth-5: ${peer.address.slice(0, 10)}…`);
-          const d5 = d5results[pi];
-          const d5peers = d5.nodes
-            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
-            .slice(0, 4);
-          for (const node of d5peers) {
-            if (!nodeMap.has(node.address)) {
-              const edge = d5.edges.find((e) =>
-                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
-              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
-              const gn: MultiGraphNode = {
-                address: node.address, depth: 5, via: peer.address,
-                pathChain: [...parentChain, node.address],
-                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
-              };
-              nodeMap.set(node.address, gn);
-              if (!isExchM(node.address) && !EXCL_M.has(node.address)) d5privateNodes.push(gn);
-            }
-          }
-        }
-
-        // ── Depth 6: top 1 private depth-5 node ──────────────────────────────
-        const top1d5 = [...d5privateNodes]
-          .sort((a, b) => b.txCount - a.txCount)
-          .slice(0, 1);
-        const d6results = await Promise.all(top1d5.map((p) => fetchConns(p.address)));
-        for (let pi = 0; pi < top1d5.length; pi++) {
-          const peer = top1d5[pi];
-          setMultiProgress(`Depth-6: ${peer.address.slice(0, 10)}…`);
-          const d6 = d6results[pi];
-          const d6peers = d6.nodes
-            .filter((n) => n.address !== peer.address && !allWallets.includes(n.address))
-            .slice(0, 3);
-          for (const node of d6peers) {
-            if (!nodeMap.has(node.address)) {
-              const edge = d6.edges.find((e) =>
-                (e.from === peer.address && e.to === node.address) || (e.to === peer.address && e.from === node.address));
-              const parentChain = nodeMap.get(peer.address)?.pathChain ?? [peer.address];
-              nodeMap.set(node.address, {
-                address: node.address, depth: 6, via: peer.address,
-                pathChain: [...parentChain, node.address],
-                txCount: edge?.transactionCount ?? 0, totalValueUsd: edge?.totalValueUsd ?? 0,
-              });
-            }
-          }
-        }
-
-        walletNodeMaps.push({ wallet, nodes: nodeMap });
+      // Build reach maps for every tracked wallet sequentially.
+      const reachMaps: Array<{ wallet: string; reach: Map<string, { path: string[]; tier: number }> }> = [];
+      for (let i = 0; i < allWallets.length; i++) {
+        const wallet = allWallets[i];
+        const label  = i === 0 ? "Primary" : `Wallet ${i + 1}`;
+        reachMaps.push({ wallet, reach: await buildReach(wallet, label) });
       }
 
-      // Aggregate: address → all wallet appearances
+      // Aggregate: address → appearances across all wallets.
       const addressMap = new Map<string, MultiSharedEntry>();
-      for (const { wallet, nodes } of walletNodeMaps) {
-        for (const [addr, node] of nodes) {
+      for (const { wallet, reach } of reachMaps) {
+        for (const [addr, entry] of reach) {
           if (!addressMap.has(addr)) {
-            addressMap.set(addr, { address: addr, knownInfo: KNOWN_LABELS[addr], appearances: [] });
+            addressMap.set(addr, {
+              address: addr,
+              knownInfo: KNOWN_LABELS[addr] as MultiSharedEntry["knownInfo"],
+              appearances: [],
+            });
           }
           addressMap.get(addr)!.appearances.push({
-            wallet, depth: node.depth, txCount: node.txCount,
-            totalValueUsd: node.totalValueUsd, via: node.via, pathChain: node.pathChain,
+            wallet,
+            depth: entry.tier,
+            txCount: 1,
+            totalValueUsd: 0,
+            via: entry.path.length > 1 ? entry.path[entry.path.length - 2] : wallet,
+            pathChain: entry.path,
           });
         }
       }
 
-      const shared = Array.from(addressMap.values()).filter((e) => e.appearances.length >= 2);
+      // Keep only addresses seen by 2+ wallets that pass the private wallet filter.
+      const shared = Array.from(addressMap.values())
+        .filter(e => e.appearances.length >= 2 && isPrivateWallet(e.address));
 
       const sharedCounterparties = shared
-        .filter((s) => s.appearances.some((a) => a.depth === 1))
-        .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0));
+        .filter(s => s.appearances.some(a => a.depth === 1))
+        .sort((a, b) => b.appearances.length - a.appearances.length);
 
       const commonEndpoints = shared
-        .filter((s) => s.appearances.every((a) => a.depth >= 2))
-        .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0));
+        .filter(s => s.appearances.every(a => a.depth >= 2))
+        .sort((a, b) => b.appearances.length - a.appearances.length);
 
-      const patterns = shared
-        .sort((a, b) => b.appearances.length - a.appearances.length || b.appearances.reduce((s, x) => s + x.txCount, 0) - a.appearances.reduce((s, x) => s + x.txCount, 0))
+      const patterns = [...shared]
+        .sort((a, b) => b.appearances.length - a.appearances.length)
         .slice(0, 20)
         .map((s, i) => ({
           id: i + 1,
           sharedAddr: s.address,
           knownInfo: s.knownInfo,
-          totalTxCount: s.appearances.reduce((sum, a) => sum + a.txCount, 0),
-          totalValueUsd: s.appearances.reduce((sum, a) => sum + a.totalValueUsd, 0),
-          paths: s.appearances.map((a) => ({
-            wallet: a.wallet,
-            path: a.pathChain.length > 0 ? a.pathChain : [a.wallet, a.via ?? "?", s.address],
-          })),
+          totalTxCount: s.appearances.length,
+          totalValueUsd: 0,
+          paths: s.appearances.map(a => ({ wallet: a.wallet, path: a.pathChain })),
         }));
 
       setMultiResult({ trackedWallets: allWallets, sharedCounterparties, commonEndpoints, patterns });

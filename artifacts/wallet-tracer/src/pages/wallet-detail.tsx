@@ -1429,7 +1429,7 @@ export default function WalletDetail() {
   }
 
   // ── Intersection / Funnel Analysis Report ─────────────────────────────────────
-  function generateMultiReport(): string {
+  function generateMultiReport(walletTxMap: Map<string, Tx[]>): string {
     if (!multiResult) return "";
     const now     = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
@@ -1487,16 +1487,24 @@ export default function WalletDetail() {
     };
 
     // Pair-specific hop TX lookup with two-stage fallback.
-    // Stage 1 — pair match with address normalization (EVM addresses are lowercased
-    //   in pathChain but may be checksummed in allTxs from/to fields; t.to may be null).
-    // Stage 2 — direction-based counterparty lookup for `ta` (catches any TX in allTxs
-    //   where ta is the direct counterparty of the focused wallet, regardless of from/to format).
+    // Searches the COMBINED TX history of ALL tracked wallets (walletTxMap) so that
+    // hops involving W2/W3/… are found even when allTxs only has the focused wallet's records.
+    // Stage 1 — normalized pair match (EVM checksummed vs lowercase, null to/from safe).
+    // Stage 2 — direction-based counterparty fallback for chains with partial address fields.
     const findHopTx = (fa: string, ta: string): Tx | null => {
       const evm  = ["ethereum", "polygon", "bsc"].includes(chain);
       const norm = (a: string | null | undefined) => evm ? (a ?? "").toLowerCase() : (a ?? "");
       const faN  = norm(fa);
       const taN  = norm(ta);
-      const clean = allTxs.filter(t => passesSpamFilter(t, chain));
+      // Flatten all wallets' TX histories into one deduplicated pool
+      const seen  = new Set<string>();
+      const combined: Tx[] = [];
+      for (const txs of walletTxMap.values()) {
+        for (const t of txs) {
+          if (!seen.has(t.hash)) { seen.add(t.hash); combined.push(t); }
+        }
+      }
+      const clean = combined.filter(t => passesSpamFilter(t, chain));
       // Stage 1: normalized pair match — most precise
       const pair = clean.filter(t =>
         (norm(t.from) === faN && norm(t.to) === taN) ||
@@ -1504,8 +1512,7 @@ export default function WalletDetail() {
       );
       if (pair.length > 0)
         return pair.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
-      // Stage 2: direction-based counterparty lookup for ta — handles null to/from
-      //   and chains where only one side of the address pair is populated
+      // Stage 2: direction-based counterparty lookup for ta
       const cpty = clean.filter(t => norm(t.direction === "in" ? t.from : t.to) === taN);
       if (cpty.length > 0)
         return cpty.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
@@ -2495,6 +2502,7 @@ export default function WalletDetail() {
   const [multiProgress, setMultiProgress] = useState("");
   const [multiError, setMultiError] = useState<string | null>(null);
   const [multiExchLoading, setMultiExchLoading] = useState(false);
+  const [multiIntersectLoading, setMultiIntersectLoading] = useState(false);
 
   // ── Commingle Check ──
   const [showComminglePanel, setShowComminglePanel] = useState(false);
@@ -5311,17 +5319,36 @@ export default function WalletDetail() {
                   Analysis complete · {multiResult.trackedWallets.length} wallets · {multiResult.sharedCounterparties.length + multiResult.commonEndpoints.length} shared nodes found
                 </div>
                 <button
-                  onClick={() => {
-                    const rpt = generateMultiReport();
-                    const title = `Intersection / Funnel Analysis — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
-                    setReportContent(rpt);
-                    setReportTitle(title);
-                    setReportJsonData({ reportType: "multi-intersection", generatedAt: new Date().toISOString(), chain, trackedWallets: multiResult.trackedWallets, reportText: rpt });
-                    setShowReportModal(true);
+                  disabled={multiIntersectLoading}
+                  onClick={async () => {
+                    setMultiIntersectLoading(true);
+                    try {
+                      const allWallets = multiResult.trackedWallets;
+                      const walletTxMap = new Map<string, Tx[]>();
+                      // Primary wallet uses already-loaded allTxs
+                      walletTxMap.set(allWallets[0], allTxs);
+                      // Fetch TXs for each additional wallet in parallel
+                      await Promise.all(
+                        allWallets.slice(1).map(async (w) => {
+                          try {
+                            const resp = await fetch(`/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=200`);
+                            walletTxMap.set(w, resp.ok ? ((await resp.json() as { transactions: Tx[] }).transactions ?? []) : []);
+                          } catch { walletTxMap.set(w, []); }
+                        })
+                      );
+                      const rpt = generateMultiReport(walletTxMap);
+                      const title = `Intersection / Funnel Analysis — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
+                      setReportContent(rpt);
+                      setReportTitle(title);
+                      setReportJsonData({ reportType: "multi-intersection", generatedAt: new Date().toISOString(), chain, trackedWallets: multiResult.trackedWallets, reportText: rpt });
+                      setShowReportModal(true);
+                    } finally {
+                      setMultiIntersectLoading(false);
+                    }
                   }}
-                  className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-violet-600 hover:bg-violet-500 border border-violet-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
+                  className="flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-violet-600 hover:bg-violet-500 border border-violet-500/50 rounded px-3 py-1.5 transition-colors shrink-0 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  <FileText className="w-3.5 h-3.5" /> GENERATE INTERSECTION REPORT
+                  <FileText className="w-3.5 h-3.5" /> {multiIntersectLoading ? "Fetching…" : "GENERATE INTERSECTION REPORT"}
                 </button>
               </div>
 

@@ -1486,6 +1486,20 @@ export default function WalletDetail() {
       return [top("in"), top("out")].filter(Boolean) as Tx[];
     };
 
+    // Pair-specific hop TX lookup: find the highest-value spam-filtered TX that
+    // went directly between fa and ta (either direction).  More precise than
+    // bestSingle() which finds any TX that touched a single address.
+    const findHopTx = (fa: string, ta: string): Tx | null => {
+      const matches = allTxs.filter(t =>
+        passesSpamFilter(t, chain) && (
+          (t.from === fa && t.to === ta) ||
+          (t.from === ta && t.to === fa)
+        )
+      );
+      if (matches.length === 0) return null;
+      return matches.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+    };
+
     // Deduplicated shared entries (sharedCounterparties + commonEndpoints)
     const seenM    = new Set<string>();
     const allUniq  = [...multiResult.sharedCounterparties, ...multiResult.commonEndpoints]
@@ -1561,22 +1575,24 @@ export default function WalletDetail() {
             lines.push(`       ${conn} ${wLabel}  |  ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  depth-${app.depth}${app.totalValueUsd > 0 ? `  |  $${app.totalValueUsd.toFixed(2)} USD` : ""}`);
             lines.push(`       ${childPfx}  Trail & Transactions:`);
             const hops = app.pathChain.length > 1 ? app.pathChain : [app.wallet, entry.address];
-            for (let h = 0; h < hops.length; h++) {
-              const addr   = hops[h];
-              const hopKn  = KNOWN_LABELS[addr];
-              const hopLbl = hopKn ? `  [${hopKn.label}]` : "";
-              if (h === 0) {
-                lines.push(`       ${childPfx}    ${addr}${hopLbl}  ← ${wLabel}`);
+            const rootKn = KNOWN_LABELS[hops[0]];
+            lines.push(`       ${childPfx}    ${hops[0]}${rootKn ? `  [${rootKn.label}]` : ""}  ← ${wLabel}`);
+            for (let h = 1; h < hops.length; h++) {
+              const fa     = hops[h - 1];
+              const ta     = hops[h];
+              const taKn   = KNOWN_LABELS[ta];
+              const taLbl  = taKn ? `  [${taKn.label}]` : "";
+              const isLast = h === hops.length - 1;
+              lines.push(`       ${childPfx}    ↓  Hop ${h}`);
+              lines.push(`       ${childPfx}    ${ta}${taLbl}${isLast ? "  ← SHARED NODE" : ""}`);
+              lines.push(`       ${childPfx}    Transactions — Hop ${h}:`);
+              const hopTx = findHopTx(fa, ta);
+              if (hopTx) {
+                emitTxBlock([hopTx], `       ${childPfx}    `);
               } else {
-                lines.push(`       ${childPfx}    ↓  Hop ${h}`);
-                lines.push(`       ${childPfx}    ${addr}${hopLbl}${h === hops.length - 1 ? "  ← SHARED NODE" : ""}`);
-                const best = bestSingle(addr);
-                if (best) {
-                  emitTxBlock([best], `       ${childPfx}    `);
-                } else {
-                  lines.push(`       ${childPfx}    (no TX history available for this hop)`);
-                }
+                lines.push(`       ${childPfx}    (TX not in loaded history — path may be indirect or cross-wallet)`);
               }
+              lines.push("");
             }
             lines.push("");
           });

@@ -1780,6 +1780,162 @@ export default function WalletDetail() {
     });
   }
 
+  // ── MULTI-WALLET EXCHANGE FLOWS REPORT ────────────────────────────────────
+  // Combined exchange/bridge flows across 2+ wallets. walletTxMap: wallet → its TXs.
+  function generateMultiExchangeFlowsReport(walletTxMap: Map<string, Tx[]>): string {
+    const now     = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const chainUp = chain.toUpperCase();
+    const rule    = "─".repeat(64);
+    const sep     = (label = "") => label
+      ? `\n─── ${label} ${"─".repeat(Math.max(0, 58 - label.length))}`
+      : rule;
+    const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
+    const fmtAmt  = (v: string | number, dir: string) => {
+      const n   = typeof v === "number" ? v : parseFloat(v as string);
+      if (!isFinite(n)) return (dir === "in" ? "+" : "−") + "0.0000";
+      const abs = Math.abs(n);
+      const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      return (dir === "in" ? "+" : "−") + abs.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec });
+    };
+
+    const isExchType = (t?: string) =>
+      t === "exchange" || t === "bridge" || t === "genesis" || t === "hot" || t === "custodial";
+    const EXCH_DISPLAY: Record<string, string> = {
+      Coinbase: "Coinbase Deposits", Kraken: "Kraken", Binance: "Binance",
+      "Binance.US": "Binance.US", MEXC: "MEXC", Bybit: "Bybit", Bitfinex: "Bitfinex",
+      Bitstamp: "Bitstamp", OKX: "OKX", Huobi: "Huobi", Uphold: "Uphold",
+      ChangeNOW: "ChangeNOW", Stellar: "Stellar Foundation",
+    };
+    const toDisplayLabel = (lbl: string) => EXCH_DISPLAY[lbl.split(/\s+/)[0]] ?? lbl.split(/\s+/)[0];
+
+    const walletList = Array.from(walletTxMap.keys());
+
+    const lines: string[] = [];
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║  MULTI-WALLET EXCHANGE FLOWS — CryptoChainTrace             ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`Generated    : ${now}`);
+    lines.push(`Chain        : ${chainUp}`);
+    lines.push(`Wallets      : ${walletList.length}`);
+    walletList.forEach((w, i) => {
+      const kn = KNOWN_LABELS[w];
+      lines.push(`  W${i + 1} : ${w}${kn ? `  [${kn.label}]` : ""}${i === 0 ? "  ← PRIMARY" : ""}`);
+    });
+    lines.push(rule);
+    lines.push(`NOTE: Exchange, bridge, and protocol transactions across all listed wallets.`);
+    lines.push(`      Load full TX history on each wallet for complete coverage.`);
+    lines.push(``);
+
+    // Build exchAddr → { wallet → Tx[] } map
+    type WalletTxs = Map<string, Tx[]>;
+    const exchMap = new Map<string, WalletTxs>();
+    for (const [wallet, txs] of walletTxMap) {
+      for (const tx of txs) {
+        const cp = tx.direction === "in" ? tx.from : tx.to;
+        if (!cp) continue;
+        const kn = KNOWN_LABELS[cp];
+        if (!kn || !isExchType(kn.type)) continue;
+        if (!exchMap.has(cp)) exchMap.set(cp, new Map());
+        const wMap = exchMap.get(cp)!;
+        if (!wMap.has(wallet)) wMap.set(wallet, []);
+        wMap.get(wallet)!.push(tx);
+      }
+    }
+
+    if (exchMap.size === 0) {
+      lines.push(`  No exchange, bridge, or protocol transactions found across all wallets.`);
+      lines.push(`  Load full transaction history on each wallet and re-run.`);
+    } else {
+      const UPHOLD_DAG = "DAG1pLpkyX7aTtFZtbF98kgA9QTZRzrsGaFmf4BT";
+      const entries = Array.from(exchMap.entries()).sort(([a], [b]) => {
+        if (a === UPHOLD_DAG) return -1;
+        if (b === UPHOLD_DAG) return 1;
+        return (KNOWN_LABELS[a]?.label ?? a).localeCompare(KNOWN_LABELS[b]?.label ?? b);
+      });
+
+      const totalTxs = entries.reduce((s, [, wm]) =>
+        s + Array.from(wm.values()).reduce((ss, txs) => ss + txs.length, 0), 0);
+      lines.push(`  Found: ${entries.length} exchange/protocol address${entries.length !== 1 ? "es" : ""} across ${walletList.length} wallets`);
+      lines.push(`  Total exchange TXs: ${totalTxs.toLocaleString()}`);
+
+      for (const [addr, wMap] of entries) {
+        const kn = KNOWN_LABELS[addr];
+        const typeTag    = kn?.type === "bridge" ? "BRIDGE" : kn?.type === "genesis" ? "PROTOCOL" : "EXCHANGE";
+        const displayLbl = toDisplayLabel(kn?.label ?? addr);
+        lines.push(sep(`[${displayLbl}]  ◄ ${typeTag} FLOW`));
+        lines.push(`  Address  : ${addr}`);
+        lines.push(`  Type     : ${typeTag} · ${displayLbl}`);
+
+        const allTxsForExch = Array.from(wMap.values()).flat();
+        const totalIn  = allTxsForExch.filter(t => t.direction === "in").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const totalOut = allTxsForExch.filter(t => t.direction === "out").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        lines.push(`  Combined : ${allTxsForExch.length} tx${allTxsForExch.length !== 1 ? "s" : ""} across ${wMap.size} wallet${wMap.size !== 1 ? "s" : ""}   IN: +${totalIn.toFixed(4)}   OUT: −${totalOut.toFixed(4)} ${chainUp}`);
+
+        // Per-wallet stats line
+        walletList.forEach((w, wi) => {
+          const wtxs = wMap.get(w);
+          if (!wtxs || wtxs.length === 0) return;
+          const wIn  = wtxs.filter(t => t.direction === "in").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const wOut = wtxs.filter(t => t.direction === "out").reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const wLabel = wi === 0 ? "PRIMARY" : `W${wi + 1}`;
+          lines.push(`  ${wLabel.padEnd(7)}: ${wtxs.length} tx${wtxs.length !== 1 ? "s" : ""}   IN: +${wIn.toFixed(4)}   OUT: −${wOut.toFixed(4)} ${chainUp}`);
+        });
+        lines.push(``);
+
+        // Per-wallet TX detail blocks
+        const sortByDate = (a: Tx, b: Tx) =>
+          new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime();
+
+        walletList.forEach((w, wi) => {
+          const wtxs = wMap.get(w);
+          if (!wtxs || wtxs.length === 0) return;
+          const wLabel  = wi === 0 ? "PRIMARY" : `W${wi + 1}`;
+          const wShort  = w.length > 20 ? `${w.slice(0, 10)}…${w.slice(-6)}` : w;
+          lines.push(`  ── ${wLabel} (${wShort}) ──`);
+          const clean = wtxs.filter(t => passesSpamFilter(t, chain)).sort(sortByDate);
+          clean.forEach((tx, i) => {
+            const isLast  = i === clean.length - 1;
+            const conn    = isLast ? "└─" : "├─";
+            const childPx = isLast ? "   " : "│  ";
+            const dir     = tx.direction === "in" ? "IN " : "OUT";
+            const asset   = (tx as Tx & { tokenSymbol?: string }).tokenSymbol ?? chainUp;
+            const usd     = tx.valueUsd > 0
+              ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+              : "";
+            lines.push(`${conn} [${dir}]  From: ${tx.from ?? "—"}`);
+            lines.push(`${childPx}         To  : ${tx.to   ?? "—"}`);
+            lines.push(`${childPx}  Amount : ${fmtAmt(tx.value, tx.direction)} ${asset}${usd}`);
+            lines.push(`${childPx}  TX     : ${tx.hash ?? "(no hash)"}`);
+            lines.push(`${childPx}  Date   : ${fmtDate(tx.timestamp ?? "")}`);
+            if ((tx as Tx & { destinationTag?: number | null }).destinationTag != null)
+              lines.push(`${childPx}  ↳ Destination Tag : ${(tx as Tx & { destinationTag?: number | null }).destinationTag}`);
+            if (tx.memo) lines.push(`${childPx}  ↳ Memo : ${tx.memo}`);
+            if (!isLast) lines.push(childPx);
+          });
+          lines.push(``);
+        });
+      }
+    }
+
+    lines.push(sep("INVESTIGATIVE SUMMARY"));
+    lines.push(`  Tracked Wallets : ${walletList.length}`);
+    lines.push(`  Exchange Nodes  : ${exchMap.size}`);
+    if (exchMap.size > 0) {
+      lines.push(`  Exchange activity detected across tracked wallets.`);
+      lines.push(`  File subpoena / KYC requests with each listed exchange to obtain`);
+      lines.push(`  account-holder identity, IP logs, and transaction records.`);
+    } else {
+      lines.push(`  No exchange transactions found. Load full TX history and re-run.`);
+    }
+    lines.push(``);
+    return auditAndSign(lines, {
+      reportType: "Multi-Wallet Exchange Flows Report",
+      chain: chainUp,
+      target: walletList[0] ?? address,
+      comparisons: walletList.slice(1),
+    });
+  }
+
   // ── Victim → Thief Path Trace report generator ────────────────────────────
   function generatePathTraceReport(
     steps: Array<{ wallet: string; txHash: string }>,
@@ -2221,6 +2377,7 @@ export default function WalletDetail() {
   const [multiLoading, setMultiLoading] = useState(false);
   const [multiProgress, setMultiProgress] = useState("");
   const [multiError, setMultiError] = useState<string | null>(null);
+  const [multiExchLoading, setMultiExchLoading] = useState(false);
 
   // ── Commingle Check ──
   const [showComminglePanel, setShowComminglePanel] = useState(false);
@@ -3661,18 +3818,52 @@ export default function WalletDetail() {
             </Button>
             <Button
               variant="outline"
-              className="font-mono text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/30 hover:border-emerald-500/70 hover:text-emerald-300"
-              title="Generate a report of all exchange, bridge, and protocol transactions"
-              onClick={() => {
-                const rpt = generateExchangeFlowsReport();
-                const title = `Exchange Flows Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
-                setReportContent(rpt);
-                setReportTitle(title);
-                setReportJsonData({ reportType: "exchange-flows", generatedAt: new Date().toISOString(), chain, subjectAddress: address, walletInfo: wallet, selectedAddresses: [], reportText: rpt });
-                setShowReportModal(true);
+              disabled={multiExchLoading}
+              className="font-mono text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/30 hover:border-emerald-500/70 hover:text-emerald-300 disabled:opacity-50"
+              title={multiWallets.length > 0 ? `Generate combined exchange flows for all ${multiWallets.length + 1} wallets` : "Generate a report of all exchange, bridge, and protocol transactions"}
+              onClick={async () => {
+                if (multiWallets.length === 0) {
+                  // Single-wallet path — unchanged
+                  const rpt = generateExchangeFlowsReport();
+                  const title = `Exchange Flows Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
+                  setReportContent(rpt);
+                  setReportTitle(title);
+                  setReportJsonData({ reportType: "exchange-flows", generatedAt: new Date().toISOString(), chain, subjectAddress: address, walletInfo: wallet, selectedAddresses: [], reportText: rpt });
+                  setShowReportModal(true);
+                } else {
+                  // Multi-wallet path — fetch TXs for each additional wallet then generate combined report
+                  setMultiExchLoading(true);
+                  try {
+                    const allWallets = [address, ...multiWallets];
+                    const walletTxMap = new Map<string, Tx[]>();
+                    walletTxMap.set(address, allTxs);
+                    await Promise.all(
+                      multiWallets.map(async (w) => {
+                        try {
+                          const resp = await fetch(`/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=50`);
+                          if (!resp.ok) { walletTxMap.set(w, []); return; }
+                          const data = await resp.json() as { transactions: Tx[] };
+                          walletTxMap.set(w, (data.transactions ?? []).filter(t => parseFloat(t.value) > 0));
+                        } catch { walletTxMap.set(w, []); }
+                      })
+                    );
+                    // Ensure insertion order matches allWallets order
+                    const ordered = new Map<string, Tx[]>();
+                    for (const w of allWallets) ordered.set(w, walletTxMap.get(w) ?? []);
+                    const rpt = generateMultiExchangeFlowsReport(ordered);
+                    const title = `Multi-Wallet Exchange Flows — ${chain.toUpperCase()} — ${allWallets.length} wallets`;
+                    setReportContent(rpt);
+                    setReportTitle(title);
+                    setReportJsonData({ reportType: "exchange-flows-multi", generatedAt: new Date().toISOString(), chain, subjectAddress: address, walletInfo: wallet, selectedAddresses: multiWallets, reportText: rpt });
+                    setShowReportModal(true);
+                  } finally {
+                    setMultiExchLoading(false);
+                  }
+                }
               }}
             >
-              <Landmark className="w-3.5 h-3.5 mr-1.5" /> EXCHANGE FLOWS
+              <Landmark className="w-3.5 h-3.5 mr-1.5" />
+              {multiExchLoading ? "Fetching…" : multiWallets.length > 0 ? `EXCHANGE FLOWS (${multiWallets.length + 1} WALLETS)` : "EXCHANGE FLOWS"}
             </Button>
             <Button
               variant="outline"

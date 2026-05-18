@@ -5369,13 +5369,13 @@ export default function WalletDetail() {
                           }
                         }
                       }
-                      // Cap at 40 to avoid excessive API calls; prioritise shorter paths first
-                      const intermediateList = Array.from(intermediateAddrs).slice(0, 40);
+                      // Cap at 80 intermediate addresses, 100 TXs each — covers deep Hop 2/Hop 3 paths
+                      const intermediateList = Array.from(intermediateAddrs).slice(0, 80);
                       if (intermediateList.length > 0) {
                         await Promise.all(
                           intermediateList.map(async (addr) => {
                             try {
-                              const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
+                              const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=100`);
                               walletTxMap.set(addr, resp.ok ? ((await resp.json() as { transactions: Tx[] }).transactions ?? []) : []);
                             } catch { walletTxMap.set(addr, []); }
                           })

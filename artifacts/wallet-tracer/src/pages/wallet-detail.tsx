@@ -5327,12 +5327,12 @@ export default function WalletDetail() {
                   setMultiNotice(`✅ Loaded ${toAdd.length} wallet${toAdd.length === 1 ? "" : "s"} from Commingle list`);
                   setTimeout(() => setMultiNotice(null), 4000);
                 }}
-                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-sky-900/50 hover:bg-sky-800/60 border border-sky-500/40 text-sky-300 font-mono text-xs font-semibold transition-colors"
+                className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-mono text-xs font-bold tracking-widest transition-colors"
               >
                 <GitMerge className="w-3.5 h-3.5 shrink-0" />
-                Load from Commingle List
+                LOAD FROM COMMINGLE LIST
                 {commingleWallets.length > 0 && (
-                  <span className="text-sky-400/70 text-[10px]">({commingleWallets.length})</span>
+                  <span className="opacity-70 text-[10px] font-normal">({commingleWallets.length} wallets)</span>
                 )}
               </button>
 

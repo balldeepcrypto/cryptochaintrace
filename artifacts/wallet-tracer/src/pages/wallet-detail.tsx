@@ -1557,9 +1557,11 @@ export default function WalletDetail() {
     lines.push(`Total Wallets: ${multiResult.trackedWallets.length}`);
     lines.push(`Depth        : up to 6 hops from each wallet (connections graph)`);
     lines.push(sep());
-    lines.push(`NOTE: TX details are from the currently-loaded wallet's transaction history.`);
+    lines.push(`NOTE: TX details are pulled from the full combined transaction history of ALL tracked wallets`);
+    lines.push(`      + all discovered intermediate addresses along each path.`);
     lines.push(`      All wallets are treated equally — no single wallet is the "primary".`);
-    lines.push(`      Load full TX history on each wallet for complete transaction records.`);
+    lines.push(`      The report now shows complete hop-by-hop records wherever the transaction`);
+    lines.push(`      data exists in any loaded history.`);
 
     // ── § 1 — Private Convergence Points ──────────────────────────────────────
     lines.push(sep("PRIVATE CONVERGENCE POINTS"));

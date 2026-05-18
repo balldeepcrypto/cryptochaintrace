@@ -1514,53 +1514,120 @@ export default function WalletDetail() {
       lines.push("  Try loading more TX history and re-running for deeper coverage.");
       lines.push("");
     } else {
-      privPoints.slice(0, 30).forEach((entry, i) => {
-        const kn       = KNOWN_LABELS[entry.address];
-        const label    = kn ? `  [${kn.label.toUpperCase()}]` : "";
-        const teamNote = kn?.type === "dag-team" ? "  ◄ OFFICIAL DAG ENTITY — labeled, not anonymous" : "";
-        lines.push(`  ${String(i + 1).padStart(2, "0")}. ${entry.address}${label}${teamNote}`);
-        lines.push(`       Shared by : ${entry.appearances.length}/${multiResult.trackedWallets.length} tracked wallets`);
+      // Sort descending: most wallets sharing the node first, then by total txCount
+      const sortedPriv = [...privPoints].sort((a, b) =>
+        b.appearances.length - a.appearances.length ||
+        b.appearances.reduce((s, ap) => s + ap.txCount, 0) -
+        a.appearances.reduce((s, ap) => s + ap.txCount, 0)
+      );
+      const criticalNodes = sortedPriv.slice(0, 10);
+      const summaryNodes  = sortedPriv.slice(10, 30);
+
+      // Returns the single highest-amount spam-filtered TX from allTxs touching hopAddr.
+      const bestSingle = (hopAddr: string): Tx | null => {
+        const pool = allTxs.filter(t =>
+          ((t.direction === "in" ? t.from : t.to) === hopAddr) &&
+          passesSpamFilter(t, chain)
+        );
+        if (pool.length === 0) return null;
+        return pool.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+      };
+
+      // ── Top 10 critical nodes — full hop-by-hop TX expansion ───────────────
+      if (criticalNodes.length > 0) {
+        lines.push(`  ★ TOP ${criticalNodes.length} CRITICAL SHARED NODES — FULL HOP TRAIL`);
+        lines.push(`  Ranked by number of tracked wallets that converge on this address.`);
         lines.push("");
-        entry.appearances.forEach((app, appIdx) => {
-          const idx      = multiResult.trackedWallets.indexOf(app.wallet);
-          const wLabel   = idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`;
-          const isLast   = appIdx === entry.appearances.length - 1;
-          const conn     = isLast ? "└──" : "├──";
-          const childPfx = isLast ? "    " : "│   ";
-          // Full trail: pathChain[0] = tracked wallet … pathChain[last] = shared node
-          const trail: string[] = app.pathChain.length > 1
-            ? app.pathChain.map((a, si) => {
-                const kl  = KNOWN_LABELS[a];
-                const lbl = kl ? `  [${kl.label}]` : "";
-                if (si === 0) return `${a}${lbl}  ← ${wLabel}`;
-                if (si === app.pathChain.length - 1) return `${a}${lbl}  ← SHARED NODE`;
-                return `${a}${lbl}`;
-              })
-            : [`${app.wallet}  ← ${wLabel}`, `${entry.address}  ← SHARED NODE`];
-          lines.push(`       ${conn} ${wLabel}  |  ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  depth-${app.depth}${app.totalValueUsd > 0 ? `  |  $${app.totalValueUsd.toFixed(2)} USD` : ""}`);
-          lines.push(`       ${childPfx}  Trail:`);
-          trail.forEach((step, si) => {
-            if (si === 0) {
-              lines.push(`       ${childPfx}    ${step}`);
-            } else {
-              lines.push(`       ${childPfx}    ↓  Hop ${si}`);
-              lines.push(`       ${childPfx}    ${step}`);
+        criticalNodes.forEach((entry, i) => {
+          const kn       = KNOWN_LABELS[entry.address];
+          const label    = kn ? `  [${kn.label.toUpperCase()}]` : "";
+          const teamNote = kn?.type === "dag-team" ? "  ◄ OFFICIAL DAG ENTITY — labeled, not anonymous" : "";
+          lines.push(`  ${String(i + 1).padStart(2, "0")}. ${entry.address}${label}${teamNote}`);
+          lines.push(`       Shared by : ${entry.appearances.length}/${multiResult.trackedWallets.length} tracked wallets  ◄ CRITICAL NODE`);
+          lines.push("");
+          entry.appearances.forEach((app, appIdx) => {
+            const idx      = multiResult.trackedWallets.indexOf(app.wallet);
+            const wLabel   = idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`;
+            const isLast   = appIdx === entry.appearances.length - 1;
+            const conn     = isLast ? "└──" : "├──";
+            const childPfx = isLast ? "    " : "│   ";
+            lines.push(`       ${conn} ${wLabel}  |  ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  depth-${app.depth}${app.totalValueUsd > 0 ? `  |  $${app.totalValueUsd.toFixed(2)} USD` : ""}`);
+            lines.push(`       ${childPfx}  Trail & Transactions:`);
+            const hops = app.pathChain.length > 1 ? app.pathChain : [app.wallet, entry.address];
+            for (let h = 0; h < hops.length; h++) {
+              const addr   = hops[h];
+              const hopKn  = KNOWN_LABELS[addr];
+              const hopLbl = hopKn ? `  [${hopKn.label}]` : "";
+              if (h === 0) {
+                lines.push(`       ${childPfx}    ${addr}${hopLbl}  ← ${wLabel}`);
+              } else {
+                lines.push(`       ${childPfx}    ↓  Hop ${h}`);
+                lines.push(`       ${childPfx}    ${addr}${hopLbl}${h === hops.length - 1 ? "  ← SHARED NODE" : ""}`);
+                const best = bestSingle(addr);
+                if (best) {
+                  emitTxBlock([best], `       ${childPfx}    `);
+                } else {
+                  lines.push(`       ${childPfx}    (no TX history available for this hop)`);
+                }
+              }
             }
+            lines.push("");
           });
-          // Best TX: use first hop in the path (closest connection point)
-          const hopAddr  = app.pathChain.length > 1 ? app.pathChain[1] : entry.address;
-          const hopShort = hopAddr.length > 16 ? `${hopAddr.slice(0, 8)}…${hopAddr.slice(-4)}` : hopAddr;
-          const bestTxs  = bestInOut2(hopAddr);
-          if (bestTxs.length > 0) {
-            lines.push(`       ${childPfx}  Best TX  (${wLabel} ↔ ${hopShort}):`);
-            emitTxBlock(bestTxs, `       ${childPfx}  `);
-          } else {
-            lines.push(`       ${childPfx}  Best TX  : no loaded history for this hop`);
-          }
           lines.push("");
         });
+      }
+
+      // ── Remaining nodes 11-30 — summarized (existing format, no TX detail) ──
+      if (summaryNodes.length > 0) {
+        lines.push(`  ADDITIONAL SHARED NODES — SUMMARY`);
         lines.push("");
-      });
+        summaryNodes.forEach((entry, i) => {
+          const kn       = KNOWN_LABELS[entry.address];
+          const label    = kn ? `  [${kn.label.toUpperCase()}]` : "";
+          const teamNote = kn?.type === "dag-team" ? "  ◄ OFFICIAL DAG ENTITY — labeled, not anonymous" : "";
+          lines.push(`  ${String(i + 11).padStart(2, "0")}. ${entry.address}${label}${teamNote}`);
+          lines.push(`       Shared by : ${entry.appearances.length}/${multiResult.trackedWallets.length} tracked wallets`);
+          lines.push("");
+          entry.appearances.forEach((app, appIdx) => {
+            const idx      = multiResult.trackedWallets.indexOf(app.wallet);
+            const wLabel   = idx === 0 ? "PRIMARY" : `WALLET ${idx + 1}`;
+            const isLast   = appIdx === entry.appearances.length - 1;
+            const conn     = isLast ? "└──" : "├──";
+            const childPfx = isLast ? "    " : "│   ";
+            const trail: string[] = app.pathChain.length > 1
+              ? app.pathChain.map((a, si) => {
+                  const kl  = KNOWN_LABELS[a];
+                  const lbl = kl ? `  [${kl.label}]` : "";
+                  if (si === 0) return `${a}${lbl}  ← ${wLabel}`;
+                  if (si === app.pathChain.length - 1) return `${a}${lbl}  ← SHARED NODE`;
+                  return `${a}${lbl}`;
+                })
+              : [`${app.wallet}  ← ${wLabel}`, `${entry.address}  ← SHARED NODE`];
+            lines.push(`       ${conn} ${wLabel}  |  ${app.txCount} tx${app.txCount !== 1 ? "s" : ""}  |  depth-${app.depth}${app.totalValueUsd > 0 ? `  |  $${app.totalValueUsd.toFixed(2)} USD` : ""}`);
+            lines.push(`       ${childPfx}  Trail:`);
+            trail.forEach((step, si) => {
+              if (si === 0) {
+                lines.push(`       ${childPfx}    ${step}`);
+              } else {
+                lines.push(`       ${childPfx}    ↓  Hop ${si}`);
+                lines.push(`       ${childPfx}    ${step}`);
+              }
+            });
+            const hopAddr  = app.pathChain.length > 1 ? app.pathChain[1] : entry.address;
+            const hopShort = hopAddr.length > 16 ? `${hopAddr.slice(0, 8)}…${hopAddr.slice(-4)}` : hopAddr;
+            const bestTxs  = bestInOut2(hopAddr);
+            if (bestTxs.length > 0) {
+              lines.push(`       ${childPfx}  Best TX  (${wLabel} ↔ ${hopShort}):`);
+              emitTxBlock(bestTxs, `       ${childPfx}  `);
+            } else {
+              lines.push(`       ${childPfx}  Best TX  : no loaded history for this hop`);
+            }
+            lines.push("");
+          });
+          lines.push("");
+        });
+      }
+
       if (privPoints.length > 30) lines.push(`  … and ${privPoints.length - 30} more private convergence points`);
       lines.push("");
     }

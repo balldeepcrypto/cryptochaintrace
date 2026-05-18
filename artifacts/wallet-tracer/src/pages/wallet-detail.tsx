@@ -2522,6 +2522,7 @@ export default function WalletDetail() {
   const [multiLoading, setMultiLoading] = useState(false);
   const [multiProgress, setMultiProgress] = useState("");
   const [multiError, setMultiError] = useState<string | null>(null);
+  const [multiNotice, setMultiNotice] = useState<string | null>(null);
   const [multiExchLoading, setMultiExchLoading] = useState(false);
   const [multiIntersectLoading, setMultiIntersectLoading] = useState(false);
 
@@ -5307,6 +5308,34 @@ export default function WalletDetail() {
                 </div>
               )}
 
+              {/* Load from Commingle List */}
+              <button
+                onClick={() => {
+                  if (commingleWallets.length === 0) {
+                    setMultiError("Commingle list is empty — add wallets first.");
+                    return;
+                  }
+                  const toAdd = commingleWallets.filter(
+                    (w) => w !== address && !multiWallets.includes(w)
+                  );
+                  if (toAdd.length === 0) {
+                    setMultiError("All Commingle wallets are already in the list.");
+                    return;
+                  }
+                  setMultiError(null);
+                  setMultiWallets((prev) => Array.from(new Set([...prev, ...toAdd])));
+                  setMultiNotice(`✅ Loaded ${toAdd.length} wallet${toAdd.length === 1 ? "" : "s"} from Commingle list`);
+                  setTimeout(() => setMultiNotice(null), 4000);
+                }}
+                className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-sky-900/50 hover:bg-sky-800/60 border border-sky-500/40 text-sky-300 font-mono text-xs font-semibold transition-colors"
+              >
+                <GitMerge className="w-3.5 h-3.5 shrink-0" />
+                Load from Commingle List
+                {commingleWallets.length > 0 && (
+                  <span className="text-sky-400/70 text-[10px]">({commingleWallets.length})</span>
+                )}
+              </button>
+
               {/* Analyze button */}
               <button
                 onClick={runMultiAnalysis}
@@ -5326,6 +5355,11 @@ export default function WalletDetail() {
               {multiError && (
                 <p className="text-xs font-mono text-red-400 flex items-center gap-1.5 mt-0.5">
                   <AlertTriangle className="w-3 h-3 shrink-0" /> {multiError}
+                </p>
+              )}
+              {multiNotice && (
+                <p className="text-xs font-mono text-sky-400 flex items-center gap-1.5 mt-0.5">
+                  {multiNotice}
                 </p>
               )}
             </div>

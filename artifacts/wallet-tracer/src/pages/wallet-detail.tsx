@@ -1486,18 +1486,30 @@ export default function WalletDetail() {
       return [top("in"), top("out")].filter(Boolean) as Tx[];
     };
 
-    // Pair-specific hop TX lookup: find the highest-value spam-filtered TX that
-    // went directly between fa and ta (either direction).  More precise than
-    // bestSingle() which finds any TX that touched a single address.
+    // Pair-specific hop TX lookup with two-stage fallback.
+    // Stage 1 — pair match with address normalization (EVM addresses are lowercased
+    //   in pathChain but may be checksummed in allTxs from/to fields; t.to may be null).
+    // Stage 2 — direction-based counterparty lookup for `ta` (catches any TX in allTxs
+    //   where ta is the direct counterparty of the focused wallet, regardless of from/to format).
     const findHopTx = (fa: string, ta: string): Tx | null => {
-      const matches = allTxs.filter(t =>
-        passesSpamFilter(t, chain) && (
-          (t.from === fa && t.to === ta) ||
-          (t.from === ta && t.to === fa)
-        )
+      const evm  = ["ethereum", "polygon", "bsc"].includes(chain);
+      const norm = (a: string | null | undefined) => evm ? (a ?? "").toLowerCase() : (a ?? "");
+      const faN  = norm(fa);
+      const taN  = norm(ta);
+      const clean = allTxs.filter(t => passesSpamFilter(t, chain));
+      // Stage 1: normalized pair match — most precise
+      const pair = clean.filter(t =>
+        (norm(t.from) === faN && norm(t.to) === taN) ||
+        (norm(t.from) === taN && norm(t.to) === faN)
       );
-      if (matches.length === 0) return null;
-      return matches.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+      if (pair.length > 0)
+        return pair.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+      // Stage 2: direction-based counterparty lookup for ta — handles null to/from
+      //   and chains where only one side of the address pair is populated
+      const cpty = clean.filter(t => norm(t.direction === "in" ? t.from : t.to) === taN);
+      if (cpty.length > 0)
+        return cpty.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
+      return null;
     };
 
     // Deduplicated shared entries (sharedCounterparties + commonEndpoints)

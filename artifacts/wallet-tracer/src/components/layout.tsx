@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Network, Box } from "lucide-react";
+import { Search, Activity, Network, Box, Info, X } from "lucide-react";
 import { getRecentSearches, type RecentSearchEntry } from "@/lib/recent-searches";
 
 const CHAIN_SHORT: Record<string, string> = {
@@ -16,6 +16,7 @@ function shortAddr(addr: string): string {
 export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [recents, setRecents] = useState<RecentSearchEntry[]>(() => getRecentSearches().slice(0, 8));
+  const [showAbout, setShowAbout] = useState(false);
 
   useEffect(() => {
     const refresh = () => setRecents(getRecentSearches().slice(0, 8));
@@ -90,6 +91,14 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 API CONNECTED
               </div>
               <div className="text-muted-foreground">NODE: 0x4812...</div>
+              <button
+                onClick={() => setShowAbout(true)}
+                className="flex items-center gap-1.5 text-muted-foreground hover:text-foreground transition-colors px-2 py-1 rounded border border-border/40 hover:border-border/80"
+                title="About CryptoChainTrace"
+              >
+                <Info className="w-3.5 h-3.5" />
+                <span>About</span>
+              </button>
             </div>
           </div>
         </header>
@@ -97,6 +106,47 @@ export function Layout({ children }: { children: React.ReactNode }) {
           {children}
         </div>
       </main>
+
+      {/* About Modal */}
+      {showAbout && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className="bg-card border border-border rounded-xl shadow-2xl w-full max-w-lg font-mono">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+              <div className="flex items-center gap-3">
+                <Box className="w-5 h-5 text-primary" />
+                <div>
+                  <div className="text-sm font-bold text-foreground tracking-widest uppercase">CryptoChainTrace</div>
+                  <div className="text-[10px] text-muted-foreground uppercase tracking-wider">Blockchain Intelligence Platform</div>
+                </div>
+              </div>
+              <button onClick={() => setShowAbout(false)} className="text-muted-foreground hover:text-foreground transition-colors">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div>
+                <div className="text-[10px] font-mono text-primary uppercase tracking-widest mb-2">Agency Edition — Capabilities</div>
+                <ul className="space-y-2 text-xs text-muted-foreground">
+                  <li className="flex items-start gap-2"><span className="text-primary mt-0.5">▸</span>Multi-wallet Intersection / Funnel Analysis with full hop-by-hop TX trails</li>
+                  <li className="flex items-start gap-2"><span className="text-primary mt-0.5">▸</span>Multi-Wallet Exchange Flows with per-exchange breakdowns across all wallets</li>
+                  <li className="flex items-start gap-2"><span className="text-primary mt-0.5">▸</span>Bulk load from Commingle List — one-click population of tracked wallets</li>
+                  <li className="flex items-start gap-2"><span className="text-primary mt-0.5">▸</span>Private convergence points only — exchanges strictly excluded from intersection results</li>
+                  <li className="flex items-start gap-2"><span className="text-primary mt-0.5">▸</span>Full TX history + USD valuation across 9 chains (ETH, BTC, XRP, XLM, HBAR, XDC, DAG, MATIC, BSC)</li>
+                  <li className="flex items-start gap-2"><span className="text-primary mt-0.5">▸</span>Cryptographically signed, tamper-evident reports for chain of custody</li>
+                  <li className="flex items-start gap-2"><span className="text-primary mt-0.5">▸</span>Designed for law enforcement, regulatory, and private investigative use</li>
+                </ul>
+              </div>
+              <div className="border-t border-border/40 pt-4">
+                <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-widest mb-2">Platform</div>
+                <div className="text-xs text-muted-foreground space-y-1">
+                  <div>cryptochaintrace.replit.app</div>
+                  <div className="text-[10px] text-muted-foreground/60">© 2026 Ball Deep Crypto  •  For Official Investigative Use Only</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

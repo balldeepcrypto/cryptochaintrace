@@ -1452,6 +1452,23 @@ export default function WalletDetail() {
     ]);
     const isExchType  = (addr: string) => ["exchange", "bridge", "hot", "custodial"].includes(KNOWN_LABELS[addr]?.type ?? "");
 
+    // Render a single directional hop TX without spam-filter gating.
+    // Used exclusively for hop-by-hop path rendering where any non-zero TX is evidence.
+    const emitHopTx = (tx: Tx, pad: string) => {
+      const dir   = tx.direction === "in" ? "IN " : "OUT";
+      const amt   = fmtAmt2(tx.value, tx.direction as "in" | "out");
+      const asset = tx.tokenSymbol || chainUp;
+      const usd   = tx.valueUsd > 0
+        ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+        : "";
+      lines.push(`${pad}└─ [${dir}]  From: ${tx.from ?? "—"} → To: ${tx.to ?? "—"}`);
+      lines.push(`${pad}   Amount: ${amt} ${asset}${usd}`);
+      lines.push(`${pad}   TX    : ${tx.hash ?? "(none)"}`);
+      lines.push(`${pad}   Date  : ${fmtDate(tx.timestamp ?? "")}`);
+      if (tx.destinationTag != null) lines.push(`${pad}   ↳ Destination Tag : ${tx.destinationTag}`);
+      if (tx.memo)                   lines.push(`${pad}   ↳ Memo            : ${tx.memo}`);
+    };
+
     const emitTxBlock = (txs: Tx[], pad: string) => {
       // Apply global spam filter — drop dust, 0-value ops, and below-chain-minimum TXs.
       const clean = txs.filter(t => passesSpamFilter(t, chain));
@@ -1504,7 +1521,9 @@ export default function WalletDetail() {
           if (!seen.has(t.hash)) { seen.add(t.hash); combined.push(t); }
         }
       }
-      const clean = combined.filter(t => passesSpamFilter(t, chain));
+      // Use value > 0 filter only — passesSpamFilter would silently discard valid hop TXs
+      // whose amounts fall below the chain minimum.  The hop renderer handles display filtering.
+      const clean = combined.filter(t => parseFloat(t.value || "0") > 0);
       // Stage 1: normalized pair match — most precise
       const pair = clean.filter(t =>
         (norm(t.from) === faN && norm(t.to) === taN) ||
@@ -1607,7 +1626,7 @@ export default function WalletDetail() {
               lines.push(`       ${childPfx}    Transactions — Hop ${h}:`);
               const hopTx = findHopTx(fa, ta);
               if (hopTx) {
-                emitTxBlock([hopTx], `       ${childPfx}    `);
+                emitHopTx(hopTx, `       ${childPfx}    `);
               } else {
                 lines.push(`       ${childPfx}    (TX not in loaded history — path may be indirect or cross-wallet)`);
               }
@@ -5327,7 +5346,7 @@ export default function WalletDetail() {
                       const walletTxMap = new Map<string, Tx[]>();
                       // Primary wallet uses already-loaded allTxs
                       walletTxMap.set(allWallets[0], allTxs);
-                      // Fetch TXs for each additional wallet in parallel
+                      // Fetch TXs for each additional tracked wallet in parallel
                       await Promise.all(
                         allWallets.slice(1).map(async (w) => {
                           try {
@@ -5336,6 +5355,32 @@ export default function WalletDetail() {
                           } catch { walletTxMap.set(w, []); }
                         })
                       );
+                      // Also fetch TXs for every intermediate address found in pathChains.
+                      // The BFS scan visits these nodes but discards their TXs — without
+                      // fetching them here, findHopTx can only find direct wallet↔node TXs.
+                      const intermediateAddrs = new Set<string>();
+                      for (const entry of [...multiResult.sharedCounterparties, ...multiResult.commonEndpoints]) {
+                        for (const app of entry.appearances) {
+                          // pathChain = [trackedWallet, ...intermediates, convergenceNode]
+                          // skip index 0 (tracked wallet — already in map)
+                          for (let pi = 1; pi < app.pathChain.length; pi++) {
+                            const a = app.pathChain[pi];
+                            if (!walletTxMap.has(a)) intermediateAddrs.add(a);
+                          }
+                        }
+                      }
+                      // Cap at 40 to avoid excessive API calls; prioritise shorter paths first
+                      const intermediateList = Array.from(intermediateAddrs).slice(0, 40);
+                      if (intermediateList.length > 0) {
+                        await Promise.all(
+                          intermediateList.map(async (addr) => {
+                            try {
+                              const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
+                              walletTxMap.set(addr, resp.ok ? ((await resp.json() as { transactions: Tx[] }).transactions ?? []) : []);
+                            } catch { walletTxMap.set(addr, []); }
+                          })
+                        );
+                      }
                       const rpt = generateMultiReport(walletTxMap);
                       const title = `Intersection / Funnel Analysis — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
                       setReportContent(rpt);

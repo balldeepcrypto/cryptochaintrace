@@ -1162,7 +1162,7 @@ export default function WalletDetail() {
     // Only true exchanges, bridges, hot wallets, and custodial wallets are excluded —
     // genesis, official, protocol, dag-team, defi, and flagged count as private evidence.
     const isExch = (f: CommingleFinding) => {
-      const t = f.knownInfo?.type ?? "";
+      const t = (f.knownInfo ?? KNOWN_LABELS[f.sharedAddress])?.type ?? "";
       return ["exchange", "bridge", "hot", "custodial"].includes(t);
     };
     const privFindings = findings.filter((f) => !isExch(f));
@@ -1212,7 +1212,7 @@ export default function WalletDetail() {
 
     lines.push(sep("SUMMARY"));
     lines.push("");
-    const dagTeamFindings = privFindings.filter((f) => f.knownInfo?.type === "dag-team");
+    const dagTeamFindings = privFindings.filter((f) => (f.knownInfo ?? KNOWN_LABELS[f.sharedAddress])?.type === "dag-team");
     lines.push(`  Total Shared Nodes : ${findings.length}`);
     lines.push(`    ► Private wallets      : ${privFindings.length}  ← wallet-to-wallet commingling (key evidence)`);
     if (dagTeamFindings.length > 0) {
@@ -1280,9 +1280,10 @@ export default function WalletDetail() {
           lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${priv.length}) — INVESTIGATE FIRST`);
           lines.push("");
           priv.slice(0, maxShow).forEach((f, i) => {
-            const isDagTeamNode = f.knownInfo?.type === "dag-team";
+            const fKn = f.knownInfo ?? KNOWN_LABELS[f.sharedAddress];
+            const isDagTeamNode = fKn?.type === "dag-team";
             const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]${dagTag}` : ""}`);
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${fKn ? `  [${fKn.label.toUpperCase()}]${dagTag}` : ""}`);
             lines.push(`       TX Count (W1) : ${f.txCountTarget}   |   Connected by: ${f.comparisons.length + 1} wallet(s)`);
             lines.push("");
             renderSharedNodeWallets(f);
@@ -1359,9 +1360,10 @@ export default function WalletDetail() {
           lines.push(`  ★ PRIVATE WALLET CONNECTIONS (${t3priv.length + t4priv.length + t5priv.length + t6priv.length}) — INVESTIGATE`);
           lines.push("");
           t3to6priv.forEach((f, i) => {
-            const isDagTeamNode = f.knownInfo?.type === "dag-team";
+            const fKn = f.knownInfo ?? KNOWN_LABELS[f.sharedAddress];
+            const isDagTeamNode = fKn?.type === "dag-team";
             const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
-            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${f.knownInfo ? `  [${f.knownInfo.label.toUpperCase()}]${dagTag}` : ""}`);
+            lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${fKn ? `  [${fKn.label.toUpperCase()}]${dagTag}` : ""}`);
             lines.push(`       TX Count (W1) : ${f.txCountTarget}   |   Connected by: ${f.comparisons.length + 1} wallet(s)`);
             lines.push("");
             renderSharedNodeWallets(f);

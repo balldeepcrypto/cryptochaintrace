@@ -3258,7 +3258,7 @@ export default function WalletDetail() {
         const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
         if (!resp.ok) return [];
         const data = await resp.json() as { transactions: Tx[] };
-        return (data.transactions ?? []).filter(t => parseFloat(t.value) > 0);
+        return (data.transactions ?? []).filter(t => passesAnalysisFilter(t, chain));
       } catch { return []; }
     };
 
@@ -3389,7 +3389,7 @@ export default function WalletDetail() {
         const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
         if (!resp.ok) return [];
         const data = await resp.json() as { transactions: Tx[] };
-        return (data.transactions ?? []).filter(t => parseFloat(t.value) > 0);
+        return (data.transactions ?? []).filter(t => passesAnalysisFilter(t, chain));
       } catch { return []; }
     };
 
@@ -3526,7 +3526,7 @@ export default function WalletDetail() {
         const resp = await fetch(`/api/wallets/${encodeURIComponent(addr)}/transactions?chain=${chain}&limit=50`);
         if (!resp.ok) return [];
         const data = await resp.json() as { transactions: Tx[] };
-        return (data.transactions ?? []).filter(t => parseFloat(t.value) > 0);
+        return (data.transactions ?? []).filter(t => passesAnalysisFilter(t, chain));
       } catch { return []; }
     };
 

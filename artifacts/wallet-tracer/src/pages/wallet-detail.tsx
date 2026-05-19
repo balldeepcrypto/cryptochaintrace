@@ -433,7 +433,7 @@ const MIN_AMOUNT_DAG = 2;
 
 /**
  * Global spam / dust filter applied uniformly across ALL reports and ALL chains.
- * XLM: uses the per-asset allowlist (xlmPassesFilter).
+ * XLM: uses the per-asset allowlist (xlmPassesFilter) — loading threshold (0.0000001 XLM).
  * BTC / ETH: minimum 0.001 native (small coins — even tiny BTC transfers are meaningful).
  * DAG: minimum 2.0 (1 DAG micro-payments from reward wallets are filtered out).
  * Everything else (XRP, HBAR, XDC, Polygon, BSC, …): minimum 1.0 native token.
@@ -444,6 +444,47 @@ function passesSpamFilter(
   reportChain: string
 ): boolean {
   if (reportChain === "xlm") return xlmPassesFilter(tx);
+  const v = parseFloat(tx.value || "0");
+  if (!isFinite(v) || v === 0) return false;
+  const min = reportChain === "bitcoin" || reportChain === "ethereum" ? 0.001
+            : reportChain === "dag" ? MIN_AMOUNT_DAG
+            : 1.0;
+  return v >= min;
+}
+
+/**
+ * Stricter per-asset minimums for XLM used by reach-map analysis only.
+ * Keeps the loading threshold (0.0000001) but ignores micro-dust as commingling evidence.
+ * XLM: ≥1 · USDC: ≥1 · VELO/SHX: ≥1000 · AQUA/AFR/LSP/SSLX: ≥10000
+ */
+const XLM_ANALYSIS_ASSETS: Record<string, number> = {
+  XLM:   1,
+  USDC:  1,
+  VELO:  1000,
+  SHX:   1000,
+  AQUA:  10000,
+  AFR:   10000,
+  LSP:   10000,
+  SSLX:  10000,
+};
+
+function xlmPassesAnalysisFilter(tx: { tokenSymbol?: string | null; value: string }): boolean {
+  const asset = (tx.tokenSymbol ?? "XLM").toUpperCase();
+  const minAmt = XLM_ANALYSIS_ASSETS[asset];
+  if (minAmt === undefined) return false;
+  return parseFloat(tx.value) >= minAmt;
+}
+
+/**
+ * Analysis-level filter for reach-map building (Commingle Check, Intersection/Funnel).
+ * Stricter than passesSpamFilter: XLM dust (1-stroop airdrops etc.) is excluded as
+ * commingling evidence. All other chain thresholds are identical to passesSpamFilter.
+ */
+function passesAnalysisFilter(
+  tx: { value: string; tokenSymbol?: string | null },
+  reportChain: string
+): boolean {
+  if (reportChain === "xlm") return xlmPassesAnalysisFilter(tx);
   const v = parseFloat(tx.value || "0");
   if (!isFinite(v) || v === 0) return false;
   const min = reportChain === "bitcoin" || reportChain === "ethereum" ? 0.001
@@ -3245,7 +3286,7 @@ export default function WalletDetail() {
       for (const tx of rootTxs) {
         const cp = tx.direction === "in" ? tx.from : tx.to;
         if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-        if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+        if (!passesAnalysisFilter(tx, chain)) continue;
         reach.set(cp, { path: [wallet, cp], tier: 1 });
         segTxs[`${wallet}::${cp}`] = tx;
       }
@@ -3264,7 +3305,7 @@ export default function WalletDetail() {
           for (const tx of txResults[i]) {
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+            if (!passesAnalysisFilter(tx, chain)) continue;
             reach.set(cp, { path: [...parentData.path, cp], tier });
             segTxs[`${parentAddr}::${cp}`] = tx;
           }
@@ -3370,7 +3411,7 @@ export default function WalletDetail() {
       for (const tx of rootTxs) {
         const cp = tx.direction === "in" ? tx.from : tx.to;
         if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-        if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+        if (!passesAnalysisFilter(tx, chain)) continue;
         reach.set(cp, { path: [wallet, cp], tier: 1 });
       }
 
@@ -3387,7 +3428,7 @@ export default function WalletDetail() {
           for (const tx of txResults[i]) {
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+            if (!passesAnalysisFilter(tx, chain)) continue;
             reach.set(cp, { path: [...parentData.path, cp], tier });
           }
         }
@@ -3522,7 +3563,7 @@ export default function WalletDetail() {
         const cp = tx.direction === "in" ? tx.from : tx.to;
         if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
         // Skip dust/reward transactions — same filter as Connection Finder for DAG
-        if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+        if (!passesAnalysisFilter(tx, chain)) continue;
         reach.set(cp, { path: [wallet, cp], tier: 1, txCount: 1 });
         segmentTxs[`${wallet}::${cp}`] = tx;
       }
@@ -3542,7 +3583,7 @@ export default function WalletDetail() {
           for (const tx of txResults[i]) {
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-            if (chain === "dag" && parseFloat(tx.value) < 2) continue;
+            if (!passesAnalysisFilter(tx, chain)) continue;
             reach.set(cp, { path: [...parentData.path, cp], tier, txCount: 1 });
             segmentTxs[`${parentAddr}::${cp}`] = tx;
           }

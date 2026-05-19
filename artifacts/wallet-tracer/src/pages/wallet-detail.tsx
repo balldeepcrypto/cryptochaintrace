@@ -3285,9 +3285,9 @@ export default function WalletDetail() {
       setTieProgress(`${label}: tier 1…`);
       const rootTxs = await fetchTxs(wallet);
       for (const tx of rootTxs) {
+        if (!passesAnalysisFilter(tx, chain)) continue;
         const cp = tx.direction === "in" ? tx.from : tx.to;
         if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-        if (!passesAnalysisFilter(tx, chain)) continue;
         reach.set(cp, { path: [wallet, cp], tier: 1 });
         segTxs[`${wallet}::${cp}`] = tx;
       }
@@ -3304,9 +3304,9 @@ export default function WalletDetail() {
         for (let i = 0; i < prevNodes.length; i++) {
           const [parentAddr, parentData] = prevNodes[i];
           for (const tx of txResults[i]) {
+            if (!passesAnalysisFilter(tx, chain)) continue;
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-            if (!passesAnalysisFilter(tx, chain)) continue;
             reach.set(cp, { path: [...parentData.path, cp], tier });
             segTxs[`${parentAddr}::${cp}`] = tx;
           }
@@ -3410,9 +3410,9 @@ export default function WalletDetail() {
       setMultiProgress(`${label}: tier 1…`);
       const rootTxs = await fetchTxs(wallet);
       for (const tx of rootTxs) {
+        if (!passesAnalysisFilter(tx, chain)) continue;
         const cp = tx.direction === "in" ? tx.from : tx.to;
         if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-        if (!passesAnalysisFilter(tx, chain)) continue;
         reach.set(cp, { path: [wallet, cp], tier: 1 });
       }
 
@@ -3427,9 +3427,9 @@ export default function WalletDetail() {
         for (let i = 0; i < prevNodes.length; i++) {
           const [, parentData] = prevNodes[i];
           for (const tx of txResults[i]) {
+            if (!passesAnalysisFilter(tx, chain)) continue;
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-            if (!passesAnalysisFilter(tx, chain)) continue;
             reach.set(cp, { path: [...parentData.path, cp], tier });
           }
         }
@@ -3561,10 +3561,9 @@ export default function WalletDetail() {
       setCommingleProgress(`${label}: tier 1…`);
       const rootTxs = await fetchTxs(wallet);
       for (const tx of rootTxs) {
+        if (!passesAnalysisFilter(tx, chain)) continue;
         const cp = tx.direction === "in" ? tx.from : tx.to;
         if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-        // Skip dust/reward transactions — same filter as Connection Finder for DAG
-        if (!passesAnalysisFilter(tx, chain)) continue;
         reach.set(cp, { path: [wallet, cp], tier: 1, txCount: 1 });
         segmentTxs[`${wallet}::${cp}`] = tx;
       }
@@ -3582,9 +3581,9 @@ export default function WalletDetail() {
         for (let i = 0; i < prevNodes.length; i++) {
           const [parentAddr, parentData] = prevNodes[i];
           for (const tx of txResults[i]) {
+            if (!passesAnalysisFilter(tx, chain)) continue;
             const cp = tx.direction === "in" ? tx.from : tx.to;
             if (!cp || cp === wallet || HARD_EXCL.has(cp) || reach.has(cp)) continue;
-            if (!passesAnalysisFilter(tx, chain)) continue;
             reach.set(cp, { path: [...parentData.path, cp], tier, txCount: 1 });
             segmentTxs[`${parentAddr}::${cp}`] = tx;
           }

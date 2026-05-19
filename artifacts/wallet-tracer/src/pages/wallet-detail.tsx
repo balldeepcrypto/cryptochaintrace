@@ -534,6 +534,8 @@ interface CommingleFinding {
   knownInfo?: { label: string; type: string };
   tier: number;
   targetPath: string[];
+  /** Which peer wallet targetPath belongs to. Undefined means commingleResult.targetWallet. */
+  primaryWallet?: string;
   comparisons: Array<{ wallet: string; path: string[] }>;
   txCountTarget: number;
 }
@@ -1213,10 +1215,10 @@ export default function WalletDetail() {
     };
     const _ufUnion = (a: string, b: string) => { _ufP[_ufFind(a)] = _ufFind(b); };
     privFindings.forEach(f => {
-      // Union ALL input wallets that appear together in this finding — not just each
-      // with targetWallet. This captures Wallet2↔Wallet3 edges when they both share
-      // the same node, and handles transitivity correctly for all equal peers.
-      const walletsInFinding = [commingleResult.targetWallet, ...f.comparisons.map(c => c.wallet)]
+      // Use the actual primary wallet for this finding (may differ from targetWallet
+      // when two comparison wallets connect to each other without involving address).
+      const primaryW = f.primaryWallet ?? commingleResult.targetWallet;
+      const walletsInFinding = [primaryW, ...f.comparisons.map(c => c.wallet)]
         .filter(w => allInputWallets.includes(w));
       for (let i = 1; i < walletsInFinding.length; i++) {
         _ufUnion(walletsInFinding[0], walletsInFinding[i]);
@@ -1259,9 +1261,14 @@ export default function WalletDetail() {
       const renderSharedNodeWallets = (f: CommingleFinding) => {
         // Only include wallets that are part of a connected cluster (2+ wallets).
         // Isolated comparison wallets (no private findings) are excluded.
+        const primaryW = f.primaryWallet ?? commingleResult.targetWallet;
         const allWallets: Array<{ wLabel: string; wallet: string; path: string[] }> = [
-          { wLabel: "WALLET 1", wallet: commingleResult.targetWallet, path: f.targetPath },
-          ...f.comparisons.map((c, ci) => ({ wLabel: `WALLET ${ci + 2}`, wallet: c.wallet, path: c.path })),
+          { wLabel: `WALLET ${allInputWallets.indexOf(primaryW) + 1}`, wallet: primaryW, path: f.targetPath },
+          ...f.comparisons.map((c) => ({
+            wLabel: `WALLET ${allInputWallets.indexOf(c.wallet) + 1}`,
+            wallet: c.wallet,
+            path: c.path,
+          })),
         ].filter(({ wallet }) => connectedWallets.has(wallet));
         allWallets.forEach(({ wLabel, wallet, path }, wi) => {
           const isLastW = wi === allWallets.length - 1;
@@ -1306,7 +1313,7 @@ export default function WalletDetail() {
             const isDagTeamNode = fKn?.type === "dag-team";
             const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}${fKn ? `  [${fKn.label.toUpperCase()}]${dagTag}` : ""}`);
-            lines.push(`       TX Count (W1) : ${f.txCountTarget}   |   Connected by: ${f.comparisons.length + 1} wallet(s)`);
+            lines.push(`       Connected by: ${f.comparisons.length + 1} wallet(s)`);
             lines.push("");
             renderSharedNodeWallets(f);
             lines.push("");
@@ -1386,7 +1393,7 @@ export default function WalletDetail() {
             const isDagTeamNode = fKn?.type === "dag-team";
             const dagTag = isDagTeamNode ? "  ◄ DAG OFFICIAL ENTITY" : "";
             lines.push(`  ${String(i + 1).padStart(2, "0")}. ${f.sharedAddress}  (Tier ${f.tier})${fKn ? `  [${fKn.label.toUpperCase()}]${dagTag}` : ""}`);
-            lines.push(`       TX Count (W1) : ${f.txCountTarget}   |   Connected by: ${f.comparisons.length + 1} wallet(s)`);
+            lines.push(`       Connected by: ${f.comparisons.length + 1} wallet(s)`);
             lines.push("");
             renderSharedNodeWallets(f);
             lines.push("");
@@ -3550,31 +3557,43 @@ export default function WalletDetail() {
     };
 
     try {
-      setCommingleProgress("Scanning target wallet…");
-      const targetReach = await buildReachMap(address, "TARGET");
-
-      const compReachMaps: Array<{ wallet: string; reachMap: ReachMap }> = [];
-      for (let i = 0; i < commingleWallets.length; i++) {
-        const cw = commingleWallets[i];
-        setCommingleProgress(`Scanning comparison wallet ${i + 1}/${commingleWallets.length}…`);
-        compReachMaps.push({ wallet: cw, reachMap: await buildReachMap(cw, `COMP ${i + 1}`) });
+      // ── Symmetric peer scan — all wallets treated equally ──────────────────────
+      const allPeerWallets = [address, ...commingleWallets];
+      const peerReachMaps: Array<{ wallet: string; reachMap: ReachMap }> = [];
+      for (let i = 0; i < allPeerWallets.length; i++) {
+        const pw = allPeerWallets[i];
+        setCommingleProgress(`Scanning wallet ${i + 1}/${allPeerWallets.length}…`);
+        peerReachMaps.push({ wallet: pw, reachMap: await buildReachMap(pw, `W${i + 1}`) });
       }
 
-      const findings: CommingleFinding[] = [];
-      for (const [addr, targetData] of targetReach) {
-        const matchingComps = compReachMaps
-          .filter(({ reachMap }) => reachMap.has(addr))
-          .map(({ wallet: cw, reachMap }) => ({ wallet: cw, path: reachMap.get(addr)!.path }));
-        if (matchingComps.length > 0) {
-          findings.push({
-            sharedAddress: addr,
-            knownInfo: KNOWN_LABELS[addr],
-            tier: targetData.tier,
-            targetPath: targetData.path,
-            comparisons: matchingComps,
-            txCountTarget: targetData.txCount,
-          });
+      // Collect every address reached by each peer wallet.
+      const addrToApps = new Map<string, Array<{ wallet: string; path: string[]; tier: number; txCount: number }>>();
+      for (const { wallet: pw, reachMap } of peerReachMaps) {
+        for (const [addr, data] of reachMap) {
+          if (!addrToApps.has(addr)) addrToApps.set(addr, []);
+          addrToApps.get(addr)!.push({ wallet: pw, path: data.path, tier: data.tier, txCount: data.txCount });
         }
+      }
+
+      // A "shared node" is any address that appears in 2+ peer reach maps.
+      const findings: CommingleFinding[] = [];
+      for (const [addr, apps] of addrToApps) {
+        if (apps.length < 2) continue;
+        const minTier = Math.min(...apps.map(a => a.tier));
+        // Prefer the currently-viewed address as primary so existing report rendering
+        // stays compatible; fall back to the lowest-tier appearance.
+        const primaryApp = apps.find(a => a.wallet === address)
+          ?? apps.reduce((best, a) => a.tier < best.tier ? a : best);
+        const otherApps = apps.filter(a => a.wallet !== primaryApp.wallet);
+        findings.push({
+          sharedAddress: addr,
+          knownInfo: KNOWN_LABELS[addr],
+          tier: minTier,
+          targetPath: primaryApp.path,
+          primaryWallet: primaryApp.wallet !== address ? primaryApp.wallet : undefined,
+          comparisons: otherApps.map(a => ({ wallet: a.wallet, path: a.path })),
+          txCountTarget: primaryApp.txCount,
+        });
       }
 
       findings.sort((a, b) => {
@@ -3638,11 +3657,8 @@ export default function WalletDetail() {
         return acc;
       };
 
-      // target wallet: 10 pages (up to 2 000 ops); each comparison wallet: 5 pages (1 000 ops)
-      const clusterFetch = [
-        { w: address, maxPages: 10 },
-        ...commingleWallets.map((cw) => ({ w: cw, maxPages: 5 })),
-      ];
+      // First wallet: 10 pages (up to 2 000 ops); all others: 5 pages (1 000 ops each)
+      const clusterFetch = allPeerWallets.map((pw, i) => ({ w: pw, maxPages: i === 0 ? 10 : 5 }));
       await Promise.allSettled(
         clusterFetch.map(async ({ w, maxPages }) => {
           const rawTxs = await fetchPagesForExch(w, maxPages);
@@ -3668,25 +3684,15 @@ export default function WalletDetail() {
           }
         })
       );
-      // Supplement from reach-map tier-1 (bidirectional exchange nodes that appear in the
-      // connections graph even if not in the recent tx fetch window)
-      for (const [addr, data] of targetReach) {
-        if (data.tier !== 1) continue;
-        const info = KNOWN_LABELS[addr];
-        if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
-        const key = `${addr}::${address}`;
-        if (!exchFlowsMap.has(key)) {
-          exchFlowsMap.set(key, { exchAddr: addr, exchLabel: info.label, exchType: info.type, sourceWallet: address, txs: [] });
-        }
-      }
-      for (const { wallet: cw, reachMap } of compReachMaps) {
+      // Supplement from reach-map tier-1 — covers all peer wallets symmetrically.
+      for (const { wallet: pw, reachMap } of peerReachMaps) {
         for (const [addr, data] of reachMap) {
           if (data.tier !== 1) continue;
           const info = KNOWN_LABELS[addr];
           if (!info || !EXCH_TYPES_SCAN.has(info.type)) continue;
-          const key = `${addr}::${cw}`;
+          const key = `${addr}::${pw}`;
           if (!exchFlowsMap.has(key)) {
-            exchFlowsMap.set(key, { exchAddr: addr, exchLabel: info.label, exchType: info.type, sourceWallet: cw, txs: [] });
+            exchFlowsMap.set(key, { exchAddr: addr, exchLabel: info.label, exchType: info.type, sourceWallet: pw, txs: [] });
           }
         }
       }
@@ -3729,7 +3735,7 @@ export default function WalletDetail() {
         scannedAt: new Date().toISOString(),
         findings,
         tieredCounts,
-        totalScanned: targetReach.size,
+        totalScanned: addrToApps.size,
         segmentTxs,
         hopFetchStats,
         walletTxs,

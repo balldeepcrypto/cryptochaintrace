@@ -843,7 +843,7 @@ export default function WalletDetail() {
           .filter(t => {
             const cp = t.direction === "in" ? t.from : t.to;
             if (cp !== addr) return false;
-            return passesSpamFilter(t, chain);
+            return passesAnalysisFilter(t, chain);
           })
           .slice(0, 12);
 
@@ -1077,7 +1077,7 @@ export default function WalletDetail() {
       if (hPool.length > 0) return hPool[0];
       if (wallet === commingleResult.targetWallet) {
         const pool = allTxs
-          .filter(t => (t.direction === "in" ? t.from : t.to) === hopAddr && passesSpamFilter(t, commingleResult.chain))
+          .filter(t => (t.direction === "in" ? t.from : t.to) === hopAddr && passesAnalysisFilter(t, commingleResult.chain))
           .sort((a, b) => parseFloat(b.value) - parseFloat(a.value));
         if (pool.length > 0) return pool[0];
       }
@@ -1089,7 +1089,7 @@ export default function WalletDetail() {
       allTxs
         .filter((t) =>
           (t.direction === "in" ? t.from : t.to) === addr &&
-          passesSpamFilter(t, commingleResult.chain) &&
+          passesAnalysisFilter(t, commingleResult.chain) &&
           (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
         )
         .sort((a, b) => parseFloat(b.value) - parseFloat(a.value))
@@ -1100,7 +1100,7 @@ export default function WalletDetail() {
       // Primary: allTxs — user-loaded history, direction from target's perspective.
       const pool = allTxs.filter((t) =>
         (t.direction === "in" ? t.from : t.to) === addr &&
-        passesSpamFilter(t, commingleResult.chain) &&
+        passesAnalysisFilter(t, commingleResult.chain) &&
         (commingleMinAmount <= 0 || parseFloat(t.value) >= commingleMinAmount)
       );
       const top = (dir: "in" | "out") =>
@@ -1137,7 +1137,7 @@ export default function WalletDetail() {
     // then Amount / full TX hash / Date on separate indented lines.
     const emitTxs = (txs: Tx[], pad: string) => {
       // Apply global spam filter — drop dust, 0-value ops, and below-chain-minimum TXs.
-      const clean = txs.filter(t => passesSpamFilter(t, commingleResult.chain));
+      const clean = txs.filter(t => passesAnalysisFilter(t, commingleResult.chain));
       if (clean.length === 0) return;
       lines.push(`${pad}│`);
       clean.forEach((tx, ti) => {
@@ -1537,7 +1537,7 @@ export default function WalletDetail() {
 
     const emitTxBlock = (txs: Tx[], pad: string) => {
       // Apply global spam filter — drop dust, 0-value ops, and below-chain-minimum TXs.
-      const clean = txs.filter(t => passesSpamFilter(t, chain));
+      const clean = txs.filter(t => passesAnalysisFilter(t, chain));
       if (clean.length === 0) return;
       lines.push(`${pad}│`);
       clean.forEach((tx, ti) => {
@@ -1562,7 +1562,7 @@ export default function WalletDetail() {
     const bestInOut2 = (addr: string): Tx[] => {
       const pool = allTxs.filter(t =>
         (t.direction === "in" ? t.from : t.to) === addr &&
-        passesSpamFilter(t, chain)
+        passesAnalysisFilter(t, chain)
       );
       const top  = (dir: "in" | "out") =>
         pool.filter(t => t.direction === dir).sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
@@ -1651,11 +1651,11 @@ export default function WalletDetail() {
       const criticalNodes = sortedPriv.slice(0, 10);
       const summaryNodes  = sortedPriv.slice(10, 30);
 
-      // Returns the single highest-amount spam-filtered TX from allTxs touching hopAddr.
+      // Returns the single highest-amount analysis-filtered TX from allTxs touching hopAddr.
       const bestSingle = (hopAddr: string): Tx | null => {
         const pool = allTxs.filter(t =>
           ((t.direction === "in" ? t.from : t.to) === hopAddr) &&
-          passesSpamFilter(t, chain)
+          passesAnalysisFilter(t, chain)
         );
         if (pool.length === 0) return null;
         return pool.sort((a, b) => parseFloat(b.value) - parseFloat(a.value))[0];
@@ -1934,7 +1934,7 @@ export default function WalletDetail() {
         const sortByDate = (a: Tx, b: Tx) =>
           new Date(b.timestamp ?? 0).getTime() - new Date(a.timestamp ?? 0).getTime();
         // Apply global spam filter — only real-value txs in reports
-        const cleanTxs = txs.filter(t => passesSpamFilter(t, chain)).sort(sortByDate);
+        const cleanTxs = txs.filter(t => passesAnalysisFilter(t, chain)).sort(sortByDate);
         const renderExchBranch = (block: (typeof txs), addTrailingBlank: boolean) => {
           block.forEach((tx, i) => {
             const isLast = i === block.length - 1;
@@ -2035,6 +2035,7 @@ export default function WalletDetail() {
     const exchMap = new Map<string, WalletTxs>();
     for (const [wallet, txs] of walletTxMap) {
       for (const tx of txs) {
+        if (!passesAnalysisFilter(tx, chain)) continue;
         const cp = tx.direction === "in" ? tx.from : tx.to;
         if (!cp) continue;
         const kn = KNOWN_LABELS[cp];
@@ -2111,7 +2112,7 @@ export default function WalletDetail() {
           const wLabel  = wi === 0 ? "PRIMARY" : `W${wi + 1}`;
           const wShort  = w.length > 20 ? `${w.slice(0, 10)}…${w.slice(-6)}` : w;
           lines.push(`  ── ${wLabel} (${wShort}) ──`);
-          const clean = wtxs.filter(t => passesSpamFilter(t, chain)).sort(sortByDate);
+          const clean = wtxs.filter(t => passesAnalysisFilter(t, chain)).sort(sortByDate);
           clean.forEach((tx, i) => {
             const isLast  = i === clean.length - 1;
             const conn    = isLast ? "└─" : "├─";
@@ -3706,12 +3707,13 @@ export default function WalletDetail() {
       await Promise.allSettled(
         clusterFetch.map(async ({ w, maxPages }) => {
           const rawTxs = await fetchPagesForExch(w, maxPages);
-          // Filtered set for display (walletTxs)
-          const filtered = rawTxs.filter((tx) => chain === "xlm" ? xlmPassesFilter(tx) : true);
+          // Filtered set for display (walletTxs) — strict analysis minimums
+          const filtered = rawTxs.filter((tx) => passesAnalysisFilter(tx, chain));
           if (filtered.length > 0) walletTxs[w] = filtered;
-          // Exchange detection — scan every raw tx, both from and to, no amount filter
+          // Exchange detection — apply analysis filter so dust doesn't register as exchange flows
           for (const tx of rawTxs) {
             if (tx.direction === "self") continue;
+            if (!passesAnalysisFilter(tx, chain)) continue;
             const candidates = [tx.from, tx.to].filter((a): a is string => !!a && a !== w);
             for (const candidate of candidates) {
               const info = KNOWN_LABELS[candidate];

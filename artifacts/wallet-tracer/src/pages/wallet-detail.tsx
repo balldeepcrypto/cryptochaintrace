@@ -453,44 +453,37 @@ function passesSpamFilter(
 }
 
 /**
- * Stricter per-asset minimums for XLM used by reach-map analysis only.
- * Keeps the loading threshold (0.0000001) but ignores micro-dust as commingling evidence.
- * XLM: ≥1 · USDC: ≥1 · VELO/SHX: ≥1000 · AQUA/AFR/LSP/SSLX: ≥10000
- */
-const XLM_ANALYSIS_ASSETS: Record<string, number> = {
-  XLM:   1,
-  USDC:  1,
-  VELO:  1000,
-  SHX:   1000,
-  AQUA:  10000,
-  AFR:   10000,
-  LSP:   10000,
-  SSLX:  10000,
-};
-
-function xlmPassesAnalysisFilter(tx: { tokenSymbol?: string | null; value: string }): boolean {
-  const asset = (tx.tokenSymbol ?? "XLM").toUpperCase();
-  const minAmt = XLM_ANALYSIS_ASSETS[asset];
-  if (minAmt === undefined) return false;
-  return parseFloat(tx.value) >= minAmt;
-}
-
-/**
- * Analysis-level filter for reach-map building (Commingle Check, Intersection/Funnel).
- * Stricter than passesSpamFilter: XLM dust (1-stroop airdrops etc.) is excluded as
- * commingling evidence. All other chain thresholds are identical to passesSpamFilter.
+ * NUCLEAR EARLY GUARD — graph-building analysis filter only.
+ * Called as the FIRST check in every BFS loop (buildReachMap / buildReach) and
+ * at the fetchTxs return boundary. Never touches ledger display, Trail Trace,
+ * or START TRAIL TRACE.
+ *
+ * XLM whitelist: XLM≥1 · USDC≥1 · VELO/SHX≥1000 · AQUA/AFR/LSP/SSLX≥10000
+ * All other XLM tokens (VTRX, airdrop dust, etc.) → rejected.
+ * DAG: ≥2  ·  BTC/ETH: ≥0.001  ·  all other chains: ≥1.0
  */
 function passesAnalysisFilter(
-  tx: { value: string; tokenSymbol?: string | null },
-  reportChain: string
+  tx: { value?: string | null; tokenSymbol?: string | null },
+  chain: string
 ): boolean {
-  if (reportChain === "xlm") return xlmPassesAnalysisFilter(tx);
-  const v = parseFloat(tx.value || "0");
-  if (!isFinite(v) || v === 0) return false;
-  const min = reportChain === "bitcoin" || reportChain === "ethereum" ? 0.001
-            : reportChain === "dag" ? MIN_AMOUNT_DAG
-            : 1.0;
-  return v >= min;
+  if (!tx || !tx.value) return false;
+  const amt = parseFloat(tx.value);
+  if (isNaN(amt) || amt <= 0) return false;
+
+  if (chain === "xlm") {
+    const asset = (tx.tokenSymbol ?? "XLM").toUpperCase();
+    if (asset === "XLM"  && amt < 1.0)    return false;
+    if (asset === "USDC" && amt < 1.0)    return false;
+    if (["VELO", "SHX"].includes(asset)               && amt < 1000)  return false;
+    if (["AQUA", "AFR", "LSP", "SSLX"].includes(asset) && amt < 10000) return false;
+    // Any unlisted XLM token (VTRX, airdrops, etc.) is rejected outright
+    if (!["XLM", "USDC", "VELO", "SHX", "AQUA", "AFR", "LSP", "SSLX"].includes(asset)) return false;
+    return true;
+  }
+
+  if (chain === "dag")                                         return amt >= 2;
+  if (chain === "bitcoin" || chain === "ethereum")             return amt >= 0.001;
+  return amt >= 1.0;
 }
 
 // ─── Grouped by (address + direction) ─────────────────────────────────────────

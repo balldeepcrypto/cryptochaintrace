@@ -592,7 +592,9 @@ function parseStellarOp(
     tokenSymbol = stellarAssetSymbol(rec["asset_type"] === "native" ? "native" : rec["asset_code"]);
   }
 
-  const value = parseFloat(rawAmount).toFixed(6);
+  // toFixed(7): Stellar's minimum unit is 1 stroop = 1e-7 XLM; 6 decimal places would
+  // round 0.0000001 to "0.000000" and lose the value entirely.
+  const value = parseFloat(rawAmount).toFixed(7);
   const valueUsd = parseFloat((parseFloat(value) * priceUsd).toFixed(2));
   const isOut = from === address;
   const isSelf = from === address && (to === null || to === address);
@@ -1155,32 +1157,49 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
-      // Pre-parse filter: keep only records where this address appears in any role.
-      // Checks every field that Stellar operation types use to reference accounts:
-      //   source_account — transaction submitter (always present)
-      //   from / to      — payment sender / receiver
-      //   account        — create_account target or account_merge source
-      //   funder         — create_account funder
-      //   claimant       — claim_claimable_balance recipient
-      //   sponsor        — create_claimable_balance sponsor
-      const addrRecords = records.filter((rec) =>
-        String(rec["source_account"] ?? "") === address ||
-        String(rec["from"]           ?? "") === address ||
-        String(rec["to"]             ?? "") === address ||
-        String(rec["account"]        ?? "") === address ||
-        String(rec["funder"]         ?? "") === address ||
-        String(rec["claimant"]       ?? "") === address ||
-        String(rec["sponsor"]        ?? "") === address
-      );
-      const transactions = addrRecords
-        .map((rec) => parseStellarOp(rec, address, priceUsd))
-        .filter((t): t is NonNullable<typeof t> => t !== null)
-        // Post-parse safety filter: only keep transactions where this address is
-        // the resolved sender or receiver after field mapping.
-        .filter(t => t.from === address || t.to === address);
-      const hasMore = records.length === stellarLimit;
-      const lastRec = records[records.length - 1];
-      const nextCursor = hasMore && lastRec ? String(lastRec["paging_token"] ?? "") : null;
+      /** Filter raw Horizon records to those involving address, parse ops, post-filter from/to. */
+      function parseStellarRecords(recs: Array<Record<string, unknown>>) {
+        return recs
+          .filter((rec) =>
+            String(rec["source_account"] ?? "") === address ||
+            String(rec["from"]           ?? "") === address ||
+            String(rec["to"]             ?? "") === address ||
+            String(rec["account"]        ?? "") === address ||
+            String(rec["funder"]         ?? "") === address ||
+            String(rec["claimant"]       ?? "") === address ||
+            String(rec["sponsor"]        ?? "") === address
+          )
+          .map((rec) => parseStellarOp(rec, address, priceUsd))
+          .filter((t): t is NonNullable<typeof t> => t !== null)
+          .filter((t) => t.from === address || t.to === address);
+      }
+
+      let transactions = parseStellarRecords(records);
+      let hasMore = records.length === stellarLimit;
+      let nextCursor = hasMore && records.length > 0
+        ? String(records[records.length - 1]["paging_token"] ?? "") : null;
+
+      // Auto-follow empty first pages: mirrors HBAR's pattern.
+      // If page 1 returns 0 usable transactions (e.g. all ops are change_trust/manage_offer)
+      // but there are more pages, keep following the cursor until we find actual transactions
+      // or exhaust up to 10 continuation pages. This covers wallets whose real payment history
+      // lives in older ledger ranges beyond the most-recent non-value ops.
+      if (!cursorParam && transactions.length === 0 && hasMore && nextCursor) {
+        for (let af = 0; af < 10 && transactions.length === 0 && hasMore && nextCursor; af++) {
+          const afPath = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions&cursor=${encodeURIComponent(nextCursor)}`;
+          let afData: Record<string, unknown>;
+          try { afData = await stellarFetch(afPath); } catch { break; }
+          if (afData["_empty"]) break;
+          const afRecs = ((afData["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+          const afTxs = parseStellarRecords(afRecs);
+          hasMore = afRecs.length === stellarLimit;
+          nextCursor = hasMore && afRecs.length > 0
+            ? String(afRecs[afRecs.length - 1]["paging_token"] ?? "") : null;
+          if (afTxs.length > 0) { transactions = afTxs; break; }
+          if (!hasMore || !nextCursor) break;
+        }
+      }
+
       // Don't cache empty results (all records were non-value ops like manage_offer/change_trust)
       if (transactions.length === 0 && !hasMore && txCacheKey) txCache.invalidate(txCacheKey);
       res.json(GetWalletTransactionsResponse.parse({

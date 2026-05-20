@@ -202,6 +202,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "0.0.1649540": { label: "KuCoin HBAR",     type: "exchange" },
   "0.0.3014985": { label: "Bybit HBAR",      type: "exchange" },
   "0.0.2764670": { label: "Uphold HBAR",     type: "exchange" },
+  "0.0.1067766": { label: "Uphold HBAR",     type: "exchange" },
   "0.0.1147432": { label: "Kraken HBAR",     type: "exchange" },
   "0.0.2574696": { label: "Gate.io HBAR",    type: "exchange" },
   "0.0.4352618": { label: "Bitget HBAR",     type: "exchange" },

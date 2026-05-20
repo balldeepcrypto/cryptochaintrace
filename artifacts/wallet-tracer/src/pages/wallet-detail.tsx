@@ -17,7 +17,7 @@ import {
   ExternalLink, Users, ChevronRight, ChevronDown, Loader2,
   AlertTriangle, X, Zap, Bookmark, BookmarkCheck, Copy, Check, Heart, MessageSquare,
   Plus, GitMerge, Layers, Flag, FileText, MousePointer2, Download, FileJson,
-  Landmark, Star, Route,
+  Landmark, Star, Route, Package,
 } from "lucide-react";
 import { Link } from "wouter";
 
@@ -983,6 +983,8 @@ export default function WalletDetail() {
       minAmount?: string;
       nodesScanned?: number;
       walletLabels?: boolean;
+      victimWallet?: string;
+      victimName?: string;
     }
   ): string {
     const now  = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
@@ -1326,6 +1328,7 @@ export default function WalletDetail() {
   }
 
   function generateCommingleReport(): string {
+    return ((commingleResult: CommingleCheckResult | null): string => {
     if (!commingleResult) return "";
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = commingleResult.chain.toUpperCase();
@@ -1777,10 +1780,12 @@ export default function WalletDetail() {
       nodesScanned: commingleResult.totalScanned,
       walletLabels: true,
     });
+  })(commingleResultRef.current ?? commingleResult);
   }
 
   // ── Intersection / Funnel Analysis Report ─────────────────────────────────────
   function generateMultiReport(walletTxMap: Map<string, Tx[]>): string {
+    return ((multiResult: MultiAnalysisResult | null): string => {
     if (!multiResult) return "";
     const now     = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
@@ -2077,6 +2082,7 @@ export default function WalletDetail() {
       depth: "6",
       nodesScanned: multiResult.sharedCounterparties.length + multiResult.commonEndpoints.length,
     });
+  })(multiResultRef.current ?? multiResult);
   }
 
   // ── EXCHANGE FLOWS REPORT — all IN/OUT TXs touching known exchanges/bridges ──
@@ -2160,7 +2166,7 @@ export default function WalletDetail() {
     // segmentTxs holds hop→exchange TXs (e.g. GAZSPN→Kraken, GD6OZZ→Coinbase) that are
     // not visible in allTxs (which reflects only the target wallet's own history).
     // segmentTxs keys are "walletA::walletB" with both directions stored as the same TX.
-    const segData = commingleResult?.segmentTxs ?? {};
+    const segData = (commingleResultRef.current ?? commingleResult)?.segmentTxs ?? {};
     for (const segKey of Object.keys(segData)) {
       const cut = segKey.indexOf("::");
       if (cut < 0) continue;
@@ -2438,6 +2444,161 @@ export default function WalletDetail() {
       chain: chainUp,
       target: walletList[0] ?? address,
       comparisons: walletList.slice(1),
+    });
+  }
+
+  // ── EXECUTIVE SUMMARY — combines Commingle + Funnel + Exchange reports ───────
+  function generateExecutiveSummary(
+    _commingleText: string,
+    _funnelText: string,
+    _exchangeText: string,
+    victimWalletAddr: string,
+    victimPersonName: string,
+  ): string {
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const chainUp = chain.toUpperCase();
+    const lines: string[] = [];
+
+    const cr = commingleResultRef.current;
+    const mr = multiResultRef.current;
+
+    const tier1Count    = cr?.tieredCounts[0] ?? 0;
+    const totalFindings = cr?.findings.length ?? 0;
+    const privFindings  = cr?.findings.filter(f => f.knownInfo?.type !== "exchange").length ?? 0;
+    const exchFindings  = cr?.findings.filter(f => f.knownInfo?.type === "exchange").length ?? 0;
+    const exchFlows     = cr?.exchFlows ?? [];
+    const uniqueExchanges = [...new Set(exchFlows.map(f => f.exchLabel))];
+    const riskStr = tier1Count > 0 ? "⚠  HIGH RISK — Direct commingling detected"
+                  : totalFindings > 0 ? "△  MEDIUM RISK — Indirect commingling detected"
+                  : "✓  LOW RISK — No commingling detected within scanned depth";
+
+    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
+    lines.push(`║   EXECUTIVE SUMMARY — FULL PACKAGE REPORT                   ║`);
+    lines.push(`║   CryptoChainTrace — Blockchain Intelligence                ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+    lines.push(`CRYPTOCHAINTRACE — BLOCKCHAIN INTELLIGENCE`);
+    lines.push(`AGENCY / LAW ENFORCEMENT EDITION`);
+    lines.push(`${"─".repeat(64)}`);
+    lines.push(`Generated     : ${now}`);
+    lines.push(`Chain         : ${chainUp}`);
+    lines.push(`Primary Wallet: ${address}`);
+    if (cr) {
+      cr.comparisonWallets.forEach((w, i) => {
+        const kn = KNOWN_LABELS[w];
+        lines.push(`Wallet ${String(i + 2).padStart(2, " ")}     : ${w}${kn ? `  [${kn.label}]` : ""}`);
+      });
+      lines.push(`Total Wallets : ${cr.comparisonWallets.length + 1}`);
+    }
+    if (victimWalletAddr) {
+      const vKn = KNOWN_LABELS[victimWalletAddr];
+      lines.push(`Victim Wallet : ${victimWalletAddr}${vKn ? `  [${vKn.label}]` : ""}  (${victimPersonName})`);
+    }
+    lines.push(`${"─".repeat(64)}`);
+    lines.push(`OVERALL RISK ASSESSMENT: ${riskStr}`);
+    lines.push(`${"─".repeat(64)}`);
+
+    lines.push(``);
+    lines.push(`1. COMMINGLING CHECK SUMMARY`);
+    lines.push(`   ${"─".repeat(60)}`);
+    if (cr) {
+      lines.push(`   Wallets Scanned     : ${cr.comparisonWallets.length + 1}`);
+      lines.push(`   Addresses Mapped    : ${cr.totalScanned}`);
+      lines.push(`   Tier 1 (direct)    : ${cr.tieredCounts[0]} shared node${cr.tieredCounts[0] !== 1 ? "s" : ""}`);
+      lines.push(`   Tier 2 (2-hop)     : ${cr.tieredCounts[1]} shared node${cr.tieredCounts[1] !== 1 ? "s" : ""}`);
+      lines.push(`   Tiers 3–6          : ${cr.tieredCounts[2] + cr.tieredCounts[3] + cr.tieredCounts[4] + cr.tieredCounts[5]} shared node${(cr.tieredCounts[2] + cr.tieredCounts[3] + cr.tieredCounts[4] + cr.tieredCounts[5]) !== 1 ? "s" : ""}`);
+      lines.push(`   Private Convergence: ${privFindings} address${privFindings !== 1 ? "es" : ""}`);
+      lines.push(`   Exchange Shared    : ${exchFindings} address${exchFindings !== 1 ? "es" : ""}`);
+      if (tier1Count > 0) {
+        lines.push(``);
+        lines.push(`   ⚠ CRITICAL: ${tier1Count} DIRECT shared address${tier1Count !== 1 ? "es" : ""} detected.`);
+        lines.push(`   All tracked wallets share at least one direct counterparty — strong evidence`);
+        lines.push(`   of coordinated fund movement. See Commingling Check section for full details.`);
+      } else if (totalFindings > 0) {
+        lines.push(``);
+        lines.push(`   △ INDIRECT: ${totalFindings} shared address${totalFindings !== 1 ? "es" : ""} at depth 2+.`);
+        lines.push(`   Wallets share intermediary addresses — may indicate shared services or`);
+        lines.push(`   indirect commingling. Review findings in the full report below.`);
+      } else {
+        lines.push(``);
+        lines.push(`   ✓ No commingling detected within 6-tier depth. Load more TX history`);
+        lines.push(`   and re-run for deeper coverage.`);
+      }
+    } else {
+      lines.push(`   (No commingle data — comparison wallets required)`);
+    }
+
+    lines.push(``);
+    lines.push(`2. INTERSECTION / FUNNEL ANALYSIS SUMMARY`);
+    lines.push(`   ${"─".repeat(60)}`);
+    if (mr) {
+      const allShared = [...new Map([...mr.sharedCounterparties, ...mr.commonEndpoints].map(s => [s.address, s])).values()];
+      const privShared = allShared.filter(s => !["exchange","bridge","hot","custodial"].includes(s.knownInfo?.type ?? ""));
+      const exchShared = allShared.filter(s => ["exchange","bridge"].includes(s.knownInfo?.type ?? ""));
+      lines.push(`   Tracked Wallets         : ${mr.trackedWallets.length}`);
+      lines.push(`   Private Convergence     : ${privShared.length} node${privShared.length !== 1 ? "s" : ""}`);
+      lines.push(`   Exchange/Bridge Shared  : ${exchShared.length} node${exchShared.length !== 1 ? "s" : ""}`);
+      if (privShared.length > 0) {
+        lines.push(``);
+        lines.push(`   ⚠ ${privShared.length} private address${privShared.length !== 1 ? "es" : ""} reached by 2+ wallets within 6 hops.`);
+        const top = privShared[0];
+        lines.push(`   Top convergence: ${top.address}  (${top.appearances.length}/${mr.trackedWallets.length} wallets)`);
+      } else {
+        lines.push(``);
+        lines.push(`   ✓ No private convergence at depth 1–6.`);
+      }
+    } else {
+      lines.push(`   (No funnel data available)`);
+    }
+
+    lines.push(``);
+    lines.push(`3. EXCHANGE FLOWS SUMMARY`);
+    lines.push(`   ${"─".repeat(60)}`);
+    if (exchFlows.length > 0) {
+      lines.push(`   Exchange Contacts : ${uniqueExchanges.length} exchange${uniqueExchanges.length !== 1 ? "s" : ""} identified`);
+      uniqueExchanges.forEach(e => lines.push(`   · ${e}`));
+      lines.push(``);
+      lines.push(`   ACTION: File subpoena / KYC requests with all exchanges listed above.`);
+      lines.push(`   Request: account holder identity, IP logs, linked payment methods, full TX records.`);
+    } else {
+      lines.push(`   No exchange flows in loaded TX history. Load full history and re-run.`);
+    }
+
+    lines.push(``);
+    lines.push(`4. RECOMMENDED INVESTIGATIVE ACTIONS`);
+    lines.push(`   ${"─".repeat(60)}`);
+    let priority = 1;
+    if (victimWalletAddr) {
+      lines.push(`   VICTIM  : ${victimPersonName}  —  ${victimWalletAddr}`);
+      lines.push(``);
+    }
+    if (tier1Count > 0) {
+      lines.push(`   ★ P${priority++}: Subpoena all Tier 1 commingled addresses immediately.`);
+      lines.push(`      Direct shared counterparties = highest-confidence evidence of coordination.`);
+    }
+    if (exchFlows.length > 0) {
+      lines.push(`   ★ P${priority++}: File KYC/subpoena with ${uniqueExchanges.length} exchange${uniqueExchanges.length !== 1 ? "s" : ""}:`);
+      uniqueExchanges.forEach(e => lines.push(`      · ${e}`));
+    }
+    if (mr && [...mr.sharedCounterparties, ...mr.commonEndpoints].length > 0) {
+      lines.push(`   ★ P${priority++}: Investigate private convergence nodes from funnel analysis.`);
+      lines.push(`      Addresses shared by 2+ wallets within 6 hops — potential mixing intermediaries.`);
+    }
+    if (priority === 1) {
+      lines.push(`   · No high-priority findings. Load full TX history and re-run for broader coverage.`);
+      lines.push(`   · Consider expanding the wallet list to include additional suspect addresses.`);
+    }
+    lines.push(``);
+    lines.push(`${"═".repeat(64)}`);
+    lines.push(`FULL REPORTS FOLLOW IN THREE SECTIONS BELOW.`);
+    lines.push(`Each section is independently signed with a tamper-evident SHA-256 hash.`);
+    lines.push(`${"═".repeat(64)}`);
+
+    return auditAndSign(lines, {
+      reportType: "Full Package — Executive Summary",
+      chain: chainUp,
+      target: address,
+      victimWallet: victimWalletAddr || "(not specified)",
+      victimName: victimPersonName || "(not specified)",
     });
   }
 
@@ -2918,6 +3079,13 @@ export default function WalletDetail() {
   const [commingleToast, setCommingleToast] = useState<string | null>(null);
   const [commingleMinAmount, setCommingleMinAmount] = useState(1.0);
   const [commingleMinAmountInput, setCommingleMinAmountInput] = useState("1");
+  // ── Full Package ──────────────────────────────────────────────────────────────
+  const commingleResultRef = useRef<CommingleCheckResult | null>(null);
+  const multiResultRef = useRef<MultiAnalysisResult | null>(null);
+  const [fullPkgLoading, setFullPkgLoading] = useState(false);
+  const [fullPkgProgress, setFullPkgProgress] = useState("");
+  const [victimWallet, setVictimWallet] = useState("rh64D3AcJkFRgyZe5XYFp4jEVLn43NCqaH");
+  const [victimName, setVictimName] = useState("Ball Deep Crypto");
   const comminglePanelRef = useRef<HTMLDivElement>(null);
   const pathPanelRef      = useRef<HTMLDivElement>(null);
 
@@ -3653,11 +3821,11 @@ export default function WalletDetail() {
   }, [address, tieBWallet, tieMaxHops, chain]);
 
   // ── Multi-wallet commingling analysis ──
-  const runMultiAnalysis = useCallback(async () => {
-    const allWallets = [address, ...multiWallets].filter(Boolean);
+  const runMultiAnalysis = useCallback(async (walletOverride?: string[]) => {
+    const allWallets = (walletOverride ?? [address, ...multiWallets]).filter(Boolean);
     if (allWallets.length < 2) {
       setMultiError("Add at least one additional wallet address to compare.");
-      return;
+      return null;
     }
     setMultiLoading(true);
     setMultiError(null);
@@ -3778,10 +3946,14 @@ export default function WalletDetail() {
           paths: s.appearances.map(a => ({ wallet: a.wallet, path: a.pathChain })),
         }));
 
-      setMultiResult({ trackedWallets: allWallets, sharedCounterparties, commonEndpoints, patterns });
-      setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+      const _mrRes: MultiAnalysisResult = { trackedWallets: allWallets, sharedCounterparties, commonEndpoints, patterns };
+      multiResultRef.current = _mrRes;
+      setMultiResult(_mrRes);
+      if (!walletOverride) setTimeout(() => multiPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+      return _mrRes;
     } catch (err) {
       setMultiError(err instanceof Error ? err.message : "Analysis failed");
+      return null;
     } finally {
       setMultiLoading(false);
       setMultiProgress("");
@@ -3789,10 +3961,11 @@ export default function WalletDetail() {
   }, [address, multiWallets, chain]);
 
   // ── COMMINGLE CHECK — depth-1 through depth-6 BFS across target + comparison wallets ──
-  const runCommingleCheck = useCallback(async () => {
-    if (commingleWallets.length === 0) {
+  const runCommingleCheck = useCallback(async (comparisonOverride?: string[]) => {
+    const _compWallets = comparisonOverride ?? commingleWallets;
+    if (_compWallets.length === 0) {
       setCommingleError("Add at least one comparison wallet address.");
-      return;
+      return null;
     }
     setCommingleLoading(true);
     setCommingleError(null);
@@ -3883,9 +4056,9 @@ export default function WalletDetail() {
       const targetReach = await buildReachMap(address, "TARGET");
 
       const compReachMaps: Array<{ wallet: string; reachMap: ReachMap }> = [];
-      for (let i = 0; i < commingleWallets.length; i++) {
-        const cw = commingleWallets[i];
-        setCommingleProgress(`Scanning comparison wallet ${i + 1}/${commingleWallets.length}…`);
+      for (let i = 0; i < _compWallets.length; i++) {
+        const cw = _compWallets[i];
+        setCommingleProgress(`Scanning comparison wallet ${i + 1}/${_compWallets.length}…`);
         compReachMaps.push({ wallet: cw, reachMap: await buildReachMap(cw, `COMP ${i + 1}`) });
       }
 
@@ -3986,7 +4159,7 @@ export default function WalletDetail() {
       // target wallet: 10 pages (up to 2 000 ops); each comparison wallet: 5 pages (1 000 ops)
       const clusterFetch = [
         { w: address, maxPages: 10 },
-        ...commingleWallets.map((cw) => ({ w: cw, maxPages: 5 })),
+        ..._compWallets.map((cw) => ({ w: cw, maxPages: 5 })),
       ];
       await Promise.allSettled(
         clusterFetch.map(async ({ w, maxPages }) => {
@@ -4059,9 +4232,9 @@ export default function WalletDetail() {
 
       const exchFlows = [...exchFlowsMap.values()];
 
-      setCommingleResult({
+      const _crRes: CommingleCheckResult = {
         targetWallet: address,
-        comparisonWallets: commingleWallets,
+        comparisonWallets: _compWallets,
         chain,
         scannedAt: new Date().toISOString(),
         findings,
@@ -4071,15 +4244,97 @@ export default function WalletDetail() {
         hopFetchStats,
         walletTxs,
         exchFlows,
-      });
-      setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+      };
+      commingleResultRef.current = _crRes;
+      setCommingleResult(_crRes);
+      if (!comparisonOverride) setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+      return _crRes;
     } catch (err) {
       setCommingleError(err instanceof Error ? err.message : "Analysis failed");
+      return null;
     } finally {
       setCommingleLoading(false);
       setCommingleProgress("");
     }
   }, [address, commingleWallets, chain]);
+
+  // ── FULL PACKAGE — runs all 3 analyses + Executive Summary in one click ──────
+  const runFullPackage = useCallback(async () => {
+    const pkgWallets = commingleWallets.length > 0 ? commingleWallets
+                     : multiWallets.length > 0 ? multiWallets : [];
+    if (pkgWallets.length === 0) {
+      setShowComminglePanel(true);
+      setTimeout(() => comminglePanelRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 200);
+      setCommingleError("FULL PACKAGE requires at least one comparison wallet. Add wallets in the Commingle Check panel, then click FULL PACKAGE again.");
+      return;
+    }
+
+    setFullPkgLoading(true);
+    setFullPkgProgress("Step 1/4: Commingle Check…");
+    // Reset refs so generators use fresh data even if stale state remains from a prior run
+    commingleResultRef.current = null;
+    multiResultRef.current = null;
+
+    try {
+      // 1. Commingle Check
+      await runCommingleCheck(pkgWallets);
+
+      // 2. Intersection / Funnel Analysis (same wallet set)
+      setFullPkgProgress("Step 2/4: Intersection / Funnel Analysis…");
+      await runMultiAnalysis([address, ...pkgWallets]);
+
+      // 3. Fetch TX maps for exchange flows
+      setFullPkgProgress("Step 3/4: Fetching exchange flow data…");
+      const walletTxMap = new Map<string, Tx[]>();
+      walletTxMap.set(address, allTxs);
+      await Promise.all(
+        pkgWallets.map(async (w) => {
+          try {
+            const resp = await fetch(`/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=200`);
+            if (!resp.ok) { walletTxMap.set(w, []); return; }
+            const data = await resp.json() as { transactions: Tx[] };
+            walletTxMap.set(w, data.transactions ?? []);
+          } catch { walletTxMap.set(w, []); }
+        })
+      );
+
+      // 4. Generate all 3 reports + executive summary
+      setFullPkgProgress("Step 4/4: Generating reports…");
+      const commingleText = commingleResultRef.current
+        ? generateCommingleReport()
+        : "(Commingle check did not produce results — check wallet addresses and try again)";
+      const funnelText = multiResultRef.current
+        ? generateMultiReport(walletTxMap)
+        : "(Funnel analysis did not produce results)";
+      const exchText = generateMultiExchangeFlowsReport(walletTxMap);
+      const summaryText = generateExecutiveSummary(commingleText, funnelText, exchText, victimWallet, victimName);
+
+      const divider = `\n\n${"═".repeat(64)}\n\n`;
+      const fullReport = [summaryText, commingleText, funnelText, exchText].join(divider);
+
+      const title = `Full Package — ${chain.toUpperCase()} — ${pkgWallets.length + 1} wallets`;
+      setReportContent(fullReport);
+      setReportTitle(title);
+      setReportJsonData({
+        reportType: "full-package",
+        generatedAt: new Date().toISOString(),
+        chain,
+        subjectAddress: address,
+        victimWallet,
+        victimName,
+        walletInfo: wallet,
+        trackedWallets: [address, ...pkgWallets],
+        reportText: fullReport,
+      });
+      setShowReportModal(true);
+    } catch (err) {
+      setCommingleError(`Full Package failed: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setFullPkgLoading(false);
+      setFullPkgProgress("");
+    }
+  }, [address, commingleWallets, multiWallets, chain, victimWallet, victimName, allTxs,
+      runCommingleCheck, runMultiAnalysis]);
 
   // ── Helpers ──
   const getRiskBadge = (score: number | null) => {
@@ -4427,11 +4682,42 @@ export default function WalletDetail() {
               <ArrowLeft className="w-3.5 h-3.5 mr-1.5" /> TRACE TO ORIGIN
             </Button>
             <Button
+              disabled={fullPkgLoading}
+              className="font-mono text-xs bg-yellow-500 hover:bg-yellow-400 text-black font-bold border-yellow-400/60 shadow-[0_0_12px_rgba(234,179,8,0.35)] hover:shadow-[0_0_18px_rgba(234,179,8,0.5)] disabled:opacity-60 disabled:cursor-not-allowed transition-all"
+              title="One-click: runs Commingle Check + Intersection/Funnel Analysis + Exchange Flows and generates an Executive Summary"
+              onClick={runFullPackage}
+            >
+              {fullPkgLoading
+                ? <><Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" />{fullPkgProgress || "Running…"}</>
+                : <><Package className="w-3.5 h-3.5 mr-1.5" />FULL PACKAGE</>
+              }
+            </Button>
+            <Button
               className="font-mono bg-primary text-primary-foreground hover:bg-primary/90 text-xs"
               onClick={() => startTrailTrace(address)}
             >
               <GitFork className="w-3.5 h-3.5 mr-1.5" /> START TRAIL TRACE
             </Button>
+          </div>
+          {/* ── Full Package — victim config strip ── */}
+          <div className="flex items-center gap-2 flex-wrap">
+            <span className="text-[10px] font-mono text-yellow-500/70 shrink-0">FULL PKG VICTIM:</span>
+            <input
+              className="font-mono text-[10px] bg-yellow-950/20 border border-yellow-500/20 text-yellow-200/80 placeholder:text-muted-foreground/40 rounded px-2 py-0.5 w-56 focus:outline-none focus:border-yellow-400/50"
+              placeholder="Victim wallet address…"
+              value={victimWallet}
+              onChange={e => setVictimWallet(e.target.value.trim())}
+              spellCheck={false}
+            />
+            <input
+              className="font-mono text-[10px] bg-yellow-950/20 border border-yellow-500/20 text-yellow-200/80 placeholder:text-muted-foreground/40 rounded px-2 py-0.5 w-40 focus:outline-none focus:border-yellow-400/50"
+              placeholder="Victim name…"
+              value={victimName}
+              onChange={e => setVictimName(e.target.value)}
+            />
+            <span className="text-[9px] font-mono text-muted-foreground/40">
+              (embedded in Executive Summary; uses Commingle Check wallet list)
+            </span>
           </div>
           {/* ── Selection badge + Generate Report ── */}
           {selectedWallets.size > 0 && (
@@ -5719,7 +6005,7 @@ export default function WalletDetail() {
 
               {/* Analyze button */}
               <button
-                onClick={runMultiAnalysis}
+                onClick={() => runMultiAnalysis()}
                 disabled={multiLoading || multiWallets.length === 0}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-violet-600 hover:bg-violet-500 active:bg-violet-700 disabled:bg-muted/30 disabled:text-muted-foreground/60 text-white font-mono text-xs font-bold tracking-widest transition-colors mt-1"
               >
@@ -6076,7 +6362,7 @@ export default function WalletDetail() {
               </div>
 
               <button
-                onClick={runCommingleCheck}
+                onClick={() => runCommingleCheck()}
                 disabled={commingleLoading || commingleWallets.length === 0}
                 className="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-amber-600 hover:bg-amber-500 active:bg-amber-700 disabled:bg-muted/30 disabled:text-muted-foreground/60 text-white font-mono text-xs font-bold tracking-widest transition-colors mt-1"
               >

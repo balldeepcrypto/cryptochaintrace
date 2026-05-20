@@ -68,7 +68,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </nav>
         <div className="p-4 border-t border-border">
           <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest text-center">
-            Secure Terminal v1.0.7
+            Secure Terminal v1.0.8
           </div>
         </div>
       </aside>

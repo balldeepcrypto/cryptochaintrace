@@ -68,7 +68,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         </nav>
         <div className="p-4 border-t border-border">
           <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest text-center">
-            Secure Terminal v1.1.5
+            {/* force fresh Vercel build for founder labels */}
+            Secure Terminal v1.1.6
           </div>
         </div>
       </aside>

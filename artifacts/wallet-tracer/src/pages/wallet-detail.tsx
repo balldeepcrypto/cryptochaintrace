@@ -25,12 +25,25 @@ import { Link } from "wouter";
 // "dag-team" = DAG official entities (DOR Metagraph, DTM, Team Foundation, Treasury,
 //   Validator Tax Pool, Reward Pool). They are LABELLED PROMINENTLY and highlighted in
 //   reports, but they DO count as private commingling evidence (unlike exchange/bridge/genesis).
-const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" }> = {
+const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" | "founder" }> = {
   // ── XRP ────────────────────────────────────────────────────────────────────
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis",     type: "genesis" },
   r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.",      type: "genesis" },
   r9cZA1mLK5R5Am25ArfXFmqgNwjZgnfk59: { label: "Ripple Cold 1",   type: "genesis" },
   rHb9CJAWyB4uj91VRWn96DkukG4bwdtyTh: { label: "Ripple Cold 2",   type: "genesis" },
+  rhtufNsYfrozs4GvSq4HMYcR9y3dg8FwdC: { label: "Ripple Treasury / Official", type: "genesis" },
+  // ── XRPL Founders / Major Holders ──────────────────────────────────────────
+  ragKXjY7cBTXUus32sYHZVfkY46Nt2O829: { label: "Arthur Britto — XRPL Co-Creator", type: "founder" },
+  rG2eEaeiJou6cVQ3Ktx7XMNwGhuW99xmHP: { label: "Arthur Britto — XRPL Co-Creator", type: "founder" },
+  rsF9cc6gniHLTR2Jng29ng21ez7L9PpmPt: { label: "Arthur Britto — XRPL Co-Creator", type: "founder" },
+  rJ5EJYsW6Vkeruj1LAmQYq3VP7QUQKBH1W: { label: "Arthur Britto — XRPL Co-Creator", type: "founder" },
+  rsXNUCJKxeyFuGHyfRnuWPita2ns32upBD: { label: "Arthur Britto — XRPL Co-Creator", type: "founder" },
+  rQKZSmgmBJvv3Fwj1vuGjUXnegTqJc25z:  { label: "Arthur Britto — XRPL Co-Creator", type: "founder" },
+  rDfrrrBJZshSQDvfT2kmL9oUBdish52unH: { label: "Chris Larsen — Ripple Co-Founder", type: "founder" },
+  rD6tdgGHG7hwGTA6P39aE7W89fbqxXRjzk: { label: "Chris Larsen — Ripple Co-Founder", type: "founder" },
+  r476293LUcdqtjiSGJ5Dh44J1xBCDWeX3:  { label: "Chris Larsen — Ripple Co-Founder", type: "founder" },
+  r44CNwMwyJf4MEA1eHVMLPTkZ1LSv4B2rv: { label: "Chris Larsen — Ripple Co-Founder", type: "founder" },
+  rhREXVH938ToGkdJ09NCYEY4x8kSEtjna:  { label: "Chris Larsen — Ripple Co-Founder", type: "founder" },
   rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: { label: "Bitstamp XRP",    type: "exchange" },
   rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1: { label: "Bitstamp XRP 2",  type: "exchange" },
   rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: { label: "Bitfinex XRP",    type: "exchange" },
@@ -69,6 +82,10 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rsXT3AQqhHDusFs3nQQuwcA1yXRLZJAXKw: { label: "Uphold XRP 3",    type: "exchange" },
   raBQUYdAhnnojJQ6Xi3eXztZ74ot24RDq1: { label: "Gemini XRP",      type: "exchange" },
   rKNwXQh9GMjaU8uTqKLECsqyib47g5dMvo: { label: "Crypto.com XRP",  type: "exchange" },
+  rEvwSpejhGTbdAXbxRTpGAzPBQKRZxN5s:  { label: "eToro XRP",        type: "exchange" },
+  rBEc94rUFfLfTDwwGN7rQGBHc883c2OHx:  { label: "Uphold XRP",       type: "exchange" },
+  rU5ACGLKbhPQB92GZhT5UV22NHeVrEGuU6: { label: "Coinbase XRP (Cold)", type: "exchange" },
+  rEvuKRoEbZSbm5k5Qe5eTD9BixZXsfkxHf: { label: "Kraken XRP",       type: "exchange" },
   rGFuMiw48HdbnrUbkRToR1yMBZkjbqvUhQ: { label: "MEXC XRP",        type: "exchange" },
   rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: { label: "Bybit XRP",       type: "exchange" },
   rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV: { label: "KuCoin XRP",      type: "exchange" },
@@ -826,7 +843,7 @@ interface MultiGraphNode {
 
 interface MultiSharedEntry {
   address: string;
-  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" };
+  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" | "founder" };
   appearances: Array<{
     wallet: string;
     depth: number;
@@ -844,7 +861,7 @@ interface MultiAnalysisResult {
   patterns: Array<{
     id: number;
     sharedAddr: string;
-    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" };
+    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" | "founder" };
     totalTxCount: number;
     totalValueUsd: number;
     paths: Array<{ wallet: string; path: string[] }>;
@@ -2224,7 +2241,7 @@ export default function WalletDetail() {
 
       for (const [addr, txs] of entries) {
         const kn = KNOWN_LABELS[addr];
-        const typeTag = kn?.type === "bridge" ? "BRIDGE" : kn?.type === "genesis" ? "PROTOCOL" : "EXCHANGE";
+        const typeTag = kn?.type === "bridge" ? "BRIDGE" : kn?.type === "genesis" ? "PROTOCOL" : kn?.type === "founder" ? "FOUNDER" : kn?.type === "mixer" ? "MIXER" : "EXCHANGE";
         const displayLbl = toDisplayLabel(kn?.label ?? addr);
         const headerLabel = `[${displayLbl}]  ◄ ${typeTag} FLOW`;
         lines.push(sep(headerLabel));
@@ -2373,7 +2390,7 @@ export default function WalletDetail() {
 
       for (const [addr, wMap] of entries) {
         const kn = KNOWN_LABELS[addr];
-        const typeTag    = kn?.type === "bridge" ? "BRIDGE" : kn?.type === "genesis" ? "PROTOCOL" : "EXCHANGE";
+        const typeTag    = kn?.type === "bridge" ? "BRIDGE" : kn?.type === "genesis" ? "PROTOCOL" : kn?.type === "founder" ? "FOUNDER" : kn?.type === "mixer" ? "MIXER" : "EXCHANGE";
         const displayLbl = toDisplayLabel(kn?.label ?? addr);
         lines.push(sep(`[${displayLbl}]  ◄ ${typeTag} FLOW`));
         lines.push(`  Address  : ${addr}`);
@@ -4373,6 +4390,7 @@ export default function WalletDetail() {
       defi:     { bg: "bg-teal-700/95",    border: "border-teal-300/80",    glow: "shadow-teal-400/40",    ring: "ring-1 ring-teal-400/30",    emoji: "🔄" },
       flagged:  { bg: "bg-red-600/95",     border: "border-red-300/80",     glow: "shadow-red-400/40",     ring: "ring-1 ring-red-400/30",     emoji: "🚨" },
       mixer:    { bg: "bg-rose-900/95",    border: "border-rose-300/80",    glow: "shadow-rose-400/60",    ring: "ring-2 ring-rose-400/50",    emoji: "🌀" },
+      founder:  { bg: "bg-yellow-600/95", border: "border-yellow-300/80",  glow: "shadow-yellow-400/60",  ring: "ring-2 ring-yellow-400/50",  emoji: "👑" },
       bridge:   { bg: "bg-amber-600/95",   border: "border-amber-300/80",   glow: "shadow-amber-400/40",   ring: "ring-1 ring-amber-400/30",   emoji: "🌉" },
       "dag-team": { bg: "bg-orange-600/95", border: "border-orange-300/80", glow: "shadow-orange-400/40",  ring: "ring-1 ring-orange-400/30",  emoji: "🏛️" },
     };

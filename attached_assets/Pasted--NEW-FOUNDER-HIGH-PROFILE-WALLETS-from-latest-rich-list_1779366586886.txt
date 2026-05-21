@@ -1,0 +1,29 @@
+// === NEW FOUNDER / HIGH-PROFILE WALLETS (from latest rich list) ===
+"ragKXjY7cBTXUus32sYHZVfkY46Nt2O829": { label: "AH Britto (Arthur Britto) — XRPL Co-Creator / Major Holder", type: "founder" },
+"rG2eEaeiJou6cVQ3Ktx7XMNwGhuW99xmHP": { label: "AH Britto (Arthur Britto) — XRPL Co-Creator / Major Holder", type: "founder" },
+"rsF9cc6gniHLTR2Jng29ng21ez7L9PpmPt": { label: "AH Britto (Arthur Britto) — XRPL Co-Creator / Major Holder", type: "founder" },
+"rJ5EJYsW6Vkeruj1LAmQYq3VP7QUQKBH1W": { label: "AH Britto (Arthur Britto) — XRPL Co-Creator / Major Holder", type: "founder" },
+"rsXNUCJKxeyFuGHyfRnuWPita2ns32upBD": { label: "AH Britto (Arthur Britto) — XRPL Co-Creator / Major Holder", type: "founder" },
+"rQKZSmgmBJvv3Fwj1vuGjUXnegTqJc25z": { label: "AH Britto (Arthur Britto) — XRPL Co-Creator / Major Holder", type: "founder" },
+
+"rDfrrrBJZshSQDvfT2kmL9oUBdish52unH": { label: "Chris Larsen (Ripple Co-Founder)", type: "founder" },
+"rD6tdgGHG7hwGTA6P39aE7W89fbqxXRjzk": { label: "Chris Larsen (Ripple Co-Founder)", type: "founder" },
+"r476293LUcdqtjiSGJ5Dh44J1xBCDWeX3": { label: "Chris Larsen (Ripple Co-Founder)", type: "founder" },
+"r44CNwMwyJf4MEA1eHVMLPTkZ1LSv4B2rv": { label: "Chris Larsen (Ripple Co-Founder)", type: "founder" },
+"rhREXVH938ToGkdJ09NCYEY4x8kSEtjna": { label: "Chris Larsen (Ripple Co-Founder)", type: "founder" },
+
+// === NEW / ADDITIONAL EXCHANGE & CUSTODIAL WALLETS ===
+"rKNwXQh9GMjaU8uTqKLECsqyib47g5dMvo": { label: "Crypto.com", type: "exchange" },
+"r4DymtkgUAH2wqRxVfdd3Xtsw zim6eC6c5": { label: "Crypto.com", type: "exchange" },   // note: address has no space in code
+
+"rEvwSpejhGTbdAXbxRTpGAzPBQKRZxN5s": { label: "eToro", type: "exchange" },
+
+"rBEc94rUFfLfTDwwGN7rQGBHc883c2OHx": { label: "Uphold", type: "exchange" },
+
+"rU5ACGLKbhPQB92GZhT5UV22NHeVrEGuU6": { label: "Coinbase (Cold)", type: "exchange" },
+
+"rnJrjec2vrT JAAQUTMTjj7U6xdXrk9N4mT": { label: "Kraken", type: "exchange" },
+"rEvuKRoEbZSbm5k5Qe5eTD9BixZXsfkxHf": { label: "Kraken", type: "exchange" },
+
+// === Ripple Official / Treasury (highly notable) ===
+"rhtufNsYfrozs4GvSq4HMYcR9y3dg8FwdC": { label: "Ripple Treasury / Official", type: "exchange" },

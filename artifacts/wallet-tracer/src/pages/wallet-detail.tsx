@@ -25,7 +25,7 @@ import { Link } from "wouter";
 // "dag-team" = DAG official entities (DOR Metagraph, DTM, Team Foundation, Treasury,
 //   Validator Tax Pool, Reward Pool). They are LABELLED PROMINENTLY and highlighted in
 //   reports, but they DO count as private commingling evidence (unlike exchange/bridge/genesis).
-const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" }> = {
+const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" }> = {
   // ── XRP ────────────────────────────────────────────────────────────────────
   rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh: { label: "XRP Genesis",     type: "genesis" },
   r3kmLJN5D28dHuH8vZNUZpMC4JPgrKQBkR: { label: "Ripple Inc.",      type: "genesis" },
@@ -261,6 +261,10 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "0x1ab4973a48dc892cd9971ece8e01dcc7688f8f23": { label: "Bybit ETH 2",    type: "exchange" },
   "0x0d0707963952f2fba59dd06f2b425ace40b492fe": { label: "Gate.io ETH",    type: "exchange" },
   "0x7793cd85c11a924478d358d49b05b37b91ab9d79": { label: "Gate.io ETH 2",  type: "exchange" },
+  "0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc": { label: "Tornado Cash 0.1 ETH Pool (Mixer)", type: "mixer" },
+  "0x47ce0c6ed5b0ce3d3a51fdb1c52dc66a7c3c2936": { label: "Tornado Cash 1 ETH Pool (Mixer)",   type: "mixer" },
+  "0x910cbd523d972eb0a6f4cae4618ad62622b39dbf": { label: "Tornado Cash 10 ETH Pool (Mixer)",  type: "mixer" },
+  "0xa160cdab225685da1d56aa342ad8841c3b53f291": { label: "Tornado Cash 100 ETH Pool (Mixer)", type: "mixer" },
   "0x2faf487a4414fe77e2327f0bf4ae2a264a776ad2": { label: "FTX (defunct)",  type: "flagged" },
   "0xc098b2a3aa256d2140208c3de6543aaef5cd3a94": { label: "FTX US (defunct)", type: "flagged" },
   // ── Kraken ETH (full wallet list) ──────────────────────────────────────────
@@ -822,7 +826,7 @@ interface MultiGraphNode {
 
 interface MultiSharedEntry {
   address: string;
-  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" };
+  knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" };
   appearances: Array<{
     wallet: string;
     depth: number;
@@ -840,7 +844,7 @@ interface MultiAnalysisResult {
   patterns: Array<{
     id: number;
     sharedAddr: string;
-    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" };
+    knownInfo?: { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" };
     totalTxCount: number;
     totalValueUsd: number;
     paths: Array<{ wallet: string; path: string[] }>;
@@ -4368,6 +4372,7 @@ export default function WalletDetail() {
       genesis:  { bg: "bg-purple-700/95",  border: "border-purple-300/80",  glow: "shadow-purple-400/40",  ring: "ring-1 ring-purple-400/30",  emoji: "⚡" },
       defi:     { bg: "bg-teal-700/95",    border: "border-teal-300/80",    glow: "shadow-teal-400/40",    ring: "ring-1 ring-teal-400/30",    emoji: "🔄" },
       flagged:  { bg: "bg-red-600/95",     border: "border-red-300/80",     glow: "shadow-red-400/40",     ring: "ring-1 ring-red-400/30",     emoji: "🚨" },
+      mixer:    { bg: "bg-rose-900/95",    border: "border-rose-300/80",    glow: "shadow-rose-400/60",    ring: "ring-2 ring-rose-400/50",    emoji: "🌀" },
       bridge:   { bg: "bg-amber-600/95",   border: "border-amber-300/80",   glow: "shadow-amber-400/40",   ring: "ring-1 ring-amber-400/30",   emoji: "🌉" },
       "dag-team": { bg: "bg-orange-600/95", border: "border-orange-300/80", glow: "shadow-orange-400/40",  ring: "ring-1 ring-orange-400/30",  emoji: "🏛️" },
     };

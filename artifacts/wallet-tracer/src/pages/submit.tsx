@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Shield, CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { CheckCircle, AlertCircle, Loader2 } from "lucide-react";
 
 const CHAINS = [
   { id: "xrp",      label: "XRP" },
@@ -68,211 +68,157 @@ export default function SubmitCase() {
 
   if (status === "success") {
     return (
-      <div className="flex flex-col items-center justify-center min-h-full px-8 py-20 text-center">
-        <div className="w-16 h-16 rounded-full bg-success/10 flex items-center justify-center mb-6">
-          <CheckCircle className="w-8 h-8 text-success" />
+      <div style={{ fontFamily: "Arial, sans-serif", background: "#0f172a", color: "#e2e8f0", margin: 0, padding: 0, minHeight: "100vh" }}>
+        <div style={{ maxWidth: 900, margin: "40px auto", padding: 30, background: "#1e2937", borderRadius: 12, textAlign: "center" }}>
+          <CheckCircle style={{ width: 64, height: 64, color: "#22d3ee", margin: "0 auto 24px" }} />
+          <h1 style={{ fontSize: "2rem", color: "#22d3ee", marginBottom: 16 }}>Case Submitted</h1>
+          <p style={{ fontSize: "1.1rem", color: "#cbd5e1", marginBottom: 12 }}>
+            Your case has been received. We manually review every submission and will contact you at <strong>{email}</strong> once approved.
+          </p>
+          <p style={{ fontSize: "0.9rem", color: "#94a3b8" }}>
+            We only run forensic packages for verified U.S. victims. If approved, you will receive professional reports you can share with law enforcement, your exchange, or your attorney.
+          </p>
+          <button
+            onClick={() => {
+              setStatus("idle");
+              setName(""); setEmail(""); setVictimWallet(""); setThiefWallet("");
+              setSelectedChains([]); setTxHashes(""); setDescription("");
+            }}
+            style={{ background: "#22d3ee", color: "#0f172a", padding: "14px 32px", fontSize: "1rem", fontWeight: "bold", border: "none", borderRadius: 8, cursor: "pointer", marginTop: 24 }}
+          >
+            Submit Another Case
+          </button>
         </div>
-        <h2 className="text-2xl font-bold text-foreground mb-3">Case Submitted</h2>
-        <p className="text-muted-foreground max-w-md mb-2">
-          Your case has been received. We manually review every submission and will contact you at <span className="text-foreground font-mono">{email}</span> once approved.
-        </p>
-        <p className="text-xs text-muted-foreground/60 max-w-md">
-          We only run forensic packages for verified U.S. victims. If approved, you will receive professional reports you can share with law enforcement, your exchange, or your attorney.
-        </p>
-        <button
-          onClick={() => {
-            setStatus("idle");
-            setName(""); setEmail(""); setVictimWallet(""); setThiefWallet("");
-            setSelectedChains([]); setTxHashes(""); setDescription("");
-          }}
-          className="mt-8 px-6 py-2 rounded-md bg-primary text-primary-foreground text-sm font-medium hover:bg-primary/90 transition-colors"
-        >
-          Submit Another Case
-        </button>
       </div>
     );
   }
 
+  const inputStyle: React.CSSProperties = {
+    width: "100%", padding: 12, borderRadius: 8, border: "none",
+    background: "#334155", color: "#e2e8f0", fontSize: "0.95rem",
+    boxSizing: "border-box",
+  };
+
+  const textareaStyle: React.CSSProperties = {
+    ...inputStyle, resize: "vertical" as const, minHeight: 100,
+  };
+
+  const labelStyle: React.CSSProperties = {
+    display: "block", marginBottom: 6, fontWeight: "bold", fontSize: "0.9rem",
+  };
+
   return (
-    <div className="max-w-2xl mx-auto px-6 py-10">
-      {/* Header */}
-      <div className="mb-8">
-        <div className="flex items-center gap-3 mb-3">
-          <div className="w-10 h-10 rounded-lg bg-primary/10 flex items-center justify-center">
-            <Shield className="w-5 h-5 text-primary" />
-          </div>
-          <div>
-            <h1 className="text-xl font-bold text-foreground tracking-tight">Submit Your Case</h1>
-            <p className="text-xs text-muted-foreground font-mono uppercase tracking-wider">Free Forensics for USA Victims of Crypto Theft</p>
-          </div>
-        </div>
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          CryptoChainTrace was built by a victim for victims. We use advanced on-chain analysis to map commingling, mixing patterns, and exchange flows — the same techniques used by professional investigators — completely free for verified U.S. residents.
+    <div style={{ fontFamily: "Arial, sans-serif", background: "#0f172a", color: "#e2e8f0", margin: 0, padding: 0, minHeight: "100vh" }}>
+      <div style={{ maxWidth: 900, margin: "40px auto", padding: 30, background: "#1e2937", borderRadius: 12 }}>
+
+        <h1 style={{ fontSize: "2.8rem", color: "#22d3ee", textAlign: "center", marginTop: 0 }}>CryptoChainTrace</h1>
+        <h2 style={{ color: "#67e8f9", textAlign: "center" }}>Free Blockchain Forensics for USA Victims of Crypto Theft</h2>
+
+        <p style={{ textAlign: "center", fontSize: "1.2rem", margin: "30px 0" }}>
+          We help real victims trace stolen funds across XRP, XLM, HBAR, DAG, XDC, ETH, and BTC — completely free for verified U.S. residents.
         </p>
-        <div className="mt-4 border border-border/60 rounded-lg p-4 bg-card/50">
-          <p className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">How it works</p>
-          <ol className="space-y-1.5 text-sm text-muted-foreground list-none">
-            {[
-              "Submit your case — victim wallet, thief wallet, and all known transaction hashes",
-              "We manually review and verify your submission",
-              "If approved, we run a full forensic package and send you professional reports",
-              "Share the reports with law enforcement, your exchange, or your attorney",
-            ].map((step, i) => (
-              <li key={i} className="flex items-start gap-3">
-                <span className="text-primary font-mono text-xs mt-0.5 shrink-0">{String(i + 1).padStart(2, "0")}</span>
-                <span>{step}</span>
-              </li>
-            ))}
-          </ol>
-        </div>
-        <p className="mt-3 text-xs text-muted-foreground/70">
-          <span className="text-amber-400 font-medium">USA victims only.</span> All submissions are reviewed manually to protect the integrity of the tool.
-        </p>
-      </div>
 
-      {/* Form */}
-      <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Name */}
-        <div>
-          <label className="block text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
-            Your Name <span className="text-muted-foreground/50">(optional)</span>
-          </label>
-          <input
-            type="text"
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Your name"
-            className="w-full px-3 py-2.5 rounded-md bg-card border border-border text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50"
-          />
-        </div>
+        <p>CryptoChainTrace was built by a victim for victims.</p>
+        <p>If your crypto was stolen, you are not alone. We use advanced on-chain analysis to map commingling, mixing patterns, and flows to exchanges — the same techniques used by professional investigators, but made available at no cost to everyday Americans.</p>
 
-        {/* Email */}
-        <div>
-          <label className="block text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
-            Email Address <span className="text-destructive">*</span>
-          </label>
-          <input
-            type="email"
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            placeholder="your@email.com"
-            required
-            className="w-full px-3 py-2.5 rounded-md bg-card border border-border text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50"
-          />
-        </div>
+        <h2 style={{ color: "#67e8f9" }}>How it works</h2>
+        <ol style={{ lineHeight: 2, fontSize: "1rem" }}>
+          <li>Submit your case (victim wallet + thief wallet + every known transaction hash)</li>
+          <li>We manually review and verify</li>
+          <li>If approved, we run a full forensic package and send you professional reports</li>
+          <li>You can share the reports with law enforcement, your exchange, or your attorney</li>
+        </ol>
 
-        {/* Victim Wallet */}
-        <div>
-          <label className="block text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
-            Your Victim Wallet Address <span className="text-destructive">*</span>
-          </label>
-          <input
-            type="text"
-            value={victimWallet}
-            onChange={(e) => setVictimWallet(e.target.value)}
-            placeholder="The wallet the funds were stolen from"
-            required
-            className="w-full px-3 py-2.5 rounded-md bg-card border border-border text-sm text-foreground font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50"
-          />
-        </div>
+        <p><strong>We only help verified USA victims.</strong> All submissions are reviewed manually to protect the integrity of the tool.</p>
 
-        {/* Thief Wallet */}
-        <div>
-          <label className="block text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
-            Suspect / Thief Wallet Address <span className="text-destructive">*</span>
-          </label>
-          <input
-            type="text"
-            value={thiefWallet}
-            onChange={(e) => setThiefWallet(e.target.value)}
-            placeholder="The wallet the stolen funds were sent to"
-            required
-            className="w-full px-3 py-2.5 rounded-md bg-card border border-border text-sm text-foreground font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50"
-          />
-        </div>
+        <h2 style={{ color: "#67e8f9" }}>Submit Your Case</h2>
 
-        {/* Chain selector */}
-        <div>
-          <label className="block text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
-            Chain(s) Involved <span className="text-destructive">*</span>
-          </label>
-          <div className="flex flex-wrap gap-2">
-            {CHAINS.map((c) => {
-              const active = selectedChains.includes(c.id);
-              return (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => toggleChain(c.id)}
-                  className={`px-3 py-1.5 rounded-md text-xs font-mono border transition-colors ${
-                    active
-                      ? "bg-primary/20 border-primary text-primary"
-                      : "bg-card border-border text-muted-foreground hover:border-border/80 hover:text-foreground"
-                  }`}
-                >
-                  {c.label}
-                </button>
-              );
-            })}
+        <form onSubmit={handleSubmit}>
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>Your Name <span style={{ color: "#94a3b8", fontWeight: "normal" }}>(optional)</span></label>
+            <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" style={inputStyle} />
           </div>
-        </div>
 
-        {/* TX Hashes */}
-        <div>
-          <label className="block text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
-            Known Transaction Hashes <span className="text-muted-foreground/50">(optional but recommended)</span>
-          </label>
-          <textarea
-            value={txHashes}
-            onChange={(e) => setTxHashes(e.target.value)}
-            placeholder={"Paste every known transaction hash, one per line"}
-            rows={4}
-            className="w-full px-3 py-2.5 rounded-md bg-card border border-border text-sm text-foreground font-mono placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 resize-none"
-          />
-        </div>
-
-        {/* Description */}
-        <div>
-          <label className="block text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1.5">
-            What Happened <span className="text-muted-foreground/50">(optional)</span>
-          </label>
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            placeholder="Briefly describe how the theft occurred and any other details that may help us investigate"
-            rows={4}
-            className="w-full px-3 py-2.5 rounded-md bg-card border border-border text-sm text-foreground placeholder:text-muted-foreground/50 focus:outline-none focus:ring-1 focus:ring-primary/50 focus:border-primary/50 resize-none"
-          />
-        </div>
-
-        {/* Error */}
-        {status === "error" && (
-          <div className="flex items-start gap-2.5 px-4 py-3 rounded-md bg-destructive/10 border border-destructive/30 text-destructive text-sm">
-            <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
-            <span>{errorMsg}</span>
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>Email Address *</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="your@email.com" required style={inputStyle} />
           </div>
-        )}
 
-        {/* Submit */}
-        <button
-          type="submit"
-          disabled={status === "loading"}
-          className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-md bg-primary text-primary-foreground text-sm font-bold tracking-wide hover:bg-primary/90 transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
-        >
-          {status === "loading" ? (
-            <>
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Submitting…
-            </>
-          ) : (
-            "Submit Case for Review"
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>Your Victim Wallet Address *</label>
+            <input type="text" value={victimWallet} onChange={(e) => setVictimWallet(e.target.value)} placeholder="The wallet your funds were stolen from" required style={{ ...inputStyle, fontFamily: "monospace" }} />
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>Suspect / Thief Wallet Address *</label>
+            <input type="text" value={thiefWallet} onChange={(e) => setThiefWallet(e.target.value)} placeholder="The wallet the stolen funds were sent to" required style={{ ...inputStyle, fontFamily: "monospace" }} />
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>Chain(s) Involved *</label>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 6 }}>
+              {CHAINS.map((c) => {
+                const active = selectedChains.includes(c.id);
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => toggleChain(c.id)}
+                    style={{
+                      padding: "8px 16px", borderRadius: 6, border: active ? "1px solid #22d3ee" : "1px solid #475569",
+                      background: active ? "rgba(34,211,238,0.15)" : "#334155",
+                      color: active ? "#22d3ee" : "#cbd5e1",
+                      cursor: "pointer", fontSize: "0.85rem", fontWeight: active ? "bold" : "normal",
+                    }}
+                  >
+                    {c.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>Known Transaction Hashes <span style={{ color: "#94a3b8", fontWeight: "normal" }}>(recommended — one per line)</span></label>
+            <textarea value={txHashes} onChange={(e) => setTxHashes(e.target.value)} placeholder={"Paste every known transaction hash, one per line"} rows={5} style={{ ...textareaStyle, fontFamily: "monospace" }} />
+          </div>
+
+          <div style={{ marginBottom: 20 }}>
+            <label style={labelStyle}>What Happened <span style={{ color: "#94a3b8", fontWeight: "normal" }}>(optional)</span></label>
+            <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Briefly describe how the theft occurred and any details that may help us investigate" rows={4} style={textareaStyle} />
+          </div>
+
+          {status === "error" && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", marginBottom: 20 }}>
+              <AlertCircle style={{ width: 18, height: 18, flexShrink: 0 }} />
+              <span>{errorMsg}</span>
+            </div>
           )}
-        </button>
 
-        <p className="text-xs text-muted-foreground/60 text-center">
-          By submitting, you confirm you are a U.S. resident and the victim of actual crypto theft. All information is kept confidential and used solely for forensic investigation.
-        </p>
-      </form>
+          <button
+            type="submit"
+            disabled={status === "loading"}
+            style={{
+              background: "#22d3ee", color: "#0f172a", padding: "14px 32px",
+              fontSize: "1.1rem", fontWeight: "bold", border: "none", borderRadius: 8,
+              cursor: status === "loading" ? "not-allowed" : "pointer",
+              width: "100%", marginTop: 20,
+              opacity: status === "loading" ? 0.7 : 1,
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+            }}
+          >
+            {status === "loading" ? (
+              <><Loader2 style={{ width: 20, height: 20, animation: "spin 1s linear infinite" }} /> Submitting…</>
+            ) : "Submit Case for Review"}
+          </button>
+
+          <p style={{ fontSize: "0.85rem", color: "#94a3b8", marginTop: 24, textAlign: "center" }}>
+            By submitting, you confirm you are a U.S. resident and the victim of actual crypto theft. All information is kept confidential and used solely for forensic investigation.
+          </p>
+        </form>
+
+      </div>
+      <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );
 }

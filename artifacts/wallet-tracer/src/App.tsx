@@ -24,15 +24,15 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Switch>
-      {/* Standalone report viewer — no chrome/layout */}
+      {/* Standalone public pages — no chrome/layout */}
       <Route path="/report-view" component={ReportView} />
+      <Route path="/submit" component={SubmitCase} />
 
       {/* Main app with layout */}
       <Route>
         <Layout>
           <Switch>
             <Route path="/" component={Home} />
-            <Route path="/submit" component={SubmitCase} />
             <Route path="/wallet/:address" component={WalletDetail} />
             <Route path="/trace/:address" component={TraceGraph} />
             <Route component={NotFound} />

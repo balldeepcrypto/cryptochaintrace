@@ -62,6 +62,8 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr: { label: "Binance Exchange",  type: "exchange" },
   rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi: { label: "Binance Exchange",  type: "exchange" },
   rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A: { label: "Binance Exchange",  type: "exchange" },
+  rPCpZwPKogNodbjRxGDnefVXu9Q9R4PN4Q: { label: "Binance Exchange",  type: "exchange" },
+  r9c6A65SmhhZALrkMTpqc9X3kGjv5gtNNk: { label: "Ripple",            type: "exchange" },
   rsbfd5ZYWqy6XXf6hndPbRjDAzfmWc1CeQ: { label: "Luna Global",       type: "exchange" },
   rBgnUKAEiFhCRLPoYNPPe3JUWayRjP6Ayg: { label: "Coinspot Exchange", type: "exchange" },
   rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: { label: "Coinbase XRP",     type: "exchange" },

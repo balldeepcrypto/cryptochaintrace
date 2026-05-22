@@ -20,9 +20,9 @@ function DonationBanner() {
 
   return (
     <div style={{
-      background: "linear-gradient(90deg, rgba(34,211,238,0.08) 0%, rgba(34,211,238,0.04) 100%)",
-      borderBottom: "1px solid rgba(34,211,238,0.2)",
-      padding: "10px 20px",
+      background: "linear-gradient(90deg, rgba(34,211,238,0.18) 0%, rgba(6,182,212,0.12) 100%)",
+      borderBottom: "2px solid rgba(34,211,238,0.55)",
+      padding: "12px 20px",
     }}>
       <div style={{ maxWidth: 900, margin: "0 auto" }}>
         <div style={{
@@ -174,7 +174,7 @@ export default function SubmitCase() {
   return (
     <div style={{ fontFamily: "Arial, sans-serif", background: "#0f172a", color: "#e2e8f0", margin: 0, padding: 0, minHeight: "100vh" }}>
       <DonationBanner />
-      <div style={{ maxWidth: 900, margin: "40px auto", padding: 30, background: "#1e2937", borderRadius: 12 }}>
+      <div style={{ maxWidth: 900, margin: "56px auto 40px", padding: 30, background: "#1e2937", borderRadius: 12 }}>
 
         <h1 style={{ fontSize: "2.8rem", color: "#22d3ee", textAlign: "center", marginTop: 0 }}>CryptoChainTrace</h1>
         <h2 style={{ color: "#67e8f9", textAlign: "center" }}>Free Blockchain Forensics for USA Victims of Crypto Theft</h2>
@@ -196,7 +196,7 @@ export default function SubmitCase() {
 
         <p><strong>We only help verified USA victims.</strong> All submissions are reviewed manually to protect the integrity of the tool.</p>
 
-        <h2 style={{ color: "#67e8f9" }}>Submit Your Case</h2>
+        <h2 style={{ color: "#22d3ee", fontSize: "1.6rem", fontWeight: 800, marginBottom: 20 }}>Submit Your Case</h2>
 
         <form onSubmit={handleSubmit}>
           <div style={{ marginBottom: 20 }}>

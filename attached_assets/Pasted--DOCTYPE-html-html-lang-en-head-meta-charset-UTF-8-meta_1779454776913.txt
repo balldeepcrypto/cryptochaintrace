@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CryptoChainTrace | Free Forensics for USA Victims</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #0f172a; color: #e2e8f0; margin: 0; padding: 0; }
+        .container { max-width: 900px; margin: 40px auto; padding: 30px; background: #1e2937; border-radius: 12px; }
+        h1 { font-size: 2.8rem; color: #22d3ee; text-align: center; }
+        h2 { color: #67e8f9; }
+        .form-group { margin-bottom: 20px; }
+        label { display: block; margin-bottom: 6px; font-weight: bold; }
+        input, textarea { width: 100%; padding: 12px; border-radius: 8px; border: none; background: #334155; color: #e2e8f0; }
+        button { background: #22d3ee; color: #0f172a; padding: 14px 32px; font-size: 1.1rem; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; width: 100%; margin-top: 20px; }
+        button:hover { background: #67e8f9; }
+        .note { font-size: 0.9rem; color: #94a3b8; margin-top: 30px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>CryptoChainTrace</h1>
+        <h2 style="text-align:center;">Free Blockchain Forensics for USA Victims of Crypto Theft</h2>
+        
+        <p style="text-align:center; font-size:1.2rem; margin:30px 0;">
+            We help real victims trace stolen funds across XRP, XLM, HBAR, DAG, XDC, ETH, and BTC — completely free for verified U.S. residents.
+        </p>
+
+        <p>CryptoChainTrace was built by a victim for victims.</p>
+        <p>If your crypto was stolen, you are not alone. We use advanced on-chain analysis to map commingling, mixing patterns, and flows to exchanges — the same techniques used by professional investigators, but made available at no cost to everyday Americans.</p>
+
+        <h2>How it works</h2>
+        <ol>
+            <li>Submit your case (victim wallet + thief wallet + every known transaction hash)</li>
+            <li>We manually review and verify</li>
+            <li>If approved, we run a full forensic package and send you professional reports</li>
+            <li>You can share the reports with law enforcement, your exchange, or your attorney</li>
+        </ol>
+
+        <p><strong>We only help verified USA victims.</strong> All submissions are reviewed manually to protect the integrity of the tool.</p>
+
+        <!-- SUBMISSION FORM -->
+        <h2>Submit Your Case</h2>
+        <form id="victimForm">
+            <div class="form-group">
+                <label>Your Name (optional)</label>
+                <input type="text" id="name" placeholder="Your name">
+            </div>
+            <div class="form-group">
+                <label>Email Address</label>
+                <input type="email" id="email" placeholder="your@email.com" required>
+            </div>
+            <div class="form-group">

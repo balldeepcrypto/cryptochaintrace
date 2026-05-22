@@ -4,6 +4,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/not-found";
 import { Layout } from "@/components/layout";
+import { DashboardGate } from "@/components/dashboard-gate";
 
 // Pages
 import Home from "@/pages/home";
@@ -24,20 +25,29 @@ const queryClient = new QueryClient({
 function Router() {
   return (
     <Switch>
-      {/* Standalone public pages — no chrome/layout */}
+      {/* Standalone public pages — no chrome, no auth */}
       <Route path="/report-view" component={ReportView} />
-      <Route path="/submit" component={SubmitCase} />
+      <Route path="/submit">
+        <SubmitCase />
+      </Route>
 
-      {/* Main app with layout */}
+      {/* Root — public intake form */}
+      <Route path="/">
+        <SubmitCase />
+      </Route>
+
+      {/* Protected dashboard — requires password */}
       <Route>
-        <Layout>
-          <Switch>
-            <Route path="/" component={Home} />
-            <Route path="/wallet/:address" component={WalletDetail} />
-            <Route path="/trace/:address" component={TraceGraph} />
-            <Route component={NotFound} />
-          </Switch>
-        </Layout>
+        <DashboardGate>
+          <Layout>
+            <Switch>
+              <Route path="/dashboard" component={Home} />
+              <Route path="/wallet/:address" component={WalletDetail} />
+              <Route path="/trace/:address" component={TraceGraph} />
+              <Route component={NotFound} />
+            </Switch>
+          </Layout>
+        </DashboardGate>
       </Route>
     </Switch>
   );

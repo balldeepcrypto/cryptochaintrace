@@ -36,16 +36,10 @@ export function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
         <nav className="flex-1 py-4 flex flex-col gap-1 px-3 overflow-y-auto">
-          <Link href="/">
-            <div className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+          <Link href="/dashboard">
+            <div className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/dashboard' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
               <Search className="w-4 h-4" />
               Intelligence Search
-            </div>
-          </Link>
-          <Link href="/submit">
-            <div className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/submit' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
-              <FileText className="w-4 h-4" />
-              Submit Case
             </div>
           </Link>
 
@@ -85,10 +79,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <header className="h-16 flex items-center px-8 border-b border-border bg-card/50 backdrop-blur-sm z-10 sticky top-0 flex-shrink-0">
           <div className="flex-1 flex items-center justify-between">
             <div className="text-sm font-mono text-muted-foreground">
-              {location === '/' ? 'SYS // SEARCH_MODULE' :
+              {location === '/dashboard' ? 'SYS // SEARCH_MODULE' :
                location.startsWith('/wallet/') ? 'SYS // PROFILE_INSPECTION' :
-               location.startsWith('/trace/') ? 'SYS // NETWORK_ANALYSIS' :
-               location === '/submit' ? 'SYS // CASE_INTAKE' : 'SYS // UNKNOWN_STATE'}
+               location.startsWith('/trace/') ? 'SYS // NETWORK_ANALYSIS' : 'SYS // UNKNOWN_STATE'}
             </div>
             <div className="flex items-center gap-4 text-xs font-mono">
               <div className="flex items-center gap-1.5 text-success">

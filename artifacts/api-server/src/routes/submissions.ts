@@ -1,6 +1,5 @@
 import { Router, type IRouter } from "express";
 import { db, submissionsTable } from "@workspace/db";
-import { desc } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -34,32 +33,6 @@ router.post("/submissions", async (req, res): Promise<void> => {
   } catch (err) {
     req.log.warn({ err }, "POST /submissions failed");
     res.status(503).json({ error: "db_unavailable", message: "Could not save submission. Please try again." });
-  }
-});
-
-router.get("/submissions", async (req, res): Promise<void> => {
-  try {
-    const rows = await db
-      .select()
-      .from(submissionsTable)
-      .orderBy(desc(submissionsTable.submittedAt))
-      .limit(100);
-
-    res.json(rows.map((r) => ({
-      id: r.id,
-      name: r.name ?? null,
-      email: r.email,
-      victimWallet: r.victimWallet,
-      thiefWallet: r.thiefWallet,
-      chains: r.chains,
-      txHashes: r.txHashes ?? null,
-      description: r.description ?? null,
-      submittedAt: r.submittedAt.toISOString(),
-      status: r.status,
-    })));
-  } catch (err) {
-    req.log.warn({ err }, "GET /submissions failed");
-    res.status(503).json({ error: "db_unavailable", message: "Could not retrieve submissions." });
   }
 });
 

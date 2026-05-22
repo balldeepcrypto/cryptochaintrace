@@ -9,8 +9,6 @@ const CHAINS = [
   { id: "xdc",      label: "XDC" },
   { id: "ethereum", label: "ETH (Ethereum)" },
   { id: "bitcoin",  label: "BTC (Bitcoin)" },
-  { id: "polygon",  label: "MATIC (Polygon)" },
-  { id: "bsc",      label: "BSC (BNB Chain)" },
 ];
 
 type Status = "idle" | "loading" | "success" | "error";
@@ -179,8 +177,14 @@ export default function SubmitCase() {
           </div>
 
           <div style={{ marginBottom: 20 }}>
-            <label style={labelStyle}>Known Transaction Hashes <span style={{ color: "#94a3b8", fontWeight: "normal" }}>(recommended — one per line)</span></label>
-            <textarea value={txHashes} onChange={(e) => setTxHashes(e.target.value)} placeholder={"Paste every known transaction hash, one per line"} rows={5} style={{ ...textareaStyle, fontFamily: "monospace" }} />
+            <label style={labelStyle}>Known Transaction Hashes <span style={{ color: "#94a3b8", fontWeight: "normal" }}>(list EVERY known TX hash — one per line)</span></label>
+            <textarea
+              value={txHashes}
+              onChange={(e) => setTxHashes(e.target.value)}
+              placeholder={"List every known transaction hash (TX ID) — one per line.\nInclude all hashes you have: the initial theft TX, any subsequent hops, withdrawals, or transfers you are aware of. The more you provide, the more complete our forensic trace will be."}
+              rows={10}
+              style={{ ...textareaStyle, fontFamily: "monospace", minHeight: 180 }}
+            />
           </div>
 
           <div style={{ marginBottom: 20 }}>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Network, Box, Info, X } from "lucide-react";
+import { Search, Activity, Network, Box, Info, X, FileText } from "lucide-react";
 import { getRecentSearches, type RecentSearchEntry } from "@/lib/recent-searches";
 
 const CHAIN_SHORT: Record<string, string> = {
@@ -42,6 +42,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
               Intelligence Search
             </div>
           </Link>
+          <Link href="/submit">
+            <div className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/submit' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+              <FileText className="w-4 h-4" />
+              Submit Case
+            </div>
+          </Link>
 
           <div className="mt-6 mb-1 px-3 text-xs font-mono tracking-wider text-muted-foreground uppercase">
             Recent Targets
@@ -81,7 +87,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <div className="text-sm font-mono text-muted-foreground">
               {location === '/' ? 'SYS // SEARCH_MODULE' :
                location.startsWith('/wallet/') ? 'SYS // PROFILE_INSPECTION' :
-               location.startsWith('/trace/') ? 'SYS // NETWORK_ANALYSIS' : 'SYS // UNKNOWN_STATE'}
+               location.startsWith('/trace/') ? 'SYS // NETWORK_ANALYSIS' :
+               location === '/submit' ? 'SYS // CASE_INTAKE' : 'SYS // UNKNOWN_STATE'}
             </div>
             <div className="flex items-center gap-4 text-xs font-mono">
               <div className="flex items-center gap-1.5 text-success">

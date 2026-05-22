@@ -136,7 +136,6 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   rsX8cp4aj9grKVD9V1K2ouUbxgYsigUtBL: { label: "Uphold",               type: "exchange" },
   rEvuKRoEBzSbM5k5Qe5tD9BixZXsfxkHf: { label: "Kraken",                type: "exchange" },
   rUeDDFNp2q7Ymvyv75hFGC8DAcygVyJbNF: { label: "Kraken",                type: "exchange" },
-  r4DymtkgUAH2wqRxVfdd3Xtswzim6eC6c5: { label: "Crypto.com",           type: "exchange" },
   rKV8HEL3vLc6q9waTJcewdRdSFyx67QFb: { label: "Crypto.com",            type: "exchange" },
   rJmXYcKCGJSayp4sAdp6Eo4CdSFtDVv7WG: { label: "Crypto.com",           type: "exchange" },
   rEeWEp88cpKUddkKk37B2EZeiHGBiBXY3: { label: "Binance.US",             type: "exchange" },

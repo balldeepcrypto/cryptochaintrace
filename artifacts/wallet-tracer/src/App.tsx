@@ -10,6 +10,7 @@ import Home from "@/pages/home";
 import WalletDetail from "@/pages/wallet-detail";
 import TraceGraph from "@/pages/trace-graph";
 import ReportView from "@/pages/report-view";
+import SubmitCase from "@/pages/submit";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -31,6 +32,7 @@ function Router() {
         <Layout>
           <Switch>
             <Route path="/" component={Home} />
+            <Route path="/submit" component={SubmitCase} />
             <Route path="/wallet/:address" component={WalletDetail} />
             <Route path="/trace/:address" component={TraceGraph} />
             <Route component={NotFound} />

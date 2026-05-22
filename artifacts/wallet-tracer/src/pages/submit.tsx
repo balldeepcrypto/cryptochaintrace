@@ -1,5 +1,71 @@
 import { useState } from "react";
-import { CheckCircle, AlertCircle, Loader2 } from "lucide-react";
+import { CheckCircle, AlertCircle, Loader2, Copy, Check } from "lucide-react";
+
+const DONATION_WALLETS = [
+  { chain: "XLM", address: "GCXUMH47OGMC6JKUCMNG5KSKUOZGX7H4A6P2YZTZ2FCA2ZEB2PPSB6XW" },
+  { chain: "XRP", address: "rHm4Erz4urYGqvssR6Rs8DwsQkDeEQwxuV" },
+  { chain: "BTC", address: "bc1q3k20tfjatu8prsszr9jmtyayj665af2aavfeyt" },
+  { chain: "ETH", address: "0x0b3E9efb09Ead589F9F4c957228eE5E45B286d55" },
+];
+
+function DonationBanner() {
+  const [copied, setCopied] = useState<string | null>(null);
+
+  function copy(address: string) {
+    navigator.clipboard.writeText(address).then(() => {
+      setCopied(address);
+      setTimeout(() => setCopied(null), 2000);
+    });
+  }
+
+  return (
+    <div style={{
+      background: "linear-gradient(90deg, rgba(34,211,238,0.08) 0%, rgba(34,211,238,0.04) 100%)",
+      borderBottom: "1px solid rgba(34,211,238,0.2)",
+      padding: "10px 20px",
+    }}>
+      <div style={{ maxWidth: 900, margin: "0 auto" }}>
+        <div style={{
+          display: "flex", flexWrap: "wrap", alignItems: "center", gap: "10px 20px",
+        }}>
+          <span style={{
+            color: "#22d3ee", fontWeight: "bold", fontSize: "0.78rem",
+            textTransform: "uppercase", letterSpacing: "0.1em", whiteSpace: "nowrap", flexShrink: 0,
+          }}>
+            ❤ Support This Free Tool
+          </span>
+          {DONATION_WALLETS.map(({ chain, address }) => (
+            <div key={chain} style={{ display: "flex", alignItems: "center", gap: 6, minWidth: 0 }}>
+              <span style={{
+                background: "rgba(34,211,238,0.15)", color: "#22d3ee",
+                fontSize: "0.7rem", fontWeight: "bold", padding: "2px 7px",
+                borderRadius: 4, flexShrink: 0, letterSpacing: "0.05em",
+              }}>{chain}</span>
+              <span style={{
+                fontFamily: "monospace", fontSize: "0.72rem", color: "#94a3b8",
+                overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+                maxWidth: 180,
+              }} title={address}>{address}</span>
+              <button
+                onClick={() => copy(address)}
+                title="Copy address"
+                style={{
+                  background: "none", border: "none", cursor: "pointer",
+                  color: copied === address ? "#22d3ee" : "#64748b",
+                  padding: 2, flexShrink: 0, display: "flex", alignItems: "center",
+                }}
+              >
+                {copied === address
+                  ? <Check style={{ width: 13, height: 13 }} />
+                  : <Copy style={{ width: 13, height: 13 }} />}
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
 
 const CHAINS = [
   { id: "xrp",      label: "XRP" },
@@ -107,6 +173,7 @@ export default function SubmitCase() {
 
   return (
     <div style={{ fontFamily: "Arial, sans-serif", background: "#0f172a", color: "#e2e8f0", margin: 0, padding: 0, minHeight: "100vh" }}>
+      <DonationBanner />
       <div style={{ maxWidth: 900, margin: "40px auto", padding: 30, background: "#1e2937", borderRadius: 12 }}>
 
         <h1 style={{ fontSize: "2.8rem", color: "#22d3ee", textAlign: "center", marginTop: 0 }}>CryptoChainTrace</h1>

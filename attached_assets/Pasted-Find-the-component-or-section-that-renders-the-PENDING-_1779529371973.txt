@@ -1,0 +1,110 @@
+Find the component or section that renders the "PENDING SUBMISSIONS" table (the one with columns: #, DATE, NAME / EMAIL, VICTIM WALLET, THIEF WALLET, CHAINS, STATUS).
+
+Replace the entire current table code with this improved version. Keep all your existing data fetching, Supabase connection, and styling. Add hover effects, copy buttons, explorer links, and a "Start Trace" button on each row.
+
+Here is the new code:
+
+```tsx
+'use client';
+
+import { Copy, ExternalLink, Play } from 'lucide-react';
+
+const chainExplorers: Record<string, string> = {
+  xrp: 'https://xrpscan.com/account/',
+  xlm: 'https://stellar.expert/explorer/public/account/',
+  hbar: 'https://hashscan.io/mainnet/account/',
+  dag: 'https://explorer.constellation.network/address/',
+  xdc: 'https://xdcscan.com/address/',
+  eth: 'https://etherscan.io/address/',
+  btc: 'https://blockchair.com/bitcoin/address/',
+};
+
+export default function PendingSubmissions({ submissions = [] }: any) {
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    alert(`${label} copied to clipboard!`);
+  };
+
+  const startTrace = (victimWallet: string, thiefWallet: string, chain: string) => {
+    alert(`🔍 Starting trace for:\nVictim: ${victimWallet}\nThief: ${thiefWallet}\nChain: ${chain}`);
+    // TODO: Connect this to your Intelligence Search later
+  };
+
+  return (
+    <div className="bg-zinc-900 border border-zinc-800 rounded-2xl p-6">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <div className="text-emerald-400 text-2xl">📬</div>
+          <h2 className="text-xl font-semibold text-white">PENDING SUBMISSIONS</h2>
+          <span className="bg-emerald-500/10 text-emerald-400 text-sm px-3 py-1 rounded-full font-medium">{submissions.length}</span>
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="border-b border-zinc-800 text-zinc-400 text-left">
+              <th className="pb-3 font-medium">#</th>
+              <th className="pb-3 font-medium">DATE</th>
+              <th className="pb-3 font-medium">NAME / EMAIL</th>
+              <th className="pb-3 font-medium">VICTIM WALLET</th>
+              <th className="pb-3 font-medium">THIEF WALLET</th>
+              <th className="pb-3 font-medium">CHAINS</th>
+              <th className="pb-3 font-medium">STATUS</th>
+              <th className="pb-3 w-40"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-800">
+            {submissions.map((sub: any) => (
+              <tr key={sub.id} className="hover:bg-zinc-800/50 cursor-pointer group">
+                <td className="py-4 text-zinc-400 font-medium">{sub.id}</td>
+                <td className="py-4 text-zinc-400 text-sm">{sub.date}</td>
+                <td className="py-4">
+                  <div className="font-medium text-white">{sub.name}</div>
+                  <a href={`mailto:${sub.email}`} className="text-blue-400 hover:underline text-xs">{sub.email}</a>
+                </td>
+                <td className="py-4 font-mono text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-emerald-400 break-all">{sub.victimWallet}</span>
+                    <button onClick={(e) => { e.stopPropagation(); copyToClipboard(sub.victimWallet, 'Victim wallet'); }} className="opacity-0 group-hover:opacity-100">
+                      <Copy className="w-3 h-3 text-zinc-400 hover:text-white" />
+                    </button>
+                    <a href={`${chainExplorers[sub.chain] || '#'}${sub.victimWallet}`} target="_blank" rel="noopener noreferrer" className="opacity-0 group-hover:opacity-100">
+                      <ExternalLink className="w-3 h-3 text-zinc-400 hover:text-white" />
+                    </a>
+                  </div>
+                </td>
+                <td className="py-4 font-mono text-xs">
+                  <div className="flex items-center gap-2">
+                    <span className="text-red-400 break-all">{sub.thiefWallet}</span>
+                    <button onClick={(e) => { e.stopPropagation(); copyToClipboard(sub.thiefWallet, 'Thief wallet'); }} className="opacity-0 group-hover:opacity-100">
+                      <Copy className="w-3 h-3 text-zinc-400 hover:text-white" />
+                    </button>
+                    <a href={`${chainExplorers[sub.chain] || '#'}${sub.thiefWallet}`} target="_blank" rel="noopener noreferrer" className="opacity-0 group-hover:opacity-100">
+                      <ExternalLink className="w-3 h-3 text-zinc-400 hover:text-white" />
+                    </a>
+                  </div>
+                </td>
+                <td className="py-4">
+                  <span className="uppercase text-xs font-medium px-3 py-1 bg-zinc-800 rounded-full">{sub.chain}</span>
+                </td>
+                <td className="py-4">
+                  <span className="px-3 py-1 text-xs font-medium bg-yellow-500/10 text-yellow-400 rounded-full">pending</span>
+                </td>
+                <td className="py-4">
+                  <button
+                    onClick={(e) => { e.stopPropagation(); startTrace(sub.victimWallet, sub.thiefWallet, sub.chain); }}
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded-xl text-sm font-medium transition-colors"
+                  >
+                    <Play className="w-4 h-4" />
+                    Start Trace
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}

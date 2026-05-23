@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useSaveSearch } from "@workspace/api-client-react";
-import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX, Inbox, RefreshCw } from "lucide-react";
+import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX, Inbox, RefreshCw, ExternalLink, Play } from "lucide-react";
 import { useAuth } from "@/components/dashboard-gate";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -68,11 +68,25 @@ type Submission = {
   status: string;
 };
 
+const CHAIN_EXPLORERS: Record<string, string> = {
+  ethereum:  "https://etherscan.io/address/",
+  bitcoin:   "https://blockchair.com/bitcoin/address/",
+  xrp:       "https://xrpscan.com/account/",
+  xlm:       "https://stellar.expert/explorer/public/account/",
+  hbar:      "https://hashscan.io/mainnet/account/",
+  dag:       "https://explorer.constellation.network/address/",
+  xdc:       "https://xdcscan.com/address/",
+  polygon:   "https://polygonscan.com/address/",
+  bsc:       "https://bscscan.com/address/",
+};
+
 function PendingSubmissions() {
   const { authed } = useAuth();
+  const [, setLocation] = useLocation();
   const [rows, setRows] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [copied, setCopied] = useState<string | null>(null);
 
   async function load() {
     setLoading(true);
@@ -92,19 +106,29 @@ function PendingSubmissions() {
 
   if (!authed) return null;
 
-  function truncate(s: string, n = 18) {
-    return s.length <= n ? s : `${s.slice(0, 8)}…${s.slice(-6)}`;
-  }
-
   function fmtDate(iso: string) {
     return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
   }
 
-  const statusColor: Record<string, string> = {
-    pending:  "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
-    approved: "bg-green-500/15 text-green-400 border-green-500/30",
-    rejected: "bg-red-500/15 text-red-400 border-red-500/30",
-  };
+  function truncate(s: string) {
+    return s.length <= 16 ? s : `${s.slice(0, 8)}…${s.slice(-6)}`;
+  }
+
+  function copyToClipboard(text: string, key: string) {
+    navigator.clipboard.writeText(text).catch(() => {});
+    setCopied(key);
+    setTimeout(() => setCopied(null), 1500);
+  }
+
+  function explorerUrl(wallet: string, chains: string): string {
+    const firstChain = chains.split(",")[0]?.trim().toLowerCase() ?? "";
+    return (CHAIN_EXPLORERS[firstChain] ?? "https://etherscan.io/address/") + wallet;
+  }
+
+  function startTrace(r: Submission) {
+    const firstChain = r.chains.split(",")[0]?.trim().toLowerCase() ?? "ethereum";
+    setLocation(`/wallet/${firstChain}/${r.thiefWallet}`);
+  }
 
   return (
     <div className="rounded-xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/30 to-slate-900/60 overflow-hidden">
@@ -140,41 +164,104 @@ function PendingSubmissions() {
 
       {rows.length > 0 && (
         <div className="overflow-x-auto">
-          <table className="w-full text-sm font-mono">
+          <table className="w-full text-sm">
             <thead>
               <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
-                <th className="text-left px-4 py-2.5">#</th>
-                <th className="text-left px-4 py-2.5">Date</th>
-                <th className="text-left px-4 py-2.5">Name / Email</th>
-                <th className="text-left px-4 py-2.5">Victim Wallet</th>
-                <th className="text-left px-4 py-2.5">Thief Wallet</th>
-                <th className="text-left px-4 py-2.5">Chains</th>
-                <th className="text-left px-4 py-2.5">Status</th>
+                <th className="text-left px-4 py-3">#</th>
+                <th className="text-left px-4 py-3">Date</th>
+                <th className="text-left px-4 py-3">Name / Email</th>
+                <th className="text-left px-4 py-3">Victim Wallet</th>
+                <th className="text-left px-4 py-3">Thief Wallet</th>
+                <th className="text-left px-4 py-3">Chains</th>
+                <th className="text-left px-4 py-3">Status</th>
+                <th className="px-4 py-3 w-36"></th>
               </tr>
             </thead>
-            <tbody>
-              {rows.map((r, i) => (
-                <tr
-                  key={r.id}
-                  className={`border-b border-slate-800/50 hover:bg-cyan-500/5 transition-colors ${i % 2 === 0 ? "" : "bg-slate-900/30"}`}
-                >
-                  <td className="px-4 py-2.5 text-cyan-500 font-bold">{r.id}</td>
-                  <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap text-xs">{fmtDate(r.submittedAt)}</td>
-                  <td className="px-4 py-2.5">
-                    <div className="text-slate-300 text-xs">{r.name ?? <span className="text-slate-600">—</span>}</div>
-                    <div className="text-cyan-600 text-xs">{r.email}</div>
+            <tbody className="divide-y divide-slate-800/50">
+              {rows.map((r) => (
+                <tr key={r.id} className="hover:bg-cyan-500/5 transition-colors group">
+                  <td className="px-4 py-3 text-cyan-500 font-bold font-mono">{r.id}</td>
+                  <td className="px-4 py-3 text-slate-400 whitespace-nowrap text-xs">{fmtDate(r.submittedAt)}</td>
+                  <td className="px-4 py-3">
+                    <div className="text-slate-200 text-sm font-medium">{r.name ?? <span className="text-slate-600">—</span>}</div>
+                    <a href={`mailto:${r.email}`} className="text-cyan-600 hover:text-cyan-400 text-xs transition-colors">{r.email}</a>
                   </td>
-                  <td className="px-4 py-2.5">
-                    <span className="text-green-400 text-xs" title={r.victimWallet}>{truncate(r.victimWallet)}</span>
+
+                  {/* Victim Wallet */}
+                  <td className="px-4 py-3 font-mono text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-emerald-400" title={r.victimWallet}>{truncate(r.victimWallet)}</span>
+                      <button
+                        onClick={() => copyToClipboard(r.victimWallet, `v-${r.id}`)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Copy victim wallet"
+                      >
+                        <Copy className={`w-3 h-3 ${copied === `v-${r.id}` ? "text-emerald-400" : "text-slate-500 hover:text-white"}`} />
+                      </button>
+                      <a
+                        href={explorerUrl(r.victimWallet, r.chains)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Open in explorer"
+                      >
+                        <ExternalLink className="w-3 h-3 text-slate-500 hover:text-white" />
+                      </a>
+                    </div>
                   </td>
-                  <td className="px-4 py-2.5">
-                    <span className="text-red-400 text-xs" title={r.thiefWallet}>{truncate(r.thiefWallet)}</span>
+
+                  {/* Thief Wallet */}
+                  <td className="px-4 py-3 font-mono text-xs">
+                    <div className="flex items-center gap-1.5">
+                      <span className="text-red-400" title={r.thiefWallet}>{truncate(r.thiefWallet)}</span>
+                      <button
+                        onClick={() => copyToClipboard(r.thiefWallet, `t-${r.id}`)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Copy thief wallet"
+                      >
+                        <Copy className={`w-3 h-3 ${copied === `t-${r.id}` ? "text-red-400" : "text-slate-500 hover:text-white"}`} />
+                      </button>
+                      <a
+                        href={explorerUrl(r.thiefWallet, r.chains)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="opacity-0 group-hover:opacity-100 transition-opacity"
+                        title="Open in explorer"
+                      >
+                        <ExternalLink className="w-3 h-3 text-slate-500 hover:text-white" />
+                      </a>
+                    </div>
                   </td>
-                  <td className="px-4 py-2.5 text-slate-400 text-xs">{r.chains}</td>
-                  <td className="px-4 py-2.5">
-                    <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${statusColor[r.status] ?? statusColor.pending}`}>
+
+                  <td className="px-4 py-3">
+                    <div className="flex flex-wrap gap-1">
+                      {r.chains.split(",").map((c) => (
+                        <span key={c} className="uppercase text-xs font-mono font-medium px-2 py-0.5 bg-slate-800 text-slate-300 rounded-full border border-slate-700/50">
+                          {c.trim()}
+                        </span>
+                      ))}
+                    </div>
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${
+                      r.status === "approved" ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                      r.status === "rejected" ? "bg-red-500/15 text-red-400 border-red-500/30" :
+                      "bg-yellow-500/15 text-yellow-400 border-yellow-500/30"
+                    }`}>
                       {r.status}
                     </span>
+                  </td>
+
+                  <td className="px-4 py-3">
+                    <button
+                      onClick={() => startTrace(r)}
+                      className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap"
+                      title={`Trace thief wallet on ${r.chains}`}
+                    >
+                      <Play className="w-3 h-3" />
+                      Start Trace
+                    </button>
                   </td>
                 </tr>
               ))}

@@ -1,7 +1,8 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { useSaveSearch } from "@workspace/api-client-react";
-import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX } from "lucide-react";
+import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX, Inbox, RefreshCw } from "lucide-react";
+import { useAuth } from "@/components/dashboard-gate";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -52,6 +53,137 @@ function detectChain(addr: string): string {
   if (/^0x[0-9a-fA-F]{40}$/.test(addr)) return "ethereum";
   if (/^(bc1|[13])[a-zA-HJ-NP-Z0-9]{25,62}$/.test(addr)) return "bitcoin";
   return "ethereum";
+}
+
+type Submission = {
+  id: number;
+  name: string | null;
+  email: string;
+  victimWallet: string;
+  thiefWallet: string;
+  chains: string;
+  txHashes: string | null;
+  description: string | null;
+  submittedAt: string;
+  status: string;
+};
+
+function PendingSubmissions() {
+  const { authed } = useAuth();
+  const [rows, setRows] = useState<Submission[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  async function load() {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/submissions");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setRows(await res.json());
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { if (authed) load(); }, [authed]);
+
+  if (!authed) return null;
+
+  function truncate(s: string, n = 18) {
+    return s.length <= n ? s : `${s.slice(0, 8)}…${s.slice(-6)}`;
+  }
+
+  function fmtDate(iso: string) {
+    return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });
+  }
+
+  const statusColor: Record<string, string> = {
+    pending:  "bg-yellow-500/15 text-yellow-400 border-yellow-500/30",
+    approved: "bg-green-500/15 text-green-400 border-green-500/30",
+    rejected: "bg-red-500/15 text-red-400 border-red-500/30",
+  };
+
+  return (
+    <div className="rounded-xl border border-cyan-500/30 bg-gradient-to-br from-cyan-950/30 to-slate-900/60 overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-4 border-b border-cyan-500/20">
+        <div className="flex items-center gap-2">
+          <Inbox className="w-5 h-5 text-cyan-400" />
+          <h2 className="text-base font-bold tracking-wide text-cyan-300 font-mono uppercase">
+            Pending Submissions
+          </h2>
+          {!loading && (
+            <span className="text-xs font-mono px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-400 border border-cyan-500/30">
+              {rows.length}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="flex items-center gap-1.5 text-xs text-slate-400 hover:text-cyan-300 transition-colors disabled:opacity-50"
+        >
+          <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="px-5 py-3 text-sm text-red-400 font-mono">{error}</div>
+      )}
+
+      {!loading && rows.length === 0 && !error && (
+        <div className="px-5 py-8 text-center text-slate-500 text-sm font-mono">No submissions yet.</div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm font-mono">
+            <thead>
+              <tr className="text-xs text-slate-500 uppercase tracking-wider border-b border-slate-700/50">
+                <th className="text-left px-4 py-2.5">#</th>
+                <th className="text-left px-4 py-2.5">Date</th>
+                <th className="text-left px-4 py-2.5">Name / Email</th>
+                <th className="text-left px-4 py-2.5">Victim Wallet</th>
+                <th className="text-left px-4 py-2.5">Thief Wallet</th>
+                <th className="text-left px-4 py-2.5">Chains</th>
+                <th className="text-left px-4 py-2.5">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, i) => (
+                <tr
+                  key={r.id}
+                  className={`border-b border-slate-800/50 hover:bg-cyan-500/5 transition-colors ${i % 2 === 0 ? "" : "bg-slate-900/30"}`}
+                >
+                  <td className="px-4 py-2.5 text-cyan-500 font-bold">{r.id}</td>
+                  <td className="px-4 py-2.5 text-slate-400 whitespace-nowrap text-xs">{fmtDate(r.submittedAt)}</td>
+                  <td className="px-4 py-2.5">
+                    <div className="text-slate-300 text-xs">{r.name ?? <span className="text-slate-600">—</span>}</div>
+                    <div className="text-cyan-600 text-xs">{r.email}</div>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className="text-green-400 text-xs" title={r.victimWallet}>{truncate(r.victimWallet)}</span>
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className="text-red-400 text-xs" title={r.thiefWallet}>{truncate(r.thiefWallet)}</span>
+                  </td>
+                  <td className="px-4 py-2.5 text-slate-400 text-xs">{r.chains}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`text-xs px-2 py-0.5 rounded border font-semibold ${statusColor[r.status] ?? statusColor.pending}`}>
+                      {r.status}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function loadSavedWallets(): string[] {
@@ -135,6 +267,8 @@ export default function Home() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
+      <PendingSubmissions />
+
       <div className="space-y-2">
         <h1 className="text-3xl font-bold tracking-tight">Intelligence Search</h1>
         <p className="text-muted-foreground font-mono text-sm">Enter target wallet address for full profile extraction.</p>

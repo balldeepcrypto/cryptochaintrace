@@ -31,6 +31,21 @@ const ensureTable: Promise<void> = Promise.resolve()
     console.error("[submissions] Failed to ensure case_submissions table:", err);
   });
 
+router.get("/submissions", async (req, res): Promise<void> => {
+  await ensureTable;
+  try {
+    const rows = await db
+      .select()
+      .from(submissionsTable)
+      .orderBy(submissionsTable.submittedAt);
+    res.json(rows.reverse());
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    req.log.warn({ err }, "GET /submissions failed");
+    res.status(503).json({ error: "db_unavailable", message: "Could not load submissions.", detail });
+  }
+});
+
 router.post("/submissions", async (req, res): Promise<void> => {
   await ensureTable;
 

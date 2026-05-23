@@ -1,10 +1,10 @@
-import { Switch, Route, Router as WouterRouter } from "wouter";
+import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import NotFound from "@/pages/not-found";
+import { AuthProvider, useAuth } from "@/lib/auth-context";
 import { Layout } from "@/components/layout";
-import { DashboardGate } from "@/components/dashboard-gate";
+import NotFound from "@/pages/not-found";
 
 // Pages
 import Home from "@/pages/home";
@@ -12,6 +12,7 @@ import WalletDetail from "@/pages/wallet-detail";
 import TraceGraph from "@/pages/trace-graph";
 import ReportView from "@/pages/report-view";
 import SubmitCase from "@/pages/submit";
+import Login from "@/pages/login";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,32 +23,87 @@ const queryClient = new QueryClient({
   },
 });
 
+function ProtectedRoute({ children }: { children: React.ReactNode }) {
+  const { session, loading } = useAuth();
+  const [, navigate] = useLocation();
+
+  if (loading) {
+    return (
+      <div style={{
+        minHeight: "100vh", background: "#0a0f1e",
+        display: "flex", alignItems: "center", justifyContent: "center",
+        fontFamily: "ui-monospace, monospace", color: "#22d3ee", fontSize: "0.8rem",
+        letterSpacing: "0.15em",
+      }}>
+        INITIALIZING…
+      </div>
+    );
+  }
+
+  if (!session) {
+    navigate("/login");
+    return null;
+  }
+
+  return <>{children}</>;
+}
+
+function LoginGate() {
+  const { session, loading } = useAuth();
+  const [, navigate] = useLocation();
+
+  if (loading) return null;
+  if (session) {
+    navigate("/dashboard");
+    return null;
+  }
+  return <Login />;
+}
+
 function Router() {
   return (
     <Switch>
-      {/* Standalone public pages — no chrome, no auth */}
+      {/* Public pages — no auth required */}
       <Route path="/report-view" component={ReportView} />
       <Route path="/submit">
         <SubmitCase />
       </Route>
-
-      {/* Root — public intake form */}
       <Route path="/">
         <SubmitCase />
       </Route>
+      <Route path="/login">
+        <LoginGate />
+      </Route>
 
-      {/* Protected dashboard — requires password */}
-      <Route>
-        <DashboardGate>
+      {/* Protected pages */}
+      <Route path="/dashboard">
+        <ProtectedRoute>
           <Layout>
-            <Switch>
-              <Route path="/dashboard" component={Home} />
-              <Route path="/wallet/:address" component={WalletDetail} />
-              <Route path="/trace/:address" component={TraceGraph} />
-              <Route component={NotFound} />
-            </Switch>
+            <Home />
           </Layout>
-        </DashboardGate>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/wallet/:address">
+        {(_params) => (
+          <ProtectedRoute>
+            <Layout>
+              <WalletDetail />
+            </Layout>
+          </ProtectedRoute>
+        )}
+      </Route>
+      <Route path="/trace/:address">
+        {(_params) => (
+          <ProtectedRoute>
+            <Layout>
+              <TraceGraph />
+            </Layout>
+          </ProtectedRoute>
+        )}
+      </Route>
+
+      <Route>
+        <NotFound />
       </Route>
     </Switch>
   );
@@ -57,10 +113,12 @@ function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
-        <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
-          <Router />
-        </WouterRouter>
-        <Toaster />
+        <AuthProvider>
+          <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, "")}>
+            <Router />
+          </WouterRouter>
+          <Toaster />
+        </AuthProvider>
       </TooltipProvider>
     </QueryClientProvider>
   );

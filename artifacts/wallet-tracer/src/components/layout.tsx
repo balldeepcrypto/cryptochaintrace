@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Network, Box, Info, X, FileText } from "lucide-react";
+import { Search, Activity, Network, Box, Info, X, LogOut } from "lucide-react";
+import { useAuth } from "@/lib/auth-context";
 import { getRecentSearches, type RecentSearchEntry } from "@/lib/recent-searches";
 
 const CHAIN_SHORT: Record<string, string> = {
@@ -17,6 +18,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
   const [location] = useLocation();
   const [recents, setRecents] = useState<RecentSearchEntry[]>(() => getRecentSearches().slice(0, 8));
   const [showAbout, setShowAbout] = useState(false);
+  const { user, logout } = useAuth();
 
   useEffect(() => {
     const refresh = () => setRecents(getRecentSearches().slice(0, 8));
@@ -100,6 +102,21 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <Info className="w-3.5 h-3.5" />
                 <span>About</span>
               </button>
+              {user && (
+                <div className="flex items-center gap-2 pl-2 border-l border-border/40">
+                  <span className="text-muted-foreground/60 text-[10px] font-mono max-w-[140px] truncate" title={user.email ?? ""}>
+                    {user.email}
+                  </span>
+                  <button
+                    onClick={logout}
+                    title="Sign out"
+                    className="flex items-center gap-1.5 text-muted-foreground hover:text-red-400 transition-colors px-2 py-1 rounded border border-border/40 hover:border-red-900/60"
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Logout</span>
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </header>

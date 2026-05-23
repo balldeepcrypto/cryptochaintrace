@@ -3,6 +3,7 @@ import { useLocation } from "wouter";
 import { useSaveSearch } from "@workspace/api-client-react";
 import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX, Inbox, RefreshCw, ExternalLink, Play } from "lucide-react";
 import { useAuth } from "@/components/dashboard-gate";
+import CaseDetailModal from "@/components/case-detail-modal";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -86,6 +87,7 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const [selectedCase, setSelectedCase] = useState<Submission | null>(null);
 
   async function load() {
     setLoading(true);
@@ -124,9 +126,20 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
     return (CHAIN_EXPLORERS[firstChain] ?? "https://etherscan.io/address/") + wallet;
   }
 
-  function startTrace(r: Submission) {
-    const firstChain = r.chains.split(",")[0]?.trim().toLowerCase() ?? "ethereum";
-    onLoadTrace?.(r.thiefWallet, firstChain);
+  async function markDone(id: number) {
+    await fetch(`/api/submissions/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "done" }),
+    });
+    setRows((prev) => prev.map((r) => r.id === id ? { ...r, status: "done" } : r));
+    setSelectedCase(null);
+  }
+
+  async function deleteCase(id: number) {
+    await fetch(`/api/submissions/${id}`, { method: "DELETE" });
+    setRows((prev) => prev.filter((r) => r.id !== id));
+    setSelectedCase(null);
   }
 
   return (
@@ -161,6 +174,16 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
         <div className="px-5 py-8 text-center text-slate-500 text-sm font-mono">No submissions yet.</div>
       )}
 
+      {selectedCase && (
+        <CaseDetailModal
+          submission={selectedCase}
+          onClose={() => setSelectedCase(null)}
+          onLoadTrace={(wallet, chain) => { onLoadTrace?.(wallet, chain); setSelectedCase(null); }}
+          onMarkDone={markDone}
+          onDelete={deleteCase}
+        />
+      )}
+
       {rows.length > 0 && (
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -178,12 +201,16 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
             </thead>
             <tbody className="divide-y divide-slate-800/50">
               {rows.map((r) => (
-                <tr key={r.id} className="hover:bg-cyan-500/5 transition-colors group">
+                <tr
+                  key={r.id}
+                  onClick={() => setSelectedCase(r)}
+                  className="hover:bg-cyan-500/5 transition-colors group cursor-pointer"
+                >
                   <td className="px-4 py-3 text-cyan-500 font-bold font-mono">{r.id}</td>
                   <td className="px-4 py-3 text-slate-400 whitespace-nowrap text-xs">{fmtDate(r.submittedAt)}</td>
                   <td className="px-4 py-3">
                     <div className="text-slate-200 text-sm font-medium">{r.name ?? <span className="text-slate-600">—</span>}</div>
-                    <a href={`mailto:${r.email}`} className="text-cyan-600 hover:text-cyan-400 text-xs transition-colors">{r.email}</a>
+                    <a href={`mailto:${r.email}`} onClick={(e) => e.stopPropagation()} className="text-cyan-600 hover:text-cyan-400 text-xs transition-colors">{r.email}</a>
                   </td>
 
                   {/* Victim Wallet */}
@@ -191,7 +218,7 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
                     <div className="flex items-center gap-1.5">
                       <span className="text-emerald-400" title={r.victimWallet}>{truncate(r.victimWallet)}</span>
                       <button
-                        onClick={() => copyToClipboard(r.victimWallet, `v-${r.id}`)}
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(r.victimWallet, `v-${r.id}`); }}
                         className="opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Copy victim wallet"
                       >
@@ -201,6 +228,7 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
                         href={explorerUrl(r.victimWallet, r.chains)}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
                         className="opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Open in explorer"
                       >
@@ -214,7 +242,7 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
                     <div className="flex items-center gap-1.5">
                       <span className="text-red-400" title={r.thiefWallet}>{truncate(r.thiefWallet)}</span>
                       <button
-                        onClick={() => copyToClipboard(r.thiefWallet, `t-${r.id}`)}
+                        onClick={(e) => { e.stopPropagation(); copyToClipboard(r.thiefWallet, `t-${r.id}`); }}
                         className="opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Copy thief wallet"
                       >
@@ -224,6 +252,7 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
                         href={explorerUrl(r.thiefWallet, r.chains)}
                         target="_blank"
                         rel="noopener noreferrer"
+                        onClick={(e) => e.stopPropagation()}
                         className="opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Open in explorer"
                       >
@@ -244,7 +273,8 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
 
                   <td className="px-4 py-3">
                     <span className={`text-xs px-2 py-0.5 rounded-full border font-semibold ${
-                      r.status === "approved" ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                      r.status === "done"     ? "bg-green-500/15 text-green-400 border-green-500/30" :
+                      r.status === "approved" ? "bg-blue-500/15 text-blue-400 border-blue-500/30" :
                       r.status === "rejected" ? "bg-red-500/15 text-red-400 border-red-500/30" :
                       "bg-yellow-500/15 text-yellow-400 border-yellow-500/30"
                     }`}>
@@ -254,9 +284,9 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
 
                   <td className="px-4 py-3">
                     <button
-                      onClick={() => startTrace(r)}
+                      onClick={(e) => { e.stopPropagation(); setSelectedCase(r); }}
                       className="flex items-center gap-1.5 bg-blue-600 hover:bg-blue-500 active:bg-blue-700 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap"
-                      title={`Trace thief wallet on ${r.chains}`}
+                      title="Open case detail"
                     >
                       <Play className="w-3 h-3" />
                       Start Trace

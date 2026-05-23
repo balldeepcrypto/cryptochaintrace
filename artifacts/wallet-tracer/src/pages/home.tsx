@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useSaveSearch } from "@workspace/api-client-react";
 import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX, Inbox, RefreshCw, ExternalLink, Play } from "lucide-react";
-import { useAuth } from "@/components/dashboard-gate";
+import { useAuth } from "@/lib/auth-context";
 import CaseDetailModal from "@/components/case-detail-modal";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -82,7 +82,7 @@ const CHAIN_EXPLORERS: Record<string, string> = {
 };
 
 function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, chain: string) => void }) {
-  const { authed } = useAuth();
+  const { session } = useAuth();
   const [rows, setRows] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -103,9 +103,9 @@ function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, ch
     }
   }
 
-  useEffect(() => { if (authed) load(); }, [authed]);
+  useEffect(() => { if (session) load(); }, [session]);
 
-  if (!authed) return null;
+  if (!session) return null;
 
   function fmtDate(iso: string) {
     return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "2-digit", minute: "2-digit" });

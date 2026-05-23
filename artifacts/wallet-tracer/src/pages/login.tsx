@@ -84,7 +84,7 @@ export default function Login() {
         setError(detail);
         setLoading(false);
       } else {
-        navigate("/dashboard");
+        navigate("/dashboard", { replace: true });
       }
     } catch (thrown: unknown) {
       const msg = thrown instanceof Error ? thrown.message : String(thrown);

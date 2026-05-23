@@ -32,7 +32,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Covers both password login and magic link token exchange on landing.
         // Only redirect if currently on the login page to avoid interrupting
         // other in-app navigation.
-        if (window.location.pathname.endsWith("/login")) {
+        if (window.location.pathname === "/login") {
           window.location.replace("/dashboard");
         }
       }

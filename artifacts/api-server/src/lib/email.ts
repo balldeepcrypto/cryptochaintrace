@@ -21,16 +21,23 @@ export async function sendSubmissionEmails(data: {
   description: string | null;
   id: number;
 }): Promise<void> {
+  console.log(`[email] sendSubmissionEmails called for case #${data.id}`);
+  console.log(`[email] RESEND_API_KEY set: ${!!process.env.RESEND_API_KEY}`);
+  console.log(`[email] ADMIN_EMAIL: ${ADMIN_EMAIL}`);
+  console.log(`[email] FROM: ${FROM}`);
+
   const resend = getResend();
   if (!resend) {
-    console.warn("[email] RESEND_API_KEY not set — skipping email notifications");
-    return;
+    const msg = "[email] ERROR: RESEND_API_KEY is not set — cannot send emails";
+    console.error(msg);
+    throw new Error(msg);
   }
 
   const displayName = data.name?.trim() || "Applicant";
 
   // 1. Auto-reply to submitter
-  const autoReply = resend.emails.send({
+  console.log(`[email] Sending auto-reply to: ${data.email}`);
+  const autoReplyResult = await resend.emails.send({
     from: FROM,
     to: data.email,
     subject: "Thank you for submitting your case to CryptoChainTrace",
@@ -54,8 +61,15 @@ Fvck Thieves (Not Real Name)
 CryptoChainTrace`,
   });
 
+  if (autoReplyResult.error) {
+    console.error(`[email] Auto-reply FAILED to ${data.email}:`, JSON.stringify(autoReplyResult.error));
+    throw new Error(`Auto-reply failed: ${JSON.stringify(autoReplyResult.error)}`);
+  }
+  console.log(`[email] Auto-reply sent OK to ${data.email}, id: ${autoReplyResult.data?.id}`);
+
   // 2. Admin notification with full details
-  const adminNotify = resend.emails.send({
+  console.log(`[email] Sending admin notification to: ${ADMIN_EMAIL}`);
+  const adminResult = await resend.emails.send({
     from: FROM,
     to: ADMIN_EMAIL,
     subject: `[New Case #${data.id}] Submission from ${data.email}`,
@@ -75,12 +89,9 @@ Review submissions in the dashboard at https://cryptochaintrace.com/dashboard
 `,
   });
 
-  const [autoReplyResult, adminResult] = await Promise.allSettled([autoReply, adminNotify]);
-
-  if (autoReplyResult.status === "rejected") {
-    console.error("[email] Auto-reply failed:", autoReplyResult.reason);
+  if (adminResult.error) {
+    console.error(`[email] Admin notification FAILED to ${ADMIN_EMAIL}:`, JSON.stringify(adminResult.error));
+    throw new Error(`Admin notification failed: ${JSON.stringify(adminResult.error)}`);
   }
-  if (adminResult.status === "rejected") {
-    console.error("[email] Admin notification failed:", adminResult.reason);
-  }
+  console.log(`[email] Admin notification sent OK to ${ADMIN_EMAIL}, id: ${adminResult.data?.id}`);
 }

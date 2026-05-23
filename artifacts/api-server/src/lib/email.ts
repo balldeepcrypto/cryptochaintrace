@@ -8,7 +8,7 @@ function getResend(): Resend | null {
   return _resend;
 }
 
-const FROM = "CryptoChainTrace <onboarding@resend.dev>";
+const FROM = "CryptoChainTrace <noreply@cryptochaintrace.com>";
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL ?? "cryptotheftvictim@proton.me";
 
 export async function sendSubmissionEmails(data: {

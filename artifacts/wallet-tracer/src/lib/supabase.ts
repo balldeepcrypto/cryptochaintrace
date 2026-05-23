@@ -12,21 +12,17 @@ const rawKey = rawA.startsWith("http") ? rawB : rawA;
 export const supabaseUrl = rawUrl.replace(/\/+$/, "");
 export const supabaseAnonKey = rawKey;
 
-// Diagnostics — always log on module load so the browser console shows what's in use.
-console.log("[supabase] VITE_SUPABASE_URL  (raw):", rawA ? `"${rawA.slice(0, 48)}…"` : "(empty — not set in env)");
-console.log("[supabase] VITE_SUPABASE_ANON_KEY (raw):", rawB ? `"${rawB.slice(0, 32)}…"` : "(empty — not set in env)");
-console.log("[supabase] resolved url:", supabaseUrl || "(MISSING)");
-console.log("[supabase] resolved key:", supabaseAnonKey ? `${supabaseAnonKey.slice(0, 24)}…` : "(MISSING)");
+console.log("Supabase URL:", supabaseUrl || "(MISSING)");
+console.log("Supabase Key prefix:", supabaseAnonKey ? supabaseAnonKey.substring(0, 20) : "(MISSING)");
+console.log("[supabase] VITE_SUPABASE_URL  raw:", rawA || "(empty)");
+console.log("[supabase] VITE_SUPABASE_ANON_KEY raw:", rawB || "(empty)");
 
 export const supabaseConfigured = Boolean(supabaseUrl && supabaseAnonKey);
 
 if (!supabaseConfigured) {
-  console.error(
-    "[supabase] ⚠️  Client is NOT configured. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in your deployment environment variables and redeploy."
-  );
+  console.error("[supabase] ⚠️ NOT configured — set VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY in Vercel env vars and redeploy.");
 }
 
-// Always create the client — auth calls are guarded in the UI before they fire.
 export const supabase = createClient(
   supabaseUrl || "https://placeholder.supabase.co",
   supabaseAnonKey || "placeholder-key"

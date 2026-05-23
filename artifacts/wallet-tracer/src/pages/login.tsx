@@ -1,8 +1,45 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { supabase, supabaseUrl, supabaseAnonKey, supabaseConfigured } from "@/lib/supabase";
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Mail, Lock } from "lucide-react";
 
 type Mode = "password" | "magic";
+
+type ProbeStatus = "checking" | "ok" | "paused" | "error" | "cors";
+interface ProbeResult {
+  status: ProbeStatus;
+  detail: string;
+}
+
+async function probeSupabase(url: string, key: string): Promise<ProbeResult> {
+  if (!url || !key) {
+    return { status: "error", detail: "URL or key not set." };
+  }
+  const healthUrl = `${url}/auth/v1/health`;
+  try {
+    const res = await fetch(healthUrl, {
+      method: "GET",
+      headers: { apikey: key, "Content-Type": "application/json" },
+    });
+    const text = await res.text().catch(() => "(no body)");
+    if (res.ok) {
+      return { status: "ok", detail: `HTTP ${res.status} — ${text.slice(0, 120)}` };
+    }
+    if (res.status === 503 || text.toLowerCase().includes("paused")) {
+      return { status: "paused", detail: `HTTP ${res.status} — project may be paused. Body: ${text.slice(0, 200)}` };
+    }
+    return { status: "error", detail: `HTTP ${res.status} — ${text.slice(0, 200)}` };
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    // TypeError "Load failed" / "Failed to fetch" = CORS block or network down
+    if (msg.toLowerCase().includes("load failed") || msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("network")) {
+      return {
+        status: "cors",
+        detail: `Fetch threw "${msg}" — this is usually a CORS block or the Supabase project is paused/deleted. Check Project Settings → Paused or API → CORS in the Supabase dashboard.`,
+      };
+    }
+    return { status: "error", detail: `Fetch threw: ${msg}` };
+  }
+}
 
 export default function Login() {
   const [mode, setMode] = useState<Mode>("password");
@@ -12,27 +49,51 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [magicSent, setMagicSent] = useState(false);
+  const [probe, setProbe] = useState<ProbeResult | null>(null);
+
+  // Run health probe on mount
+  useEffect(() => {
+    if (!supabaseConfigured) return;
+    setProbe(null);
+    probeSupabase(supabaseUrl, supabaseAnonKey).then((result) => {
+      console.log("[supabase probe]", result);
+      setProbe(result);
+    });
+  }, []);
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     if (!supabaseConfigured) {
-      setError("Supabase is not configured. VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set in the deployment environment and the app redeployed.");
+      setError("Supabase is not configured — VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set in Vercel environment variables, then redeploy.");
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+      const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
+      console.log("[login] signInWithPassword result — data:", data, "error:", err);
       if (err) {
-        console.error("[login] signInWithPassword error:", err.message, err);
-        setError(err.message);
+        console.error("[login] signInWithPassword error:", err);
+        // Show every field of the error object
+        const detail = [
+          err.message,
+          err.status ? `status ${err.status}` : null,
+          (err as { code?: string }).code ? `code: ${(err as { code?: string }).code}` : null,
+        ].filter(Boolean).join(" · ");
+        setError(detail);
         setLoading(false);
       }
-      // on success: AuthProvider detects new session → App.tsx LoginGate redirects to /dashboard
+      // on success AuthProvider picks up session → LoginGate redirects to /dashboard
     } catch (thrown: unknown) {
       const msg = thrown instanceof Error ? thrown.message : String(thrown);
-      console.error("[login] signInWithPassword threw:", thrown);
-      setError(`Network error — "${msg}". Supabase URL in use: ${supabaseUrl || "(empty)"}. Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in Vercel environment variables and the site has been redeployed.`);
+      const name = thrown instanceof Error ? thrown.name : "Unknown";
+      console.error("[login] signInWithPassword THREW:", thrown);
+      setError(
+        `${name}: "${msg}" — the request never reached Supabase. ` +
+        `URL in use: ${supabaseUrl || "(empty)"}. ` +
+        `This is typically a CORS block or the Supabase project is paused. ` +
+        `Check the probe result above and the Supabase dashboard.`
+      );
       setLoading(false);
     }
   }
@@ -40,19 +101,25 @@ export default function Login() {
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
     if (!supabaseConfigured) {
-      setError("Supabase is not configured. VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set in the deployment environment and the app redeployed.");
+      setError("Supabase is not configured — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel env vars and redeploy.");
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const { error: err } = await supabase.auth.signInWithOtp({
+      const { data, error: err } = await supabase.auth.signInWithOtp({
         email,
         options: { emailRedirectTo: window.location.origin + "/dashboard" },
       });
+      console.log("[login] signInWithOtp result — data:", data, "error:", err);
       if (err) {
-        console.error("[login] signInWithOtp error:", err.message, err);
-        setError(err.message);
+        console.error("[login] signInWithOtp error:", err);
+        const detail = [
+          err.message,
+          err.status ? `status ${err.status}` : null,
+          (err as { code?: string }).code ? `code: ${(err as { code?: string }).code}` : null,
+        ].filter(Boolean).join(" · ");
+        setError(detail);
         setLoading(false);
       } else {
         setMagicSent(true);
@@ -60,8 +127,13 @@ export default function Login() {
       }
     } catch (thrown: unknown) {
       const msg = thrown instanceof Error ? thrown.message : String(thrown);
-      console.error("[login] signInWithOtp threw:", thrown);
-      setError(`Network error — "${msg}". Supabase URL in use: ${supabaseUrl || "(empty)"}. Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set in Vercel environment variables and the site has been redeployed.`);
+      const name = thrown instanceof Error ? thrown.name : "Unknown";
+      console.error("[login] signInWithOtp THREW:", thrown);
+      setError(
+        `${name}: "${msg}" — the request never reached Supabase. ` +
+        `URL in use: ${supabaseUrl || "(empty)"}. ` +
+        `Check probe result above and Supabase dashboard.`
+      );
       setLoading(false);
     }
   }
@@ -80,38 +152,37 @@ export default function Login() {
     transition: "border-color 0.15s",
   };
 
-  // Short diagnostic strings shown in the env banner
   const urlPreview = supabaseUrl
-    ? supabaseUrl.replace("https://", "").slice(0, 36) + (supabaseUrl.length > 44 ? "…" : "")
+    ? supabaseUrl.replace("https://", "").slice(0, 40)
     : "(not set)";
-  const keyPreview = supabaseAnonKey
-    ? supabaseAnonKey.slice(0, 20) + "…"
-    : "(not set)";
+  const keyPreview = supabaseAnonKey ? supabaseAnonKey.substring(0, 20) + "…" : "(not set)";
+
+  const probeColor: Record<ProbeStatus, string> = {
+    checking: "#94a3b8",
+    ok: "#22d3ee",
+    paused: "#f59e0b",
+    error: "#f87171",
+    cors: "#f87171",
+  };
+  const probeLabel: Record<ProbeStatus, string> = {
+    checking: "● CHECKING…",
+    ok: "● REACHABLE",
+    paused: "⚠ PROJECT PAUSED",
+    error: "✗ ERROR",
+    cors: "✗ CORS / NETWORK BLOCK",
+  };
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "#080d1a",
-        display: "flex",
-        flexDirection: "column",
-        alignItems: "center",
-        justifyContent: "center",
-        fontFamily: "ui-monospace, SFMono-Regular, 'Cascadia Code', monospace",
-        padding: 24,
-        position: "relative",
-        overflow: "hidden",
-      }}
-    >
+    <div style={{ minHeight: "100vh", background: "#080d1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "ui-monospace, SFMono-Regular, 'Cascadia Code', monospace", padding: 24, position: "relative", overflow: "hidden" }}>
       {/* Grid bg */}
       <div style={{ position: "absolute", inset: 0, opacity: 0.025, backgroundImage: "linear-gradient(#22d3ee 1px, transparent 1px), linear-gradient(90deg, #22d3ee 1px, transparent 1px)", backgroundSize: "48px 48px", pointerEvents: "none" }} />
       {/* Top glow */}
       <div style={{ position: "absolute", top: "-80px", left: "50%", transform: "translateX(-50%)", width: 700, height: 400, borderRadius: "50%", background: "radial-gradient(ellipse, rgba(34,211,238,0.07) 0%, transparent 65%)", pointerEvents: "none" }} />
 
-      <div style={{ width: "100%", maxWidth: 440, position: "relative", zIndex: 1 }}>
+      <div style={{ width: "100%", maxWidth: 460, position: "relative", zIndex: 1 }}>
         {/* Header */}
-        <div style={{ textAlign: "center", marginBottom: 36 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 52, height: 52, borderRadius: "50%", background: "rgba(34,211,238,0.07)", border: "1px solid rgba(34,211,238,0.18)", marginBottom: 22 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
+          <div style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: 52, height: 52, borderRadius: "50%", background: "rgba(34,211,238,0.07)", border: "1px solid rgba(34,211,238,0.18)", marginBottom: 20 }}>
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
             </svg>
@@ -124,25 +195,42 @@ export default function Login() {
           </div>
         </div>
 
-        {/* ── Env diagnostic banner ── always visible so you can verify config on any deployment */}
-        <div style={{ marginBottom: 16, padding: "8px 12px", borderRadius: 8, border: `1px solid ${supabaseConfigured ? "rgba(34,211,238,0.15)" : "rgba(239,68,68,0.3)"}`, background: supabaseConfigured ? "rgba(34,211,238,0.04)" : "rgba(239,68,68,0.06)", fontSize: "0.65rem", color: "#475569", lineHeight: 1.7 }}>
-          <span style={{ color: supabaseConfigured ? "#22d3ee" : "#f87171", fontWeight: 600 }}>
-            {supabaseConfigured ? "● SUPABASE CONFIGURED" : "⚠ SUPABASE NOT CONFIGURED"}
-          </span>
-          <br />
-          URL: <span style={{ color: supabaseConfigured ? "#94a3b8" : "#f87171" }}>{urlPreview}</span>
-          <br />
-          KEY: <span style={{ color: supabaseConfigured ? "#94a3b8" : "#f87171" }}>{keyPreview}</span>
+        {/* ── Diagnostics panel ── */}
+        <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 8, border: `1px solid ${supabaseConfigured ? "rgba(34,211,238,0.15)" : "rgba(239,68,68,0.3)"}`, background: supabaseConfigured ? "rgba(34,211,238,0.03)" : "rgba(239,68,68,0.05)", fontSize: "0.65rem", lineHeight: 1.85, color: "#475569" }}>
+          {/* Config row */}
+          <div>
+            <span style={{ color: supabaseConfigured ? "#22d3ee" : "#f87171", fontWeight: 600 }}>
+              {supabaseConfigured ? "● SUPABASE CONFIGURED" : "⚠ NOT CONFIGURED"}
+            </span>
+          </div>
+          <div>URL: <span style={{ color: "#94a3b8" }}>{urlPreview}</span></div>
+          <div>KEY: <span style={{ color: "#94a3b8" }}>{keyPreview}</span></div>
+
+          {/* Probe row */}
+          {supabaseConfigured && (
+            <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
+              {probe === null ? (
+                <span style={{ color: "#475569" }}>● PROBING /auth/v1/health…</span>
+              ) : (
+                <>
+                  <span style={{ color: probeColor[probe.status], fontWeight: 600 }}>
+                    {probeLabel[probe.status]}
+                  </span>
+                  <span style={{ color: "#334155", marginLeft: 6 }}>{probe.detail}</span>
+                </>
+              )}
+            </div>
+          )}
+
           {!supabaseConfigured && (
-            <>
-              <br />
-              <span style={{ color: "#f87171" }}>Add VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY to Vercel env vars and redeploy.</span>
-            </>
+            <div style={{ color: "#f87171", marginTop: 4 }}>
+              Add VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY to Vercel env vars and redeploy.
+            </div>
           )}
         </div>
 
         {/* Card */}
-        <div style={{ background: "rgba(13,20,38,0.95)", border: "1px solid #1e293b", borderRadius: 14, padding: "32px 36px", backdropFilter: "blur(16px)", boxShadow: "0 24px 48px rgba(0,0,0,0.6), 0 0 0 1px rgba(34,211,238,0.04)" }}>
+        <div style={{ background: "rgba(13,20,38,0.95)", border: "1px solid #1e293b", borderRadius: 14, padding: "32px 36px", backdropFilter: "blur(16px)", boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
           {/* Mode toggle */}
           <div style={{ display: "flex", marginBottom: 28, background: "rgba(255,255,255,0.02)", border: "1px solid #1e293b", borderRadius: 8, padding: 3 }}>
             {(["password", "magic"] as Mode[]).map((m) => (
@@ -199,9 +287,9 @@ export default function Login() {
 
               {mode === "magic" && <div style={{ marginBottom: 24 }} />}
 
-              {/* Error banner */}
+              {/* Error */}
               {error && (
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 14px", borderRadius: 8, marginBottom: 16, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)", color: "#f87171", fontSize: "0.78rem", lineHeight: 1.55, wordBreak: "break-word" }}>
+                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 14px", borderRadius: 8, marginBottom: 16, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)", color: "#f87171", fontSize: "0.76rem", lineHeight: 1.6, wordBreak: "break-word" }}>
                   <AlertCircle style={{ width: 14, height: 14, flexShrink: 0, marginTop: 2 }} />
                   <span>{error}</span>
                 </div>
@@ -209,7 +297,7 @@ export default function Login() {
 
               {/* Submit */}
               <button type="submit" disabled={loading}
-                style={{ width: "100%", padding: "12px", background: loading ? "rgba(34,211,238,0.5)" : "linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)", color: "#040d1a", border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.82rem", cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit", letterSpacing: "0.1em", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, transition: "opacity 0.15s" }}>
+                style={{ width: "100%", padding: "12px", background: loading ? "rgba(34,211,238,0.5)" : "linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)", color: "#040d1a", border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.82rem", cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit", letterSpacing: "0.1em", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
                 {loading ? (
                   <><Loader2 style={{ width: 15, height: 15, animation: "spin 1s linear infinite" }} />{mode === "password" ? "SIGNING IN…" : "SENDING LINK…"}</>
                 ) : mode === "password" ? "SIGN IN" : "SEND MAGIC LINK"}
@@ -218,7 +306,6 @@ export default function Login() {
           )}
         </div>
 
-        {/* Footer */}
         <div style={{ textAlign: "center", marginTop: 28, color: "#1e293b", fontSize: "0.62rem", letterSpacing: "0.12em", textTransform: "uppercase" }}>
           For Official Investigative Use Only &nbsp;·&nbsp; CryptoChainTrace © 2026
         </div>

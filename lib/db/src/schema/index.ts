@@ -19,3 +19,4 @@
 
 export * from "./searches";
 export * from "./submissions";
+export * from "./activity-logs";

@@ -14,6 +14,8 @@ import TraceGraph from "@/pages/trace-graph";
 import ReportView from "@/pages/report-view";
 import SubmitCase from "@/pages/submit";
 import Login from "@/pages/login";
+import ManageAnalysts from "@/pages/manage-analysts";
+import AnalystActivity from "@/pages/analyst-activity";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -102,6 +104,20 @@ function Router() {
             </Layout>
           </ProtectedRoute>
         )}
+      </Route>
+      <Route path="/manage-analysts">
+        <ProtectedRoute>
+          <Layout>
+            <ManageAnalysts />
+          </Layout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/analyst-activity">
+        <ProtectedRoute>
+          <Layout>
+            <AnalystActivity />
+          </Layout>
+        </ProtectedRoute>
       </Route>
 
       <Route>

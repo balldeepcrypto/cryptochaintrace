@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Network, Box, Info, X, LogOut } from "lucide-react";
+import { Search, Activity, Network, Box, Info, X, LogOut, Users, ClipboardList } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { getRecentSearches, type RecentSearchEntry } from "@/lib/recent-searches";
 
@@ -48,7 +48,23 @@ export function Layout({ children }: { children: React.ReactNode }) {
             </div>
           </Link>
 
-          <div className="mt-6 mb-1 px-3 text-xs font-mono tracking-wider text-muted-foreground uppercase">
+          <div className="mt-4 mb-1 px-3 text-xs font-mono tracking-wider text-muted-foreground uppercase">
+            Admin
+          </div>
+          <Link href="/manage-analysts">
+            <div className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/manage-analysts' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+              <Users className="w-4 h-4" />
+              Manage Analysts
+            </div>
+          </Link>
+          <Link href="/analyst-activity">
+            <div className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/analyst-activity' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+              <ClipboardList className="w-4 h-4" />
+              Analyst Activity
+            </div>
+          </Link>
+
+          <div className="mt-4 mb-1 px-3 text-xs font-mono tracking-wider text-muted-foreground uppercase">
             Recent Targets
           </div>
 

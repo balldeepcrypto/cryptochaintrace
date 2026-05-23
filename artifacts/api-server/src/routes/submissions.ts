@@ -70,19 +70,22 @@ router.post("/submissions", async (req, res): Promise<void> => {
       })
       .returning();
 
-    // Fire emails in the background — don't block the response
-    sendSubmissionEmails({
-      id: row.id,
-      name: row.name ?? null,
-      email: row.email,
-      victimWallet: row.victimWallet,
-      thiefWallet: row.thiefWallet,
-      chains: row.chains,
-      txHashes: row.txHashes ?? null,
-      description: row.description ?? null,
-    }).catch((err: unknown) => {
-      console.error("[submissions] Email sending failed:", err);
-    });
+    // Send emails — await so errors surface in structured logs
+    try {
+      await sendSubmissionEmails({
+        id: row.id,
+        name: row.name ?? null,
+        email: row.email,
+        victimWallet: row.victimWallet,
+        thiefWallet: row.thiefWallet,
+        chains: row.chains,
+        txHashes: row.txHashes ?? null,
+        description: row.description ?? null,
+      });
+      req.log.info({ caseId: row.id }, "[submissions] Emails sent successfully");
+    } catch (emailErr) {
+      req.log.error({ err: emailErr, caseId: row.id }, "[submissions] Email sending failed");
+    }
 
     res.status(201).json({
       id: row.id,

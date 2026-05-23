@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Switch, Route, Router as WouterRouter, useLocation } from "wouter";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
@@ -27,6 +28,10 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { session, loading } = useAuth();
   const [, navigate] = useLocation();
 
+  useEffect(() => {
+    if (!loading && !session) navigate("/login");
+  }, [loading, session, navigate]);
+
   if (loading) {
     return (
       <div style={{
@@ -40,10 +45,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!session) {
-    navigate("/login");
-    return null;
-  }
+  if (!session) return null;
 
   return <>{children}</>;
 }
@@ -52,11 +54,11 @@ function LoginGate() {
   const { session, loading } = useAuth();
   const [, navigate] = useLocation();
 
-  if (loading) return null;
-  if (session) {
-    navigate("/dashboard");
-    return null;
-  }
+  useEffect(() => {
+    if (!loading && session) navigate("/dashboard");
+  }, [loading, session, navigate]);
+
+  if (loading || session) return null;
   return <Login />;
 }
 

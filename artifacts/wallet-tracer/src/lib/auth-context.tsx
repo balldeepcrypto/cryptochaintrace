@@ -26,8 +26,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     });
 
-    const { data: listener } = supabase.auth.onAuthStateChange((_event, s) => {
+    const { data: listener } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
+      if (event === "SIGNED_IN" && s) {
+        // Covers both password login and magic link token exchange on landing.
+        // Only redirect if currently on the login page to avoid interrupting
+        // other in-app navigation.
+        if (window.location.pathname.endsWith("/login")) {
+          window.location.replace("/dashboard");
+        }
+      }
     });
 
     return () => listener.subscription.unsubscribe();

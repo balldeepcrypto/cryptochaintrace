@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useLocation } from "wouter";
 import { supabase, supabaseUrl, supabaseAnonKey, supabaseConfigured } from "@/lib/supabase";
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Mail, Lock } from "lucide-react";
 
@@ -42,6 +43,7 @@ async function probeSupabase(url: string, key: string): Promise<ProbeResult> {
 }
 
 export default function Login() {
+  const [, navigate] = useLocation();
   const [mode, setMode] = useState<Mode>("password");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -74,7 +76,6 @@ export default function Login() {
       console.log("[login] signInWithPassword result — data:", data, "error:", err);
       if (err) {
         console.error("[login] signInWithPassword error:", err);
-        // Show every field of the error object
         const detail = [
           err.message,
           err.status ? `status ${err.status}` : null,
@@ -82,8 +83,9 @@ export default function Login() {
         ].filter(Boolean).join(" · ");
         setError(detail);
         setLoading(false);
+      } else {
+        navigate("/dashboard");
       }
-      // on success AuthProvider picks up session → LoginGate redirects to /dashboard
     } catch (thrown: unknown) {
       const msg = thrown instanceof Error ? thrown.message : String(thrown);
       const name = thrown instanceof Error ? thrown.name : "Unknown";
@@ -109,7 +111,9 @@ export default function Login() {
     try {
       const { data, error: err } = await supabase.auth.signInWithOtp({
         email,
-        options: { emailRedirectTo: window.location.origin + "/dashboard" },
+        options: {
+          emailRedirectTo: `${window.location.origin}/dashboard`,
+        },
       });
       console.log("[login] signInWithOtp result — data:", data, "error:", err);
       if (err) {

@@ -17,27 +17,43 @@ export default function Login() {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const { error: err } = await supabase.auth.signInWithPassword({ email, password });
-    if (err) {
-      setError(err.message);
+    try {
+      const { error: err } = await supabase.auth.signInWithPassword({ email, password });
+      if (err) {
+        console.error("[login] signInWithPassword error:", err);
+        setError(err.message);
+        setLoading(false);
+      }
+      // on success: AuthProvider detects new session → App.tsx LoginGate redirects to /dashboard
+    } catch (thrown: unknown) {
+      const msg = thrown instanceof Error ? thrown.message : String(thrown);
+      console.error("[login] signInWithPassword threw:", thrown);
+      setError(`Network error: ${msg}. Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set correctly.`);
       setLoading(false);
     }
-    // on success: AuthProvider detects new session → App.tsx LoginGate redirects to /dashboard
   }
 
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
-    const { error: err } = await supabase.auth.signInWithOtp({
-      email,
-      options: { emailRedirectTo: window.location.origin + "/dashboard" },
-    });
-    if (err) {
-      setError(err.message);
-      setLoading(false);
-    } else {
-      setMagicSent(true);
+    try {
+      const { error: err } = await supabase.auth.signInWithOtp({
+        email,
+        options: { emailRedirectTo: window.location.origin + "/dashboard" },
+      });
+      if (err) {
+        console.error("[login] signInWithOtp error:", err);
+        setError(err.message);
+        setLoading(false);
+      } else {
+        setMagicSent(true);
+        setLoading(false);
+      }
+    } catch (thrown: unknown) {
+      const msg = thrown instanceof Error ? thrown.message : String(thrown);
+      console.error("[login] signInWithOtp threw:", thrown);
+      setError(`Network error: ${msg}. Check that VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY are set correctly.`);
       setLoading(false);
     }
   }
@@ -102,7 +118,6 @@ export default function Login() {
       <div style={{ width: "100%", maxWidth: 440, position: "relative", zIndex: 1 }}>
         {/* ── Header ── */}
         <div style={{ textAlign: "center", marginBottom: 36 }}>
-          {/* Logo mark */}
           <div
             style={{
               display: "inline-flex",
@@ -121,7 +136,6 @@ export default function Login() {
             </svg>
           </div>
 
-          {/* Main title */}
           <h1
             style={{
               color: "#f1f5f9",
@@ -135,7 +149,6 @@ export default function Login() {
             Law Enforcement &amp; Analyst Portal
           </h1>
 
-          {/* Subtitle */}
           <div
             style={{
               color: "#22d3ee",
@@ -203,7 +216,6 @@ export default function Login() {
           </div>
 
           {magicSent ? (
-            /* ── Magic link sent confirmation ── */
             <div
               style={{
                 textAlign: "center",
@@ -229,9 +241,7 @@ export default function Login() {
                 <CheckCircle2 style={{ width: 20, height: 20, color: "#22d3ee" }} />
               </div>
               <div>
-                <div
-                  style={{ color: "#e2e8f0", fontSize: "0.9rem", fontWeight: 600, marginBottom: 6 }}
-                >
+                <div style={{ color: "#e2e8f0", fontSize: "0.9rem", fontWeight: 600, marginBottom: 6 }}>
                   Check your inbox
                 </div>
                 <div style={{ color: "#475569", fontSize: "0.8rem", lineHeight: 1.6 }}>
@@ -242,10 +252,7 @@ export default function Login() {
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setMagicSent(false);
-                  setEmail("");
-                }}
+                onClick={() => { setMagicSent(false); setEmail(""); }}
                 style={{
                   marginTop: 4,
                   background: "none",
@@ -263,7 +270,6 @@ export default function Login() {
               </button>
             </div>
           ) : (
-            /* ── Form ── */
             <form onSubmit={mode === "password" ? handleSignIn : handleMagicLink}>
               {/* Email */}
               <div style={{ marginBottom: 14 }}>
@@ -301,9 +307,7 @@ export default function Login() {
                     autoFocus
                     autoComplete="email"
                     style={inputStyle}
-                    onFocus={(e) =>
-                      (e.target.style.borderColor = "rgba(34,211,238,0.35)")
-                    }
+                    onFocus={(e) => (e.target.style.borderColor = "rgba(34,211,238,0.35)")}
                     onBlur={(e) => (e.target.style.borderColor = "#1e293b")}
                   />
                 </div>
@@ -345,9 +349,7 @@ export default function Login() {
                       required
                       autoComplete="current-password"
                       style={{ ...inputStyle, paddingRight: 42 }}
-                      onFocus={(e) =>
-                        (e.target.style.borderColor = "rgba(34,211,238,0.35)")
-                      }
+                      onFocus={(e) => (e.target.style.borderColor = "rgba(34,211,238,0.35)")}
                       onBlur={(e) => (e.target.style.borderColor = "#1e293b")}
                     />
                     <button
@@ -367,11 +369,7 @@ export default function Login() {
                         alignItems: "center",
                       }}
                     >
-                      {showPw ? (
-                        <EyeOff style={{ width: 15, height: 15 }} />
-                      ) : (
-                        <Eye style={{ width: 15, height: 15 }} />
-                      )}
+                      {showPw ? <EyeOff style={{ width: 15, height: 15 }} /> : <Eye style={{ width: 15, height: 15 }} />}
                     </button>
                   </div>
                 </div>
@@ -379,12 +377,12 @@ export default function Login() {
 
               {mode === "magic" && <div style={{ marginBottom: 24 }} />}
 
-              {/* Error */}
+              {/* Error banner */}
               {error && (
                 <div
                   style={{
                     display: "flex",
-                    alignItems: "center",
+                    alignItems: "flex-start",
                     gap: 8,
                     padding: "10px 14px",
                     borderRadius: 8,
@@ -393,10 +391,12 @@ export default function Login() {
                     border: "1px solid rgba(239,68,68,0.2)",
                     color: "#f87171",
                     fontSize: "0.8rem",
+                    lineHeight: 1.5,
+                    wordBreak: "break-word",
                   }}
                 >
-                  <AlertCircle style={{ width: 14, height: 14, flexShrink: 0 }} />
-                  {error}
+                  <AlertCircle style={{ width: 14, height: 14, flexShrink: 0, marginTop: 2 }} />
+                  <span>{error}</span>
                 </div>
               )}
 
@@ -407,10 +407,9 @@ export default function Login() {
                 style={{
                   width: "100%",
                   padding: "12px",
-                  background:
-                    loading
-                      ? "rgba(34,211,238,0.5)"
-                      : "linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)",
+                  background: loading
+                    ? "rgba(34,211,238,0.5)"
+                    : "linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)",
                   color: "#040d1a",
                   border: "none",
                   borderRadius: 8,
@@ -428,13 +427,7 @@ export default function Login() {
               >
                 {loading ? (
                   <>
-                    <Loader2
-                      style={{
-                        width: 15,
-                        height: 15,
-                        animation: "spin 1s linear infinite",
-                      }}
-                    />
+                    <Loader2 style={{ width: 15, height: 15, animation: "spin 1s linear infinite" }} />
                     {mode === "password" ? "SIGNING IN…" : "SENDING LINK…"}
                   </>
                 ) : mode === "password" ? (

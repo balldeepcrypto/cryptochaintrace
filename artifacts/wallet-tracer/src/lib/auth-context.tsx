@@ -29,14 +29,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const { data: listener } = supabase.auth.onAuthStateChange((event, s) => {
       setSession(s);
       if (event === "SIGNED_IN" && s) {
-        // Covers both password login and magic link token exchange on landing.
-        // Only redirect if currently on the login page to avoid interrupting
-        // other in-app navigation.
-        if (window.location.pathname === "/login") {
+        const currentPath = window.location.pathname;
+        if (currentPath === "/" || currentPath === "/login") {
           window.location.replace("/dashboard");
         }
       }
     });
+
+    // Handle direct hash callback on page load (magic link lands on / with #access_token=…)
+    if (window.location.hash) {
+      supabase.auth.getSession().then(({ data }) => {
+        if (data.session) {
+          window.location.replace("/dashboard");
+        }
+      });
+    }
 
     return () => listener.subscription.unsubscribe();
   }, []);

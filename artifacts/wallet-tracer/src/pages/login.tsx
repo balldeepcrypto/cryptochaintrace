@@ -81,11 +81,15 @@ export default function Login() {
           }}>
             <Box style={{ width: 24, height: 24, color: "#22d3ee" }} />
           </div>
-          <div style={{ color: "#22d3ee", fontSize: "1.1rem", fontWeight: 700, letterSpacing: "0.15em", marginBottom: 6 }}>
+          <div style={{ color: "#94a3b8", fontSize: "0.65rem", letterSpacing: "0.25em", textTransform: "uppercase", marginBottom: 10 }}>
             CRYPTOCHAINTRACE
           </div>
-          <div style={{ color: "#475569", fontSize: "0.7rem", letterSpacing: "0.2em", textTransform: "uppercase" }}>
-            Law Enforcement &amp; Analyst Portal
+          <div style={{ color: "#e2e8f0", fontSize: "1.35rem", fontWeight: 700, letterSpacing: "0.03em", marginBottom: 6, lineHeight: 1.2 }}>
+            Law Enforcement /
+            <br />Analyst Portal
+          </div>
+          <div style={{ color: "#475569", fontSize: "0.7rem", letterSpacing: "0.1em" }}>
+            Secure investigative access
           </div>
         </div>
 

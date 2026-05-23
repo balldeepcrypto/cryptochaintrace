@@ -31,10 +31,13 @@ export function Layout({ children }: { children: React.ReactNode }) {
     <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
       {/* Sidebar */}
       <aside className="w-64 flex-shrink-0 border-r border-border bg-card flex flex-col">
-        <div className="h-16 flex items-center px-6 border-b border-border">
-          <div className="flex items-center gap-2 text-primary font-mono font-bold tracking-tight text-lg">
-            <Box className="w-5 h-5" />
+        <div className="flex flex-col justify-center px-6 py-3 border-b border-border min-h-[64px]">
+          <div className="flex items-center gap-2 text-primary font-mono font-bold tracking-tight text-base">
+            <Box className="w-4 h-4 shrink-0" />
             <span>CryptoChainTrace</span>
+          </div>
+          <div className="text-[10px] font-mono text-muted-foreground/60 tracking-widest uppercase mt-0.5 pl-6">
+            Law Enforcement / Analyst Portal
           </div>
         </div>
         <nav className="flex-1 py-4 flex flex-col gap-1 px-3 overflow-y-auto">
@@ -69,9 +72,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
           )}
         </nav>
         <div className="p-4 border-t border-border">
-          <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-widest text-center">
-            {/* force fresh Vercel build v1.2.1 */}
-            Secure Terminal v1.2.1
+          <div className="text-[10px] text-muted-foreground/40 font-mono uppercase tracking-widest text-center">
+            For Official Investigative Use Only
           </div>
         </div>
       </aside>

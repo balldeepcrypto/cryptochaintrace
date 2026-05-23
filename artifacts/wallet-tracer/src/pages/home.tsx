@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { useSaveSearch } from "@workspace/api-client-react";
 import { Search, ShieldAlert, History, LayoutDashboard, Heart, Copy, Clock, Bookmark, Eye, GitBranch, BookmarkX, Inbox, RefreshCw, ExternalLink, Play } from "lucide-react";
@@ -80,9 +80,8 @@ const CHAIN_EXPLORERS: Record<string, string> = {
   bsc:       "https://bscscan.com/address/",
 };
 
-function PendingSubmissions() {
+function PendingSubmissions({ onLoadTrace }: { onLoadTrace?: (wallet: string, chain: string) => void }) {
   const { authed } = useAuth();
-  const [, setLocation] = useLocation();
   const [rows, setRows] = useState<Submission[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -127,7 +126,7 @@ function PendingSubmissions() {
 
   function startTrace(r: Submission) {
     const firstChain = r.chains.split(",")[0]?.trim().toLowerCase() ?? "ethereum";
-    setLocation(`/wallet/${firstChain}/${r.thiefWallet}`);
+    onLoadTrace?.(r.thiefWallet, firstChain);
   }
 
   return (
@@ -288,6 +287,8 @@ export default function Home() {
   const [, setLocation] = useLocation();
   const [address, setAddress] = useState("");
   const [chain, setChain] = useState("ethereum");
+  const [traceLoaded, setTraceLoaded] = useState<string | null>(null);
+  const searchRef = useRef<HTMLDivElement>(null);
   const [showDonate, setShowDonate] = useState(true);
   const [recentSearches, setRecentSearches] = useState<RecentSearchEntry[]>(() => getRecentSearches());
   const [savedWallets, setSavedWallets] = useState<string[]>(() => loadSavedWallets());
@@ -326,6 +327,14 @@ export default function Home() {
     saveSearch.mutate({ data: { address: trimmedAddress, chain } });
   };
 
+  const handleLoadTrace = (wallet: string, detectedChain: string) => {
+    setAddress(wallet);
+    setChain(detectedChain);
+    setTraceLoaded(wallet);
+    setTimeout(() => setTraceLoaded(null), 4000);
+    setTimeout(() => searchRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
+  };
+
   const removeFromWatchlist = (addr: string) => {
     setSavedWallets((prev) => {
       const next = prev.filter((a) => a !== addr);
@@ -354,9 +363,9 @@ export default function Home() {
 
   return (
     <div className="p-8 max-w-6xl mx-auto space-y-8">
-      <PendingSubmissions />
+      <PendingSubmissions onLoadTrace={handleLoadTrace} />
 
-      <div className="space-y-2">
+      <div className="space-y-2" ref={searchRef}>
         <h1 className="text-3xl font-bold tracking-tight">Intelligence Search</h1>
         <p className="text-muted-foreground font-mono text-sm">Enter target wallet address for full profile extraction.</p>
       </div>
@@ -409,6 +418,13 @@ export default function Home() {
           </div>
         </div>
       </div>
+
+      {traceLoaded && (
+        <div className="flex items-center gap-3 px-4 py-3 rounded-lg border border-emerald-500/40 bg-emerald-500/10 text-emerald-300 text-sm font-mono animate-pulse-once">
+          <Play className="w-4 h-4 flex-shrink-0 text-emerald-400" />
+          <span>Loaded into Intelligence Search — ready to trace <span className="font-bold text-emerald-200">{traceLoaded.length > 20 ? `${traceLoaded.slice(0, 10)}…${traceLoaded.slice(-6)}` : traceLoaded}</span></span>
+        </div>
+      )}
 
       <Card className="border-primary/20 bg-card/40 shadow-lg shadow-primary/5">
         <CardContent className="p-6">

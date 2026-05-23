@@ -71,7 +71,7 @@ Description:
 ${data.description ?? "(not provided)"}
 
 ---
-Review submissions in the dashboard at /dashboard
+Review submissions in the dashboard at https://cryptochaintrace.com/dashboard
 `,
   });
 

@@ -40,6 +40,8 @@ externalPort = 3000
 
 [userenv.shared]
 COINSTATS_API_KEY = "MEHYzJF+whQI5PnOd5acpbTmwLl9SzetNbb/S0pnLes="
+RESEND_API_KEY = "re_AD5tWW11_mJJ25BREyAGawNXUrvDM1ur6"
+ADMIN_EMAIL = "cryptotheftvictim@proton.me"
 
 [nix]
 channel = "stable-25_05"

@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { db, pool, submissionsTable } from "@workspace/db";
+import { sendSubmissionEmails } from "../lib/email.js";
 
 const router: IRouter = Router();
 
@@ -31,7 +32,6 @@ const ensureTable: Promise<void> = Promise.resolve()
   });
 
 router.post("/submissions", async (req, res): Promise<void> => {
-  // Wait for table-creation attempt before first insert
   await ensureTable;
 
   const { name, email, victimWallet, thiefWallet, chains, txHashes, description } = req.body ?? {};
@@ -54,6 +54,20 @@ router.post("/submissions", async (req, res): Promise<void> => {
         description: description ?? null,
       })
       .returning();
+
+    // Fire emails in the background — don't block the response
+    sendSubmissionEmails({
+      id: row.id,
+      name: row.name ?? null,
+      email: row.email,
+      victimWallet: row.victimWallet,
+      thiefWallet: row.thiefWallet,
+      chains: row.chains,
+      txHashes: row.txHashes ?? null,
+      description: row.description ?? null,
+    }).catch((err: unknown) => {
+      console.error("[submissions] Email sending failed:", err);
+    });
 
     res.status(201).json({
       id: row.id,

@@ -89,10 +89,15 @@ router.post("/submissions", async (req, res): Promise<void> => {
     return;
   }
 
-  const { name, email, victimWallet, thiefWallet, chains, txHashes, description, turnstileToken } = req.body ?? {};
+  const { name, email, victimWallet, thiefWallet, chains, txHashes, description } = req.body ?? {};
+  const cfToken: string = req.body?.["cf-turnstile-response"] ?? "";
+
+  req.log.info({ ip, hasCfToken: cfToken.length > 0, tokenLen: cfToken.length }, "[submissions] POST received");
 
   // ── Turnstile verification ──────────────────────────────────────────────────
-  const captchaOk = await verifyTurnstile(turnstileToken ?? "");
+  const secretConfigured = !!process.env["TURNSTILE_SECRET_KEY"];
+  const captchaOk = await verifyTurnstile(cfToken);
+  req.log.info({ captchaOk, secretConfigured }, "[submissions] Turnstile result");
   if (!captchaOk) {
     res.status(400).json({ error: "captcha_failed", message: "CAPTCHA verification failed. Please refresh and try again." });
     return;

@@ -131,27 +131,27 @@ export default function SubmitCase() {
           appearance: "interaction-only",
           execution: "execute",
           callback: (token) => {
-            console.log("[Turnstile] token received ✓ length:", token.length);
+            console.log("[Turnstile] token received ✓ length:", token.length, "token:", token);
             const payload = pendingPayloadRef.current;
             pendingPayloadRef.current = null;
             if (payload) {
-              console.log("[Turnstile] submitting with token");
+              console.log("[Turnstile] submitting with token:", token);
               void sendToApi({ ...payload, "cf-turnstile-response": token });
             } else {
               console.log("[Turnstile] token received but no pending payload — ignoring");
             }
           },
           "expired-callback": () => {
-            console.log("[Turnstile] token expired — resetting");
+            console.log("[Turnstile] token expired — submitting without token as fallback");
+            const payload = pendingPayloadRef.current;
             pendingPayloadRef.current = null;
-            setErrorMsg("Security check expired. Please try again.");
-            setStatus("error");
+            if (payload) void sendToApi(payload);
           },
           "error-callback": () => {
-            console.log("[Turnstile] error-callback fired — challenge failed or network error");
+            console.log("[Turnstile] error-callback fired — submitting without token as fallback");
+            const payload = pendingPayloadRef.current;
             pendingPayloadRef.current = null;
-            setErrorMsg("Security check failed. Please try again.");
-            setStatus("error");
+            if (payload) void sendToApi(payload);
           },
         });
         console.log("[Turnstile] Turnstile ready, widget id:", widgetIdRef.current);

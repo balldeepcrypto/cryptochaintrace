@@ -167,21 +167,29 @@ router.get("/submissions/:id/report", async (req, res): Promise<void> => {
   const chains = sub.chains.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
   const txHashes = (sub.txHashes ?? "").split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 
-  // Build base URL from the incoming request so this works locally and on Vercel
+  // Build base URL from the incoming request — works locally and on Vercel
   const proto = (req.get("x-forwarded-proto") as string | undefined) ?? (req.secure ? "https" : "http");
   const host = req.get("host") ?? `localhost:${process.env["PORT"] ?? 8080}`;
   const apiBase = `${proto}://${host}`;
 
+  // ── Types matching the actual OpenAPI GetWalletTransactionsResponse fields ──
   type TxRow = {
-    txHash: string; direction: string; amount: string; amountUsd: number | null;
-    tokenSymbol: string | null; counterparty: string | null; timestamp: string | null; status: string;
+    hash: string; from: string; to: string | null;
+    value: string; valueUsd: number; fee: string; feeUsd: number;
+    timestamp: string; blockNumber: number; status: string;
+    direction: string; tokenSymbol: string | null; tokenName: string | null;
+    memo?: string | null; destinationTag?: number | null;
   };
   type ChainResult = {
     chain: string; balance: string | null; balanceUsd: number | null; txCount: number;
     riskScore: number | null; tags: string[]; firstSeen: string | null; lastSeen: string | null;
     recentTxs: TxRow[]; error?: string;
   };
+  type ConnNode = { address: string; label: string | null; balance: string; transactionCount: number; isContract: boolean; riskScore: number | null };
+  type ConnEdge = { from: string; to: string; totalValue: string; totalValueUsd: number; transactionCount: number; lastSeen: string };
+  type ConnectionGraph = { nodes: ConnNode[]; edges: ConnEdge[]; centerAddress: string } | null;
 
+  // ── Reuse existing proven wallet info + transactions endpoints ─────────────
   async function fetchChain(address: string, chain: string): Promise<ChainResult> {
     try {
       const [infoRes, txRes] = await Promise.all([
@@ -196,7 +204,7 @@ router.get("/submissions/:id/report", async (req, res): Promise<void> => {
         chain,
         balance: info?.balance ?? null,
         balanceUsd: info?.balanceUsd ?? null,
-        txCount: info?.txCount ?? 0,
+        txCount: info?.transactionCount ?? info?.txCount ?? 0,
         riskScore: info?.riskScore ?? null,
         tags: info?.tags ?? [],
         firstSeen: info?.firstSeen ?? null,
@@ -208,13 +216,33 @@ router.get("/submissions/:id/report", async (req, res): Promise<void> => {
     }
   }
 
-  const [victimChains, suspectChains] = await Promise.all([
+  // ── Reuse existing connections endpoint for hop-by-hop tracing ─────────────
+  // This is the SAME endpoint used by the Trace Graph and START TRAIL TRACE.
+  // Path: /api/wallets/:address/connections?chain=:chain (no chain in path segment)
+  async function fetchConnections(address: string, chain: string): Promise<ConnectionGraph> {
+    try {
+      const res = await fetch(`${apiBase}/api/wallets/${encodeURIComponent(address)}/connections?chain=${chain}`);
+      if (!res.ok) return null;
+      return await res.json() as ConnectionGraph;
+    } catch { return null; }
+  }
+
+  // ── Run all fetches in parallel (same as trace buttons do concurrently) ─────
+  const [victimChains, suspectChains, victimConnRaw, suspectConnRaw] = await Promise.all([
     Promise.all(chains.map((c) => fetchChain(sub.victimWallet, c))),
     Promise.all(chains.map((c) => fetchChain(sub.thiefWallet, c))),
+    Promise.all(chains.map((c) => fetchConnections(sub.victimWallet, c).then((d) => ({ chain: c, data: d })))),
+    Promise.all(chains.map((c) => fetchConnections(sub.thiefWallet, c).then((d) => ({ chain: c, data: d })))),
   ]);
 
-  // Auto-generate key findings
+  const victimConnections: Record<string, ConnectionGraph> = {};
+  for (const { chain, data } of victimConnRaw) victimConnections[chain] = data;
+  const suspectConnections: Record<string, ConnectionGraph> = {};
+  for (const { chain, data } of suspectConnRaw) suspectConnections[chain] = data;
+
+  // ── Auto-generate key findings using all data sources ─────────────────────
   const findings: string[] = [];
+
   const suspectHighRisk = suspectChains.find((c) => (c.riskScore ?? 0) > 60);
   if (suspectHighRisk) findings.push(`⚠️ Suspect wallet has elevated risk score (${suspectHighRisk.riskScore}/100) on ${suspectHighRisk.chain.toUpperCase()}.`);
 
@@ -224,18 +252,39 @@ router.get("/submissions/:id/report", async (req, res): Promise<void> => {
   const highActivity = suspectChains.find((c) => c.txCount > 500);
   if (highActivity) findings.push(`📊 Suspect wallet shows high transaction volume (${highActivity.txCount.toLocaleString()} txs) on ${highActivity.chain.toUpperCase()}.`);
 
-  // Counterparty overlap
-  const victimCounterparties = new Set(victimChains.flatMap((c) => c.recentTxs.map((t) => t.counterparty)).filter(Boolean));
-  const suspectCounterparties = suspectChains.flatMap((c) => c.recentTxs.map((t) => t.counterparty)).filter(Boolean);
-  const overlap = suspectCounterparties.filter((cp) => victimCounterparties.has(cp));
-  if (overlap.length > 0) findings.push(`🔗 Commingling detected: ${overlap.length} shared counterparty address(es) appear in both victim and suspect transaction histories.`);
+  // Exchange flows detected via connections hop data
+  for (const [chain, conn] of Object.entries(suspectConnections)) {
+    if (!conn) continue;
+    const exchangeNodes = conn.nodes.filter((n) => n.label && n.address !== sub.thiefWallet);
+    if (exchangeNodes.length > 0) {
+      findings.push(`🏦 Suspect wallet on ${chain.toUpperCase()} has direct connections to ${exchangeNodes.length} labelled exchange/known address(es): ${exchangeNodes.map((n) => n.label).join(", ")}.`);
+      break;
+    }
+  }
 
-  // Outbound from victim
-  const victimOutbound = victimChains.flatMap((c) => c.recentTxs.filter((t) => t.direction === "out" && t.amountUsd));
-  const totalStolenUsd = victimOutbound.reduce((acc, t) => acc + (t.amountUsd ?? 0), 0);
-  if (totalStolenUsd > 0) findings.push(`💸 Victim wallet shows $${totalStolenUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} USD in outbound transfers (recent ${chains.join("/").toUpperCase()} activity).`);
+  // Counterparty overlap between victim and suspect tx histories
+  const victimCPs = new Set(
+    victimChains.flatMap((c) => c.recentTxs.map((t) => t.direction === "in" ? t.from : (t.to ?? ""))).filter(Boolean)
+  );
+  const suspectCPs = suspectChains.flatMap((c) => c.recentTxs.map((t) => t.direction === "in" ? t.from : (t.to ?? ""))).filter(Boolean);
+  const txOverlap = suspectCPs.filter((cp) => victimCPs.has(cp));
 
-  if (txHashes.length > 0) findings.push(`🔍 ${txHashes.length} specific transaction hash(es) flagged in this case for direct verification.`);
+  // Also check connection graph overlap
+  const victimConnNodes = new Set(
+    Object.values(victimConnections).flatMap((g) => g ? g.nodes.map((n) => n.address) : [])
+  );
+  const suspectConnNodeAddrs = Object.values(suspectConnections).flatMap((g) => g ? g.nodes.map((n) => n.address) : []);
+  const connOverlap = suspectConnNodeAddrs.filter((a) => victimConnNodes.has(a) && a !== sub.victimWallet && a !== sub.thiefWallet);
+
+  const totalOverlap = new Set([...txOverlap, ...connOverlap]);
+  if (totalOverlap.size > 0) findings.push(`🔗 Commingling detected: ${totalOverlap.size} shared address(es) appear in both victim and suspect transaction graphs.`);
+
+  // Outbound from victim (using correct field names from GetWalletTransactionsResponse)
+  const victimOutbound = victimChains.flatMap((c) => c.recentTxs.filter((t) => t.direction === "out" && t.valueUsd > 0));
+  const totalStolenUsd = victimOutbound.reduce((acc, t) => acc + (t.valueUsd ?? 0), 0);
+  if (totalStolenUsd > 0) findings.push(`💸 Victim wallet shows $${totalStolenUsd.toLocaleString("en-US", { maximumFractionDigits: 2 })} USD in outbound transfers across recent ${chains.join("/").toUpperCase()} activity.`);
+
+  if (txHashes.length > 0) findings.push(`🔍 ${txHashes.length} transaction hash(es) flagged by submitter for direct verification.`);
 
   if (findings.length === 0) findings.push("ℹ️ No high-confidence findings from automated analysis. Manual review recommended.");
 
@@ -252,6 +301,8 @@ router.get("/submissions/:id/report", async (req, res): Promise<void> => {
     },
     victimProfile: { address: sub.victimWallet, role: "victim", chains: victimChains },
     suspectProfile: { address: sub.thiefWallet, role: "suspect", chains: suspectChains },
+    victimConnections,
+    suspectConnections,
     keyFindings: findings,
   });
 });

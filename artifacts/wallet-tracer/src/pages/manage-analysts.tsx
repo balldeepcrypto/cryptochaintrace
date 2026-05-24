@@ -95,9 +95,19 @@ export default function ManageAnalysts() {
     if (!confirm(`Remove ${analyst.email}? This cannot be undone.`)) return;
     setRemovingId(analyst.id);
     try {
-      await fetch(`/api/analysts/${analyst.id}`, { method: "DELETE", headers: authHeaders() });
-      await load();
-    } finally {
+      const res = await fetch(`/api/analysts/${analyst.id}`, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { message?: string };
+        setError(body.message ?? `Delete failed (${res.status})`);
+        setRemovingId(null);
+        return;
+      }
+      window.location.reload();
+    } catch (e) {
+      setError(String(e));
       setRemovingId(null);
     }
   }

@@ -170,16 +170,13 @@ router.post("/analysts", async (req, res): Promise<void> => {
 });
 
 // ---------------------------------------------------------------------------
-// DELETE /api/analysts/:id — remove from allowlist + activity logs; no Supabase admin
+// DELETE /api/analysts/:id — remove from allowlist; no Supabase admin
 // ---------------------------------------------------------------------------
 router.delete("/analysts/:id", async (req, res): Promise<void> => {
   if (!await requireOwner(req, res)) return;
 
-  const id = Number(req.params.id);
-  if (isNaN(id)) {
-    res.status(400).json({ error: "invalid id" });
-    return;
-  }
+  const id = req.params.id; // keep as string — works for both integer and UUID columns
+  req.log.info({ id }, "DELETE /analysts/:id called");
 
   const supabase = getAnonClient();
   if (!supabase) {
@@ -187,18 +184,24 @@ router.delete("/analysts/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  const { error } = await supabase
-    .from("analysts")
-    .delete()
-    .eq("id", id);
+  try {
+    const { error } = await supabase
+      .from("analysts")
+      .delete()
+      .eq("id", id);
 
-  if (error) {
-    req.log.error({ error }, "DELETE /analysts/:id failed");
-    res.status(500).json({ error: "db_error", message: error.message });
-    return;
+    if (error) {
+      req.log.error({ error }, "DELETE /analysts/:id supabase error");
+      res.status(500).json({ error: "db_error", message: error.message });
+      return;
+    }
+
+    req.log.info({ id }, "Analyst deleted successfully");
+    res.json({ success: true });
+  } catch (err) {
+    req.log.error({ err }, "DELETE /analysts/:id unexpected error");
+    res.status(500).json({ error: "unexpected", message: String(err) });
   }
-
-  res.json({ success: true, message: "Analyst removed successfully" });
 });
 
 export default router;

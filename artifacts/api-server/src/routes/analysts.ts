@@ -1,79 +1,78 @@
 import { Router, type IRouter } from "express";
+import { createClient } from "@supabase/supabase-js";
 
 const router: IRouter = Router();
 
-// Derive Supabase URL using the same swap-detection as the frontend.
-// In Replit, VITE_SUPABASE_ANON_KEY holds the URL and VITE_SUPABASE_URL holds the key.
-function getSupabaseConfig(): { url: string; serviceKey: string } | null {
-  const rawA = process.env["VITE_SUPABASE_URL"] ?? "";
-  const rawB = process.env["VITE_SUPABASE_ANON_KEY"] ?? "";
-  const url = (rawA.startsWith("http") ? rawA : rawB).replace(/\/+$/, "");
+// Build a Supabase admin client using the service role key.
+// URL resolution order:
+//   1. SUPABASE_URL  (explicit server-only var — most reliable)
+//   2. VITE_SUPABASE_ANON_KEY if it starts with "http" (Replit swap: anon slot holds the URL)
+//   3. VITE_SUPABASE_URL if it starts with "http" (normal / non-swapped setup)
+function getAdminClient() {
   const serviceKey = process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "";
-  if (!url || !serviceKey) return null;
-  return { url, serviceKey };
-}
+  if (!serviceKey) return null;
 
-function adminHeaders(serviceKey: string) {
-  return {
-    "Content-Type": "application/json",
-    Authorization: `Bearer ${serviceKey}`,
-    apikey: serviceKey,
-  };
+  const explicit = process.env["SUPABASE_URL"] ?? "";
+  const viteA = process.env["VITE_SUPABASE_URL"] ?? "";
+  const viteB = process.env["VITE_SUPABASE_ANON_KEY"] ?? "";
+
+  const url = (
+    explicit.startsWith("http") ? explicit :
+    viteB.startsWith("http") ? viteB :
+    viteA.startsWith("http") ? viteA : ""
+  ).replace(/\/+$/, "");
+
+  if (!url) return null;
+
+  return createClient(url, serviceKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
 }
 
 // GET /api/analysts — list all Supabase auth users
 router.get("/analysts", async (req, res): Promise<void> => {
-  const cfg = getSupabaseConfig();
-  if (!cfg) {
+  const supabase = getAdminClient();
+  if (!supabase) {
     res.status(503).json({
       error: "not_configured",
-      message: "SUPABASE_SERVICE_ROLE_KEY is not set. Add it to Replit Secrets.",
+      message: "SUPABASE_SERVICE_ROLE_KEY (and SUPABASE_URL or VITE_SUPABASE_* vars) must be set.",
     });
     return;
   }
 
   try {
-    const r = await fetch(`${cfg.url}/auth/v1/admin/users?per_page=200`, {
-      headers: adminHeaders(cfg.serviceKey),
-    });
-    if (!r.ok) {
-      const body = await r.text();
-      req.log.warn({ status: r.status, body }, "Supabase admin listUsers failed");
-      res.status(r.status).json({ error: "supabase_error", message: body });
+    const { data, error } = await supabase.auth.admin.listUsers({ perPage: 200 });
+    if (error) {
+      req.log.warn({ err: error.message, code: error.status }, "Supabase admin listUsers failed");
+      res.status(error.status ?? 500).json({ error: "supabase_error", message: error.message });
       return;
     }
-    const data = (await r.json()) as { users?: unknown[] };
-    const users = (data.users ?? []) as Array<{
-      id: string;
-      email?: string;
-      user_metadata?: { department?: string };
-      app_metadata?: Record<string, unknown>;
-      created_at?: string;
-      last_sign_in_at?: string;
-    }>;
 
     res.json(
-      users.map((u) => ({
+      (data.users ?? []).map((u) => ({
         id: u.id,
         email: u.email ?? "",
-        department: (u.user_metadata?.department as string) ?? "",
+        department: (u.user_metadata?.["department"] as string) ?? "",
         createdAt: u.created_at ?? null,
         lastSignIn: u.last_sign_in_at ?? null,
       })),
     );
   } catch (err) {
-    req.log.error({ err }, "GET /analysts fetch failed");
+    req.log.error({ err }, "GET /analysts threw");
     res.status(500).json({ error: "fetch_failed", message: String(err) });
   }
 });
 
-// POST /api/analysts — create user (invite by email with department metadata)
+// POST /api/analysts — create user with department metadata
 router.post("/analysts", async (req, res): Promise<void> => {
-  const cfg = getSupabaseConfig();
-  if (!cfg) {
+  const supabase = getAdminClient();
+  if (!supabase) {
     res.status(503).json({
       error: "not_configured",
-      message: "SUPABASE_SERVICE_ROLE_KEY is not set. Add it to Replit Secrets.",
+      message: "SUPABASE_SERVICE_ROLE_KEY (and SUPABASE_URL or VITE_SUPABASE_* vars) must be set.",
     });
     return;
   }
@@ -85,62 +84,50 @@ router.post("/analysts", async (req, res): Promise<void> => {
   }
 
   try {
-    const r = await fetch(`${cfg.url}/auth/v1/admin/users`, {
-      method: "POST",
-      headers: adminHeaders(cfg.serviceKey),
-      body: JSON.stringify({
-        email,
-        email_confirm: true,
-        user_metadata: { department: department ?? "" },
-      }),
+    const { data, error } = await supabase.auth.admin.createUser({
+      email: String(email),
+      email_confirm: true,
+      user_metadata: { department: department ? String(department) : "" },
     });
 
-    const body = await r.json() as Record<string, unknown>;
-    if (!r.ok) {
-      req.log.warn({ status: r.status, body }, "Supabase admin createUser failed");
-      res.status(r.status).json({ error: "supabase_error", message: (body.msg ?? body.message ?? JSON.stringify(body)) as string });
+    if (error) {
+      req.log.warn({ err: error.message }, "Supabase admin createUser failed");
+      res.status(error.status ?? 500).json({ error: "supabase_error", message: error.message });
       return;
     }
 
-    const u = body as { id: string; email?: string; user_metadata?: { department?: string } };
     res.status(201).json({
-      id: u.id,
-      email: u.email ?? "",
-      department: (u.user_metadata?.department as string) ?? "",
+      id: data.user.id,
+      email: data.user.email ?? "",
+      department: (data.user.user_metadata?.["department"] as string) ?? "",
     });
   } catch (err) {
-    req.log.error({ err }, "POST /analysts fetch failed");
+    req.log.error({ err }, "POST /analysts threw");
     res.status(500).json({ error: "fetch_failed", message: String(err) });
   }
 });
 
 // DELETE /api/analysts/:userId — delete user
 router.delete("/analysts/:userId", async (req, res): Promise<void> => {
-  const cfg = getSupabaseConfig();
-  if (!cfg) {
+  const supabase = getAdminClient();
+  if (!supabase) {
     res.status(503).json({
       error: "not_configured",
-      message: "SUPABASE_SERVICE_ROLE_KEY is not set. Add it to Replit Secrets.",
+      message: "SUPABASE_SERVICE_ROLE_KEY (and SUPABASE_URL or VITE_SUPABASE_* vars) must be set.",
     });
     return;
   }
 
   try {
-    const r = await fetch(`${cfg.url}/auth/v1/admin/users/${req.params.userId}`, {
-      method: "DELETE",
-      headers: adminHeaders(cfg.serviceKey),
-    });
-
-    if (!r.ok && r.status !== 404) {
-      const body = await r.text();
-      req.log.warn({ status: r.status, body }, "Supabase admin deleteUser failed");
-      res.status(r.status).json({ error: "supabase_error", message: body });
+    const { error } = await supabase.auth.admin.deleteUser(req.params.userId);
+    if (error && error.status !== 404) {
+      req.log.warn({ err: error.message }, "Supabase admin deleteUser failed");
+      res.status(error.status ?? 500).json({ error: "supabase_error", message: error.message });
       return;
     }
-
     res.json({ ok: true });
   } catch (err) {
-    req.log.error({ err }, "DELETE /analysts/:userId fetch failed");
+    req.log.error({ err }, "DELETE /analysts threw");
     res.status(500).json({ error: "fetch_failed", message: String(err) });
   }
 });

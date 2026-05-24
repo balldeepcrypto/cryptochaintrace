@@ -1,16 +1,12 @@
 import { useState, useEffect, useCallback } from "react";
-import { UserPlus, Trash2, RefreshCw, AlertCircle, Users } from "lucide-react";
+import { UserPlus, Trash2, RefreshCw, AlertCircle, Users, Mail } from "lucide-react";
 
 interface Analyst {
-  id: string;
+  id: number;
   email: string;
   department: string;
   createdAt: string | null;
-  lastSignIn: string | null;
-}
-
-interface LastSeenMap {
-  [email: string]: string;
+  lastLogin: string | null;
 }
 
 function fmt(ts: string | null) {
@@ -20,7 +16,6 @@ function fmt(ts: string | null) {
 
 export default function ManageAnalysts() {
   const [analysts, setAnalysts] = useState<Analyst[]>([]);
-  const [lastSeen, setLastSeen] = useState<LastSeenMap>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [showModal, setShowModal] = useState(false);
@@ -28,24 +23,21 @@ export default function ManageAnalysts() {
   const [newDept, setNewDept] = useState("");
   const [adding, setAdding] = useState(false);
   const [addError, setAddError] = useState("");
-  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [addSuccess, setAddSuccess] = useState("");
+  const [removingId, setRemovingId] = useState<number | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const [analRes, lsRes] = await Promise.all([
-        fetch("/api/analysts"),
-        fetch("/api/activity-logs/last-seen"),
-      ]);
-      if (!analRes.ok) {
-        const body = await analRes.json().catch(() => ({})) as { message?: string };
-        setError(body.message ?? `Error ${analRes.status}`);
+      const res = await fetch("/api/analysts");
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { message?: string };
+        setError(body.message ?? `Error ${res.status}`);
         setLoading(false);
         return;
       }
-      setAnalysts(await analRes.json() as Analyst[]);
-      if (lsRes.ok) setLastSeen(await lsRes.json() as LastSeenMap);
+      setAnalysts(await res.json() as Analyst[]);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -59,19 +51,25 @@ export default function ManageAnalysts() {
     e.preventDefault();
     setAdding(true);
     setAddError("");
+    setAddSuccess("");
     try {
       const res = await fetch("/api/analysts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ email: newEmail.trim(), department: newDept.trim() }),
       });
+      const body = await res.json().catch(() => ({})) as { message?: string; inviteStatus?: string };
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { message?: string };
         setAddError(body.message ?? `Error ${res.status}`);
         setAdding(false);
         return;
       }
-      setShowModal(false);
+      const invited = body.inviteStatus === "invited";
+      setAddSuccess(
+        invited
+          ? `Analyst added. A magic-link sign-in email has been sent to ${newEmail.trim()}.`
+          : `Analyst added to allowlist. (Invite email not sent — Supabase not configured.)`
+      );
       setNewEmail("");
       setNewDept("");
       await load();
@@ -87,7 +85,6 @@ export default function ManageAnalysts() {
     setRemovingId(analyst.id);
     try {
       await fetch(`/api/analysts/${analyst.id}`, { method: "DELETE" });
-      await fetch(`/api/activity-logs/user/${encodeURIComponent(analyst.email)}`, { method: "DELETE" });
       await load();
     } finally {
       setRemovingId(null);
@@ -119,7 +116,7 @@ export default function ManageAnalysts() {
             Refresh
           </button>
           <button
-            onClick={() => { setShowModal(true); setAddError(""); }}
+            onClick={() => { setShowModal(true); setAddError(""); setAddSuccess(""); }}
             className="flex items-center gap-1.5 px-4 py-2 rounded-md bg-primary text-primary-foreground text-xs font-mono font-semibold hover:opacity-90 transition-opacity"
           >
             <UserPlus className="w-3.5 h-3.5" />
@@ -135,12 +132,6 @@ export default function ManageAnalysts() {
           <div>
             <div className="font-semibold mb-1">Failed to load analysts</div>
             <div className="text-red-400/80">{error}</div>
-            {error.includes("SUPABASE_SERVICE_ROLE_KEY") && (
-              <div className="mt-2 text-red-300/70">
-                Go to Replit Secrets and add <span className="font-semibold">SUPABASE_SERVICE_ROLE_KEY</span> with
-                your Supabase project's service role key (Project Settings → API → service_role key).
-              </div>
-            )}
           </div>
         </div>
       )}
@@ -152,7 +143,7 @@ export default function ManageAnalysts() {
             <tr className="border-b border-border bg-card/60">
               <th className="text-left px-4 py-3 text-muted-foreground uppercase tracking-wider font-semibold">Email</th>
               <th className="text-left px-4 py-3 text-muted-foreground uppercase tracking-wider font-semibold">Department</th>
-              <th className="text-left px-4 py-3 text-muted-foreground uppercase tracking-wider font-semibold">Created</th>
+              <th className="text-left px-4 py-3 text-muted-foreground uppercase tracking-wider font-semibold">Added</th>
               <th className="text-left px-4 py-3 text-muted-foreground uppercase tracking-wider font-semibold">Last Login</th>
               <th className="px-4 py-3" />
             </tr>
@@ -160,9 +151,7 @@ export default function ManageAnalysts() {
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">
-                  Loading…
-                </td>
+                <td colSpan={5} className="px-4 py-10 text-center text-muted-foreground">Loading…</td>
               </tr>
             ) : analysts.length === 0 ? (
               <tr>
@@ -178,9 +167,7 @@ export default function ManageAnalysts() {
                     {a.department || <span className="italic text-muted-foreground/40">—</span>}
                   </td>
                   <td className="px-4 py-3 text-muted-foreground">{fmt(a.createdAt)}</td>
-                  <td className="px-4 py-3 text-muted-foreground">
-                    {lastSeen[a.email] ? fmt(lastSeen[a.email]) : fmt(a.lastSignIn)}
-                  </td>
+                  <td className="px-4 py-3 text-muted-foreground">{fmt(a.lastLogin)}</td>
                   <td className="px-4 py-3 text-right">
                     <button
                       onClick={() => void handleRemove(a)}
@@ -211,56 +198,75 @@ export default function ManageAnalysts() {
             </div>
 
             <form onSubmit={(e) => void handleAdd(e)} className="px-6 py-5 space-y-4">
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Email Address</label>
-                <input
-                  type="email"
-                  value={newEmail}
-                  onChange={(e) => setNewEmail(e.target.value)}
-                  placeholder="analyst@agency.gov"
-                  required
-                  autoFocus
-                  className={inputCls}
-                />
-              </div>
-              <div>
-                <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Department</label>
-                <input
-                  type="text"
-                  value={newDept}
-                  onChange={(e) => setNewDept(e.target.value)}
-                  placeholder="e.g. Cybercrime Unit, TRM Labs, FBI"
-                  className={inputCls}
-                />
-              </div>
-
-              {addError && (
-                <div className="flex items-start gap-2 p-3 rounded-lg border border-red-900/40 bg-red-950/20 text-red-400 text-xs">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>{addError}</span>
+              {addSuccess ? (
+                <div className="flex items-start gap-2 p-3 rounded-lg border border-emerald-900/40 bg-emerald-950/20 text-emerald-400 text-xs">
+                  <Mail className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>{addSuccess}</span>
                 </div>
+              ) : (
+                <>
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Email Address</label>
+                    <input
+                      type="email"
+                      value={newEmail}
+                      onChange={(e) => setNewEmail(e.target.value)}
+                      placeholder="analyst@agency.gov"
+                      required
+                      autoFocus
+                      className={inputCls}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[10px] uppercase tracking-widest text-muted-foreground mb-2">Department</label>
+                    <input
+                      type="text"
+                      value={newDept}
+                      onChange={(e) => setNewDept(e.target.value)}
+                      placeholder="e.g. Cybercrime Unit, TRM Labs, FBI"
+                      className={inputCls}
+                    />
+                  </div>
+
+                  {addError && (
+                    <div className="flex items-start gap-2 p-3 rounded-lg border border-red-900/40 bg-red-950/20 text-red-400 text-xs">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>{addError}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => setShowModal(false)}
+                      className="flex-1 py-2 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={adding}
+                      className="flex-1 py-2 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
+                    >
+                      {adding ? "Adding…" : "Add & Invite"}
+                    </button>
+                  </div>
+
+                  <p className="text-[10px] text-muted-foreground/50 text-center">
+                    Analyst is added to the allowlist instantly. A sign-in link is emailed to them.
+                  </p>
+                </>
               )}
 
-              <div className="flex gap-3 pt-1">
+              {addSuccess && (
                 <button
                   type="button"
                   onClick={() => setShowModal(false)}
-                  className="flex-1 py-2 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground transition-colors"
+                  className="w-full py-2 rounded-md border border-border text-xs text-muted-foreground hover:text-foreground transition-colors"
                 >
-                  Cancel
+                  Close
                 </button>
-                <button
-                  type="submit"
-                  disabled={adding}
-                  className="flex-1 py-2 rounded-md bg-primary text-primary-foreground text-xs font-semibold hover:opacity-90 transition-opacity disabled:opacity-50"
-                >
-                  {adding ? "Adding…" : "Add Analyst"}
-                </button>
-              </div>
-
-              <p className="text-[10px] text-muted-foreground/50 text-center">
-                The analyst will be created instantly. Send them their credentials separately.
-              </p>
+              )}
             </form>
           </div>
         </div>

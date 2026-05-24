@@ -181,26 +181,24 @@ router.delete("/analysts/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  try {
-    const [analyst] = await db
-      .select()
-      .from(analystsTable)
-      .where(eq(analystsTable.id, id))
-      .limit(1);
-
-    if (!analyst) {
-      res.status(404).json({ error: "not_found" });
-      return;
-    }
-
-    await db.delete(activityLogsTable).where(eq(activityLogsTable.userEmail, analyst.email));
-    await db.delete(analystsTable).where(eq(analystsTable.id, id));
-
-    res.json({ ok: true });
-  } catch (err) {
-    req.log.error({ err }, "DELETE /analysts/:id failed");
-    res.status(500).json({ error: "db_error", message: String(err) });
+  const supabase = getAnonClient();
+  if (!supabase) {
+    res.status(500).json({ error: "server_config", message: "Supabase is not configured." });
+    return;
   }
+
+  const { error } = await supabase
+    .from("analysts")
+    .delete()
+    .eq("id", id);
+
+  if (error) {
+    req.log.error({ error }, "DELETE /analysts/:id failed");
+    res.status(500).json({ error: "db_error", message: error.message });
+    return;
+  }
+
+  res.json({ success: true, message: "Analyst removed successfully" });
 });
 
 export default router;

@@ -389,11 +389,13 @@ interface WalletRowProps {
 
 function WalletRow({ wallet, label, color, chains, onTrace, onAddToCluster }: WalletRowProps) {
   const [copied, setCopied] = useState(false);
+  const [added, setAdded] = useState(false);
   const firstChain = chains[0] ?? "ethereum";
   const explorerBase = CHAIN_EXPLORERS[firstChain] ?? CHAIN_EXPLORERS.ethereum;
   const colorClass = color === "emerald" ? "text-emerald-300" : "text-red-300";
   const borderClass = color === "emerald" ? "border-emerald-500/20 bg-emerald-950/20" : "border-red-500/20 bg-red-950/20";
   const copy = () => { navigator.clipboard.writeText(wallet).catch(() => {}); setCopied(true); setTimeout(() => setCopied(false), 1500); };
+  const handleAddToCommingle = () => { onAddToCluster(wallet); setAdded(true); setTimeout(() => setAdded(false), 2000); };
 
   return (
     <div className={`rounded-lg border p-4 space-y-3 ${borderClass}`}>
@@ -425,9 +427,9 @@ function WalletRow({ wallet, label, color, chains, onTrace, onAddToCluster }: Wa
             <Play className="w-3 h-3" />Trace on {c.toUpperCase()}
           </button>
         ))}
-        <button onClick={() => onAddToCluster(wallet)}
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-slate-300 transition-colors">
-          <Plus className="w-3 h-3" />Add to Commingle
+        <button onClick={handleAddToCommingle}
+          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${added ? "bg-emerald-700 text-emerald-100" : "bg-slate-700 hover:bg-slate-600 text-slate-300"}`}>
+          <Plus className="w-3 h-3" />{added ? "✓ Added!" : "Add to Commingle"}
         </button>
       </div>
       {chains.length > 1 && (
@@ -553,6 +555,14 @@ function ChainProfileSection({ cp, role }: { cp: ChainResult; role: "victim" | "
 
 function HopSection({ address, conn, chain, role, onAddToCommingle }: { address: string; conn: ConnectionGraph; chain: string; role: "victim" | "suspect"; onAddToCommingle?: (addr: string) => void }) {
   const [open, setOpen] = useState(true);
+  const [addedNodes, setAddedNodes] = useState<Set<string>>(new Set());
+  const handleAddNode = (addr: string) => {
+    if (onAddToCommingle) {
+      onAddToCommingle(addr);
+      setAddedNodes((prev) => new Set(prev).add(addr));
+      setTimeout(() => setAddedNodes((prev) => { const s = new Set(prev); s.delete(addr); return s; }), 2000);
+    }
+  };
   if (!conn) return null;
   const peers = conn.nodes.filter((n) => n.address !== address);
   if (peers.length === 0) return null;
@@ -604,9 +614,9 @@ function HopSection({ address, conn, chain, role, onAddToCommingle }: { address:
                 <div className="flex items-center gap-2">
                   <div className="font-mono text-xs text-slate-400 break-all flex-1">{node.address}</div>
                   {onAddToCommingle && (
-                    <button onClick={() => onAddToCommingle(node.address)}
-                      className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-slate-300 transition-colors">
-                      <Plus className="w-3 h-3" />Add to Commingle
+                    <button onClick={() => handleAddNode(node.address)}
+                      className={`shrink-0 flex items-center gap-1 px-2 py-0.5 rounded text-xs font-semibold transition-colors ${addedNodes.has(node.address) ? "bg-emerald-700 text-emerald-100" : "bg-slate-700 hover:bg-slate-600 text-slate-300"}`}>
+                      <Plus className="w-3 h-3" />{addedNodes.has(node.address) ? "✓ Added!" : "Add to Commingle"}
                     </button>
                   )}
                 </div>

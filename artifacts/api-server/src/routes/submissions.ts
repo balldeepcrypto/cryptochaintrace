@@ -167,10 +167,11 @@ router.get("/submissions/:id/report", async (req, res): Promise<void> => {
   const chains = sub.chains.split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
   const txHashes = (sub.txHashes ?? "").split(/[\n,]+/).map((s) => s.trim()).filter(Boolean);
 
-  // Build base URL from the incoming request — works locally and on Vercel
-  const proto = (req.get("x-forwarded-proto") as string | undefined) ?? (req.secure ? "https" : "http");
-  const host = req.get("host") ?? `localhost:${process.env["PORT"] ?? 8080}`;
-  const apiBase = `${proto}://${host}`;
+  // Always call the api-server on its loopback address — never go through the
+  // external proxy (which uses TLS and would self-loop). This is identical to
+  // what the wallet-detail page does via React Query: hit /api/wallets/:chain/:address/*
+  // on the same process that already handles those routes.
+  const apiBase = `http://127.0.0.1:${process.env["PORT"] ?? 8080}`;
 
   // ── Types matching the actual OpenAPI GetWalletTransactionsResponse fields ──
   type TxRow = {

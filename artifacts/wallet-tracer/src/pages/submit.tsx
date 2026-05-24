@@ -116,30 +116,38 @@ export default function SubmitCase() {
   const pendingPayloadRef = useRef<Record<string, unknown> | null>(null);
 
   useEffect(() => {
-    if (!TURNSTILE_SITE_KEY) return;
+    if (!TURNSTILE_SITE_KEY) {
+      console.log("[Turnstile] No VITE_TURNSTILE_SITE_KEY set — CAPTCHA skipped.");
+      return;
+    }
+    console.log("[Turnstile] Site key found, loading script…");
     const scriptId = "cf-turnstile-script";
     const doRender = () => {
       if (turnstileRef.current && window.turnstile && !widgetIdRef.current) {
+        console.log("[Turnstile] Rendering invisible widget…");
         widgetIdRef.current = window.turnstile.render(turnstileRef.current, {
           sitekey: TURNSTILE_SITE_KEY,
           size: "invisible",
           callback: (token) => {
-            // Fired after execute() completes — submit with the obtained token
+            console.log("[Turnstile] Token received, length:", token.length);
             const payload = pendingPayloadRef.current;
             pendingPayloadRef.current = null;
-            if (payload) void sendToApi({ ...payload, turnstileToken: token });
+            if (payload) void sendToApi({ ...payload, "cf-turnstile-response": token });
           },
           "expired-callback": () => {
+            console.log("[Turnstile] Token expired.");
             pendingPayloadRef.current = null;
             setErrorMsg("Security check expired. Please try again.");
             setStatus("error");
           },
           "error-callback": () => {
+            console.log("[Turnstile] error-callback fired — challenge failed.");
             pendingPayloadRef.current = null;
             setErrorMsg("Security check failed. Please try again.");
             setStatus("error");
           },
         });
+        console.log("[Turnstile] Widget rendered, id:", widgetIdRef.current);
       }
     };
     let script = document.getElementById(scriptId) as HTMLScriptElement | null;
@@ -162,14 +170,18 @@ export default function SubmitCase() {
   }
 
   async function sendToApi(payload: Record<string, unknown>) {
+    const hasCaptcha = "cf-turnstile-response" in payload;
+    console.log("[Submit] Sending to API, has captcha token:", hasCaptcha);
     try {
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
+      console.log("[Submit] API response status:", res.status);
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        console.log("[Submit] API error body:", body);
         if (TURNSTILE_SITE_KEY && widgetIdRef.current && window.turnstile) {
           window.turnstile.reset(widgetIdRef.current);
         }
@@ -203,12 +215,12 @@ export default function SubmitCase() {
     };
 
     if (TURNSTILE_SITE_KEY && widgetIdRef.current && window.turnstile) {
-      // Invisible mode: reset then execute — callback fires with token and calls sendToApi
+      console.log("[Turnstile] Calling execute() on widget:", widgetIdRef.current);
       window.turnstile.reset(widgetIdRef.current);
       pendingPayloadRef.current = payload;
       window.turnstile.execute(widgetIdRef.current);
     } else {
-      // No Turnstile configured — submit directly (backend skips verification)
+      console.log("[Submit] No Turnstile configured — submitting directly.");
       await sendToApi(payload);
     }
   }
@@ -342,9 +354,9 @@ export default function SubmitCase() {
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Briefly describe how the theft occurred and any details that may help us investigate" rows={4} style={textareaStyle} />
           </div>
 
-          {/* Invisible Turnstile mount point — no visible UI, always in DOM when key is set */}
+          {/* Invisible Turnstile mount point — must NOT be display:none; widget renders nothing visible */}
           {TURNSTILE_SITE_KEY && (
-            <div ref={turnstileRef} style={{ display: "none" }} />
+            <div ref={turnstileRef} style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }} />
           )}
 
           {status === "error" && (

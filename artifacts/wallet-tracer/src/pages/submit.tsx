@@ -6,7 +6,8 @@ declare global {
     turnstile?: {
       render: (el: HTMLElement, opts: {
         sitekey: string;
-        size?: string;
+        appearance?: string;
+        execution?: string;
         callback: (token: string) => void;
         "expired-callback": () => void;
         "error-callback": () => void;
@@ -120,34 +121,40 @@ export default function SubmitCase() {
       console.log("[Turnstile] No VITE_TURNSTILE_SITE_KEY set — CAPTCHA skipped.");
       return;
     }
-    console.log("[Turnstile] Site key found, loading script…");
+    console.log("[Turnstile] Site key found:", TURNSTILE_SITE_KEY.slice(0, 8) + "…", "— loading script");
     const scriptId = "cf-turnstile-script";
     const doRender = () => {
       if (turnstileRef.current && window.turnstile && !widgetIdRef.current) {
-        console.log("[Turnstile] Rendering invisible widget…");
+        console.log("[Turnstile] Rendering widget (appearance=interaction-only, execution=execute)…");
         widgetIdRef.current = window.turnstile.render(turnstileRef.current, {
           sitekey: TURNSTILE_SITE_KEY,
-          size: "invisible",
+          appearance: "interaction-only",
+          execution: "execute",
           callback: (token) => {
-            console.log("[Turnstile] Token received, length:", token.length);
+            console.log("[Turnstile] token received ✓ length:", token.length);
             const payload = pendingPayloadRef.current;
             pendingPayloadRef.current = null;
-            if (payload) void sendToApi({ ...payload, "cf-turnstile-response": token });
+            if (payload) {
+              console.log("[Turnstile] submitting with token");
+              void sendToApi({ ...payload, "cf-turnstile-response": token });
+            } else {
+              console.log("[Turnstile] token received but no pending payload — ignoring");
+            }
           },
           "expired-callback": () => {
-            console.log("[Turnstile] Token expired.");
+            console.log("[Turnstile] token expired — resetting");
             pendingPayloadRef.current = null;
             setErrorMsg("Security check expired. Please try again.");
             setStatus("error");
           },
           "error-callback": () => {
-            console.log("[Turnstile] error-callback fired — challenge failed.");
+            console.log("[Turnstile] error-callback fired — challenge failed or network error");
             pendingPayloadRef.current = null;
             setErrorMsg("Security check failed. Please try again.");
             setStatus("error");
           },
         });
-        console.log("[Turnstile] Widget rendered, id:", widgetIdRef.current);
+        console.log("[Turnstile] Turnstile ready, widget id:", widgetIdRef.current);
       }
     };
     let script = document.getElementById(scriptId) as HTMLScriptElement | null;
@@ -215,8 +222,7 @@ export default function SubmitCase() {
     };
 
     if (TURNSTILE_SITE_KEY && widgetIdRef.current && window.turnstile) {
-      console.log("[Turnstile] Calling execute() on widget:", widgetIdRef.current);
-      window.turnstile.reset(widgetIdRef.current);
+      console.log("[Turnstile] execute called on widget:", widgetIdRef.current);
       pendingPayloadRef.current = payload;
       window.turnstile.execute(widgetIdRef.current);
     } else {
@@ -354,9 +360,9 @@ export default function SubmitCase() {
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Briefly describe how the theft occurred and any details that may help us investigate" rows={4} style={textareaStyle} />
           </div>
 
-          {/* Invisible Turnstile mount point — must NOT be display:none; widget renders nothing visible */}
+          {/* Turnstile mount point — appearance=interaction-only renders nothing unless challenge needed */}
           {TURNSTILE_SITE_KEY && (
-            <div ref={turnstileRef} style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }} />
+            <div ref={turnstileRef} />
           )}
 
           {status === "error" && (

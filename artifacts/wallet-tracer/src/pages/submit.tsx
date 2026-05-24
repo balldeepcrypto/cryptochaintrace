@@ -6,11 +6,14 @@ declare global {
     turnstile?: {
       render: (el: HTMLElement, opts: {
         sitekey: string;
+        size?: string;
         callback: (token: string) => void;
         "expired-callback": () => void;
         "error-callback": () => void;
       }) => string;
+      execute: (widgetId: string) => void;
       reset: (widgetId: string) => void;
+      getResponse: (widgetId: string) => string | undefined;
     };
   }
 }
@@ -105,25 +108,41 @@ export default function SubmitCase() {
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState("");
-  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+
+  // Invisible Turnstile: no visible widget, token obtained automatically on submit
   const turnstileRef = useRef<HTMLDivElement>(null);
   const widgetIdRef = useRef<string | null>(null);
+  // Holds the validated form payload while waiting for Turnstile to fire its callback
+  const pendingPayloadRef = useRef<Record<string, unknown> | null>(null);
 
-  // Load and render Turnstile widget when a site key is configured
   useEffect(() => {
     if (!TURNSTILE_SITE_KEY) return;
     const scriptId = "cf-turnstile-script";
-    let script = document.getElementById(scriptId) as HTMLScriptElement | null;
     const doRender = () => {
       if (turnstileRef.current && window.turnstile && !widgetIdRef.current) {
         widgetIdRef.current = window.turnstile.render(turnstileRef.current, {
           sitekey: TURNSTILE_SITE_KEY,
-          callback: (token) => setTurnstileToken(token),
-          "expired-callback": () => setTurnstileToken(null),
-          "error-callback": () => setTurnstileToken(null),
+          size: "invisible",
+          callback: (token) => {
+            // Fired after execute() completes — submit with the obtained token
+            const payload = pendingPayloadRef.current;
+            pendingPayloadRef.current = null;
+            if (payload) void sendToApi({ ...payload, turnstileToken: token });
+          },
+          "expired-callback": () => {
+            pendingPayloadRef.current = null;
+            setErrorMsg("Security check expired. Please try again.");
+            setStatus("error");
+          },
+          "error-callback": () => {
+            pendingPayloadRef.current = null;
+            setErrorMsg("Security check failed. Please try again.");
+            setStatus("error");
+          },
         });
       }
     };
+    let script = document.getElementById(scriptId) as HTMLScriptElement | null;
     if (!script) {
       script = document.createElement("script");
       script.id = scriptId;
@@ -142,41 +161,17 @@ export default function SubmitCase() {
     );
   }
 
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (selectedChains.length === 0) {
-      setErrorMsg("Please select at least one chain.");
-      setStatus("error");
-      return;
-    }
-    if (TURNSTILE_SITE_KEY && !turnstileToken) {
-      setErrorMsg("Please complete the CAPTCHA check.");
-      setStatus("error");
-      return;
-    }
-    setStatus("loading");
-    setErrorMsg("");
+  async function sendToApi(payload: Record<string, unknown>) {
     try {
       const res = await fetch("/api/submissions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: name.trim() || null,
-          email: email.trim(),
-          victimWallet: victimWallet.trim(),
-          thiefWallet: thiefWallet.trim(),
-          chains: selectedChains.join(", "),
-          txHashes: txHashes.trim() || null,
-          description: description.trim() || null,
-          turnstileToken: turnstileToken ?? undefined,
-        }),
+        body: JSON.stringify(payload),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        // Reset widget on failure so user can retry
         if (TURNSTILE_SITE_KEY && widgetIdRef.current && window.turnstile) {
           window.turnstile.reset(widgetIdRef.current);
-          setTurnstileToken(null);
         }
         throw new Error((body as { message?: string }).message ?? "Submission failed.");
       }
@@ -184,6 +179,37 @@ export default function SubmitCase() {
     } catch (err) {
       setErrorMsg(err instanceof Error ? err.message : "An unexpected error occurred.");
       setStatus("error");
+    }
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (selectedChains.length === 0) {
+      setErrorMsg("Please select at least one chain.");
+      setStatus("error");
+      return;
+    }
+    setStatus("loading");
+    setErrorMsg("");
+
+    const payload: Record<string, unknown> = {
+      name: name.trim() || null,
+      email: email.trim(),
+      victimWallet: victimWallet.trim(),
+      thiefWallet: thiefWallet.trim(),
+      chains: selectedChains.join(", "),
+      txHashes: txHashes.trim() || null,
+      description: description.trim() || null,
+    };
+
+    if (TURNSTILE_SITE_KEY && widgetIdRef.current && window.turnstile) {
+      // Invisible mode: reset then execute — callback fires with token and calls sendToApi
+      window.turnstile.reset(widgetIdRef.current);
+      pendingPayloadRef.current = payload;
+      window.turnstile.execute(widgetIdRef.current);
+    } else {
+      // No Turnstile configured — submit directly (backend skips verification)
+      await sendToApi(payload);
     }
   }
 
@@ -316,10 +342,9 @@ export default function SubmitCase() {
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Briefly describe how the theft occurred and any details that may help us investigate" rows={4} style={textareaStyle} />
           </div>
 
+          {/* Invisible Turnstile mount point — no visible UI, always in DOM when key is set */}
           {TURNSTILE_SITE_KEY && (
-            <div style={{ marginBottom: 20 }}>
-              <div ref={turnstileRef} />
-            </div>
+            <div ref={turnstileRef} style={{ display: "none" }} />
           )}
 
           {status === "error" && (
@@ -331,7 +356,7 @@ export default function SubmitCase() {
 
           <button
             type="submit"
-            disabled={status === "loading" || (!!TURNSTILE_SITE_KEY && !turnstileToken)}
+            disabled={status === "loading"}
             style={{
               background: "#22d3ee", color: "#0f172a", padding: "14px 32px",
               fontSize: "1.1rem", fontWeight: "bold", border: "none", borderRadius: 8,

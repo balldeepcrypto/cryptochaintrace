@@ -427,7 +427,7 @@ function WalletRow({ wallet, label, color, chains, onTrace, onAddToCluster }: Wa
         ))}
         <button onClick={() => onAddToCluster(wallet)}
           className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-slate-300 transition-colors">
-          <Plus className="w-3 h-3" />Add to Cluster
+          <Plus className="w-3 h-3" />Add to Commingle
         </button>
       </div>
       {chains.length > 1 && (
@@ -551,7 +551,7 @@ function ChainProfileSection({ cp, role }: { cp: ChainResult; role: "victim" | "
 
 // ── HopSection — shows connections from the existing connections endpoint ─────
 
-function HopSection({ address, conn, chain, role }: { address: string; conn: ConnectionGraph; chain: string; role: "victim" | "suspect" }) {
+function HopSection({ address, conn, chain, role, onAddToCommingle }: { address: string; conn: ConnectionGraph; chain: string; role: "victim" | "suspect"; onAddToCommingle?: (addr: string) => void }) {
   const [open, setOpen] = useState(true);
   if (!conn) return null;
   const peers = conn.nodes.filter((n) => n.address !== address);
@@ -601,7 +601,15 @@ function HopSection({ address, conn, chain, role }: { address: string; conn: Con
                     </a>
                   )}
                 </div>
-                <div className="font-mono text-xs text-slate-400 break-all">{node.address}</div>
+                <div className="flex items-center gap-2">
+                  <div className="font-mono text-xs text-slate-400 break-all flex-1">{node.address}</div>
+                  {onAddToCommingle && (
+                    <button onClick={() => onAddToCommingle(node.address)}
+                      className="shrink-0 flex items-center gap-1 px-2 py-0.5 rounded bg-slate-700 hover:bg-slate-600 text-xs font-semibold text-slate-300 transition-colors">
+                      <Plus className="w-3 h-3" />Add to Commingle
+                    </button>
+                  )}
+                </div>
                 {edge && (
                   <div className="flex gap-4 text-xs font-mono text-slate-500 flex-wrap">
                     <span><span className="text-slate-600">Txs:</span> {edge.transactionCount}</span>
@@ -624,7 +632,7 @@ function HopSection({ address, conn, chain, role }: { address: string; conn: Con
 
 // ── ForensicReportModal ───────────────────────────────────────────────────────
 
-function ForensicReportModal({ report, onClose }: { report: ForensicReportData; onClose: () => void }) {
+function ForensicReportModal({ report, onClose, onAddToCommingle }: { report: ForensicReportData; onClose: () => void; onAddToCommingle: (addr: string) => void }) {
   const reportTitle = `Forensic Intelligence Package — Case #${report.caseId}`;
 
   function downloadHtml() {
@@ -767,7 +775,7 @@ function ForensicReportModal({ report, onClose }: { report: ForensicReportData; 
               {report.caseSummary.chains.map((chain) => {
                 const conn = report.suspectConnections?.[chain];
                 if (!conn) return <div key={chain} className="text-xs text-slate-600 font-mono px-3 py-2">{chain.toUpperCase()}: no connections data</div>;
-                return <HopSection key={chain} address={report.suspectProfile.address} conn={conn} chain={chain} role="suspect" />;
+                return <HopSection key={chain} address={report.suspectProfile.address} conn={conn} chain={chain} role="suspect" onAddToCommingle={onAddToCommingle} />;
               })}
             </div>
           </section>
@@ -886,7 +894,7 @@ export default function CaseDetailModal({ submission: sub, onClose, onLoadTrace,
 
   return (
     <>
-      {showReport && reportData && <ForensicReportModal report={reportData} onClose={() => setShowReport(false)} />}
+      {showReport && reportData && <ForensicReportModal report={reportData} onClose={() => setShowReport(false)} onAddToCommingle={addToCluster} />}
 
       <div
         className="fixed inset-0 z-50 flex items-start justify-end bg-black/70 backdrop-blur-sm"

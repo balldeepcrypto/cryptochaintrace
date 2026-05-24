@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { UserPlus, Trash2, RefreshCw, AlertCircle, Users, Mail } from "lucide-react";
+import { useAuth } from "../lib/auth-context";
 
 interface Analyst {
   id: number;
@@ -15,6 +16,7 @@ function fmt(ts: string | null) {
 }
 
 export default function ManageAnalysts() {
+  const { session } = useAuth();
   const [analysts, setAnalysts] = useState<Analyst[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -26,11 +28,19 @@ export default function ManageAnalysts() {
   const [addSuccess, setAddSuccess] = useState("");
   const [removingId, setRemovingId] = useState<number | null>(null);
 
+  function authHeaders(): HeadersInit {
+    const h: Record<string, string> = { "Content-Type": "application/json" };
+    const token = session?.access_token;
+    if (token) h["Authorization"] = `Bearer ${token}`;
+    return h;
+  }
+
   const load = useCallback(async () => {
+    if (!session) return;
     setLoading(true);
     setError("");
     try {
-      const res = await fetch("/api/analysts");
+      const res = await fetch("/api/analysts", { headers: authHeaders() });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { message?: string };
         setError(body.message ?? `Error ${res.status}`);
@@ -43,7 +53,8 @@ export default function ManageAnalysts() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
 
   useEffect(() => { void load(); }, [load]);
 
@@ -55,7 +66,7 @@ export default function ManageAnalysts() {
     try {
       const res = await fetch("/api/analysts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders(),
         body: JSON.stringify({ email: newEmail.trim(), department: newDept.trim() }),
       });
       const body = await res.json().catch(() => ({})) as { message?: string; inviteStatus?: string };
@@ -67,8 +78,8 @@ export default function ManageAnalysts() {
       const invited = body.inviteStatus === "invited";
       setAddSuccess(
         invited
-          ? `Analyst added. A magic-link sign-in email has been sent to ${newEmail.trim()}.`
-          : `Analyst added to allowlist. (Invite email not sent — Supabase not configured.)`
+          ? `Analyst added. A sign-in link has been emailed to ${newEmail.trim()}.`
+          : `Analyst added to allowlist. (Email invite not sent — Supabase not configured.)`
       );
       setNewEmail("");
       setNewDept("");
@@ -84,7 +95,7 @@ export default function ManageAnalysts() {
     if (!confirm(`Remove ${analyst.email}? This cannot be undone.`)) return;
     setRemovingId(analyst.id);
     try {
-      await fetch(`/api/analysts/${analyst.id}`, { method: "DELETE" });
+      await fetch(`/api/analysts/${analyst.id}`, { method: "DELETE", headers: authHeaders() });
       await load();
     } finally {
       setRemovingId(null);

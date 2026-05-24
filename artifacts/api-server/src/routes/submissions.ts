@@ -109,16 +109,15 @@ router.post("/submissions", async (req, res): Promise<void> => {
     "cf-turnstile-response": { present: cfToken.length > 0, length: cfToken.length, preview: cfToken.slice(0, 20) || "(empty)" },
   }, "[submissions] POST received — full body summary");
 
-  // ── Turnstile verification ──────────────────────────────────────────────────
+  // ── Turnstile verification (log-only fallback — never blocks submission) ─────
   const turnstileResult = await verifyTurnstile(cfToken);
   if (turnstileResult.skipped) {
     req.log.info("[submissions] No Turnstile key — skipping check");
   } else {
     req.log.info({ result: turnstileResult }, "[submissions] Cloudflare siteverify result");
-  }
-  if (!turnstileResult.ok) {
-    res.status(400).json({ error: "captcha_failed", message: `Security check failed (${turnstileResult.errorCodes?.join(", ") ?? "unknown"}). Please refresh and try again.` });
-    return;
+    if (!turnstileResult.ok) {
+      req.log.warn({ errorCodes: turnstileResult.errorCodes, raw: turnstileResult.raw }, "[submissions] Turnstile FAILED — allowing submission through as fallback (temporary)");
+    }
   }
 
   if (!email || !victimWallet || !thiefWallet || !chains) {

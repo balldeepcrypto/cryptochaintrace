@@ -144,13 +144,28 @@ router.post("/analysts", async (req, res): Promise<void> => {
     return;
   }
 
-  req.log.info({ email: (data as { email: string }).email }, "Analyst added");
+  // Send magic-link invite using the same anon client (no admin key needed)
+  const origin = (req.headers["origin"] as string | undefined)
+    ?? (req.headers["referer"] as string | undefined)?.replace(/\/[^/]*$/, "")
+    ?? "https://cryptochaintrace.com";
+
+  const { error: otpErr } = await supabase.auth.signInWithOtp({
+    email: email.toLowerCase().trim(),
+    options: { emailRedirectTo: `${origin}/dashboard` },
+  });
+
+  const inviteStatus = otpErr ? `otp_failed: ${otpErr.message}` : "invited";
+  req.log.info({ email: (data as { email: string }).email, inviteStatus }, "Analyst added");
+
   res.status(201).json({
     id: (data as { id: number }).id,
     email: (data as { email: string }).email,
     department: (data as { department: string }).department,
     createdAt: (data as { created_at: string }).created_at,
-    inviteStatus: "not_sent",
+    inviteStatus,
+    message: otpErr
+      ? `Analyst added successfully. (Email invite failed: ${otpErr.message})`
+      : "Analyst added successfully. Magic link email has been sent.",
   });
 });
 

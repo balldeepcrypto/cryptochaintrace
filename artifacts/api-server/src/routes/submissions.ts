@@ -3,6 +3,38 @@ import { eq } from "drizzle-orm";
 import { db, pool, submissionsTable } from "@workspace/db";
 import { sendSubmissionEmails } from "../lib/email.js";
 
+// ── In-memory rate limiter: max 5 submissions per IP per hour ─────────────────
+const rateMap = new Map<string, { count: number; resetAt: number }>();
+
+function checkRateLimit(ip: string): boolean {
+  const now = Date.now();
+  const entry = rateMap.get(ip);
+  if (!entry || now > entry.resetAt) {
+    rateMap.set(ip, { count: 1, resetAt: now + 3_600_000 });
+    return true;
+  }
+  if (entry.count >= 5) return false;
+  entry.count++;
+  return true;
+}
+
+// ── Cloudflare Turnstile server-side verification ─────────────────────────────
+async function verifyTurnstile(token: string): Promise<boolean> {
+  const secret = process.env["TURNSTILE_SECRET_KEY"];
+  if (!secret) return true; // skip if not configured
+  try {
+    const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: new URLSearchParams({ secret, response: token }),
+    });
+    const data = await r.json() as { success: boolean };
+    return data.success === true;
+  } catch {
+    return false;
+  }
+}
+
 const router: IRouter = Router();
 
 const ensureTable: Promise<void> = Promise.resolve()
@@ -47,7 +79,24 @@ router.get("/submissions", async (req, res): Promise<void> => {
 router.post("/submissions", async (req, res): Promise<void> => {
   await ensureTable;
 
-  const { name, email, victimWallet, thiefWallet, chains, txHashes, description } = req.body ?? {};
+  // ── Rate limit ──────────────────────────────────────────────────────────────
+  const ip =
+    (req.headers["x-forwarded-for"] as string | undefined)?.split(",")[0]?.trim() ??
+    req.ip ??
+    "unknown";
+  if (!checkRateLimit(ip)) {
+    res.status(429).json({ error: "rate_limited", message: "Too many submissions. Please wait an hour and try again." });
+    return;
+  }
+
+  const { name, email, victimWallet, thiefWallet, chains, txHashes, description, turnstileToken } = req.body ?? {};
+
+  // ── Turnstile verification ──────────────────────────────────────────────────
+  const captchaOk = await verifyTurnstile(turnstileToken ?? "");
+  if (!captchaOk) {
+    res.status(400).json({ error: "captcha_failed", message: "CAPTCHA verification failed. Please refresh and try again." });
+    return;
+  }
 
   if (!email || !victimWallet || !thiefWallet || !chains) {
     res.status(400).json({ error: "missing_fields", message: "email, victimWallet, thiefWallet, and chains are required." });

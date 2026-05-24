@@ -1,5 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { CheckCircle, AlertCircle, Loader2, Copy, Check } from "lucide-react";
+
+declare global {
+  interface Window {
+    turnstile?: {
+      render: (el: HTMLElement, opts: {
+        sitekey: string;
+        callback: (token: string) => void;
+        "expired-callback": () => void;
+        "error-callback": () => void;
+      }) => string;
+      reset: (widgetId: string) => void;
+    };
+  }
+}
+
+const TURNSTILE_SITE_KEY = import.meta.env["VITE_TURNSTILE_SITE_KEY"] as string | undefined;
 
 const DONATION_WALLETS = [
   { chain: "XLM", address: "GCXUMH47OGMC6JKUCMNG5KSKUOZGX7H4A6P2YZTZ2FCA2ZEB2PPSB6XW" },
@@ -89,6 +105,36 @@ export default function SubmitCase() {
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<Status>("idle");
   const [errorMsg, setErrorMsg] = useState("");
+  const [turnstileToken, setTurnstileToken] = useState<string | null>(null);
+  const turnstileRef = useRef<HTMLDivElement>(null);
+  const widgetIdRef = useRef<string | null>(null);
+
+  // Load and render Turnstile widget when a site key is configured
+  useEffect(() => {
+    if (!TURNSTILE_SITE_KEY) return;
+    const scriptId = "cf-turnstile-script";
+    let script = document.getElementById(scriptId) as HTMLScriptElement | null;
+    const doRender = () => {
+      if (turnstileRef.current && window.turnstile && !widgetIdRef.current) {
+        widgetIdRef.current = window.turnstile.render(turnstileRef.current, {
+          sitekey: TURNSTILE_SITE_KEY,
+          callback: (token) => setTurnstileToken(token),
+          "expired-callback": () => setTurnstileToken(null),
+          "error-callback": () => setTurnstileToken(null),
+        });
+      }
+    };
+    if (!script) {
+      script = document.createElement("script");
+      script.id = scriptId;
+      script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+      script.async = true;
+      script.onload = doRender;
+      document.head.appendChild(script);
+    } else if (window.turnstile) {
+      doRender();
+    }
+  }, []);
 
   function toggleChain(id: string) {
     setSelectedChains((prev) =>
@@ -100,6 +146,11 @@ export default function SubmitCase() {
     e.preventDefault();
     if (selectedChains.length === 0) {
       setErrorMsg("Please select at least one chain.");
+      setStatus("error");
+      return;
+    }
+    if (TURNSTILE_SITE_KEY && !turnstileToken) {
+      setErrorMsg("Please complete the CAPTCHA check.");
       setStatus("error");
       return;
     }
@@ -117,10 +168,16 @@ export default function SubmitCase() {
           chains: selectedChains.join(", "),
           txHashes: txHashes.trim() || null,
           description: description.trim() || null,
+          turnstileToken: turnstileToken ?? undefined,
         }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // Reset widget on failure so user can retry
+        if (TURNSTILE_SITE_KEY && widgetIdRef.current && window.turnstile) {
+          window.turnstile.reset(widgetIdRef.current);
+          setTurnstileToken(null);
+        }
         throw new Error((body as { message?: string }).message ?? "Submission failed.");
       }
       setStatus("success");
@@ -259,6 +316,12 @@ export default function SubmitCase() {
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Briefly describe how the theft occurred and any details that may help us investigate" rows={4} style={textareaStyle} />
           </div>
 
+          {TURNSTILE_SITE_KEY && (
+            <div style={{ marginBottom: 20 }}>
+              <div ref={turnstileRef} />
+            </div>
+          )}
+
           {status === "error" && (
             <div style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", borderRadius: 8, background: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.3)", color: "#f87171", marginBottom: 20 }}>
               <AlertCircle style={{ width: 18, height: 18, flexShrink: 0 }} />
@@ -268,7 +331,7 @@ export default function SubmitCase() {
 
           <button
             type="submit"
-            disabled={status === "loading"}
+            disabled={status === "loading" || (!!TURNSTILE_SITE_KEY && !turnstileToken)}
             style={{
               background: "#22d3ee", color: "#0f172a", padding: "14px 32px",
               fontSize: "1.1rem", fontWeight: "bold", border: "none", borderRadius: 8,

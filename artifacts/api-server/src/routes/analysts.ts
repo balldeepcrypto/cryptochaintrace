@@ -108,7 +108,7 @@ router.get("/analysts", async (req, res): Promise<void> => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/analysts — add to allowlist + send magic-link invite (anon OTP)
+// POST /api/analysts — add to allowlist via Supabase (simple insert)
 // ---------------------------------------------------------------------------
 router.post("/analysts", async (req, res): Promise<void> => {
   if (!await requireOwner(req, res)) return;
@@ -119,46 +119,39 @@ router.post("/analysts", async (req, res): Promise<void> => {
     return;
   }
 
-  try {
-    const [row] = await db
-      .insert(analystsTable)
-      .values({ email: email.trim().toLowerCase(), department: department ? String(department) : "" })
-      .onConflictDoUpdate({ target: analystsTable.email, set: { department: department ? String(department) : "" } })
-      .returning();
+  const supabase = getAnonClient();
+  if (!supabase) {
+    res.status(500).json({ error: "server_config", message: "Supabase is not configured." });
+    return;
+  }
 
-    // Send magic-link invite via anon client (no admin key needed)
-    let inviteStatus = "not_sent";
-    const anonClient = getAnonClient();
-    if (anonClient) {
-      const { error: otpErr } = await anonClient.auth.signInWithOtp({
-        email: email.trim().toLowerCase(),
-        options: {
-          shouldCreateUser: true,
-          emailRedirectTo: process.env["REPLIT_DOMAINS"]
-            ? `https://${process.env["REPLIT_DOMAINS"]!.split(",")[0]}/dashboard`
-            : "https://cryptochaintrace.com/dashboard",
-        },
-      });
-      inviteStatus = otpErr ? `otp_failed: ${otpErr.message}` : "invited";
-    }
+  const { data, error } = await supabase
+    .from("analysts")
+    .insert({
+      email: email.toLowerCase().trim(),
+      department: (department ?? "").trim(),
+    })
+    .select()
+    .single();
 
-    req.log.info({ email: row!.email, inviteStatus }, "Analyst added");
-    res.status(201).json({
-      id: row!.id,
-      email: row!.email,
-      department: row!.department,
-      createdAt: row!.createdAt.toISOString(),
-      inviteStatus,
-    });
-  } catch (err) {
-    req.log.error({ err }, "POST /analysts failed");
-    const msg = String(err);
-    if (msg.includes("unique") || msg.includes("duplicate")) {
+  if (error) {
+    req.log.error({ error }, "POST /analysts supabase insert failed");
+    if (error.code === "23505") {
       res.status(409).json({ error: "already_exists", message: "An analyst with that email already exists." });
       return;
     }
-    res.status(500).json({ error: "db_error", message: msg });
+    res.status(500).json({ error: "db_error", message: error.message });
+    return;
   }
+
+  req.log.info({ email: (data as { email: string }).email }, "Analyst added");
+  res.status(201).json({
+    id: (data as { id: number }).id,
+    email: (data as { email: string }).email,
+    department: (data as { department: string }).department,
+    createdAt: (data as { created_at: string }).created_at,
+    inviteStatus: "not_sent",
+  });
 });
 
 // ---------------------------------------------------------------------------

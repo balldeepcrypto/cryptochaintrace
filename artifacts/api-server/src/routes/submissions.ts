@@ -194,8 +194,8 @@ router.get("/submissions/:id/report", async (req, res): Promise<void> => {
   async function fetchChain(address: string, chain: string): Promise<ChainResult> {
     try {
       const [infoRes, txRes] = await Promise.all([
-        fetch(`${apiBase}/api/wallets/${chain}/${address}/info`).then((r) => r.ok ? r.json() : null).catch(() => null),
-        fetch(`${apiBase}/api/wallets/${chain}/${address}/transactions?limit=30`).then((r) => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${apiBase}/api/wallets/${encodeURIComponent(address)}?chain=${chain}`).then((r) => r.ok ? r.json() : null).catch(() => null),
+        fetch(`${apiBase}/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=30`).then((r) => r.ok ? r.json() : null).catch(() => null),
       ]);
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const info: any = infoRes;

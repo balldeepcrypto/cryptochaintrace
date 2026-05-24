@@ -19,19 +19,30 @@ function checkRateLimit(ip: string): boolean {
 }
 
 // ── Cloudflare Turnstile server-side verification ─────────────────────────────
-async function verifyTurnstile(token: string): Promise<boolean> {
+interface TurnstileResult {
+  ok: boolean;
+  skipped?: boolean;
+  errorCodes?: string[];
+  raw?: unknown;
+}
+
+async function verifyTurnstile(token: string): Promise<TurnstileResult> {
   const secret = process.env["TURNSTILE_SECRET_KEY"];
-  if (!secret) return true; // skip if not configured
+  if (!secret) return { ok: true, skipped: true };
   try {
     const r = await fetch("https://challenges.cloudflare.com/turnstile/v0/siteverify", {
       method: "POST",
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams({ secret, response: token }),
     });
-    const data = await r.json() as { success: boolean };
-    return data.success === true;
-  } catch {
-    return false;
+    const data = await r.json() as { success: boolean; "error-codes"?: string[] };
+    return {
+      ok: data.success === true,
+      errorCodes: data["error-codes"] ?? [],
+      raw: data,
+    };
+  } catch (err) {
+    return { ok: false, errorCodes: ["network-error"], raw: String(err) };
   }
 }
 
@@ -92,14 +103,21 @@ router.post("/submissions", async (req, res): Promise<void> => {
   const { name, email, victimWallet, thiefWallet, chains, txHashes, description } = req.body ?? {};
   const cfToken: string = req.body?.["cf-turnstile-response"] ?? "";
 
-  req.log.info({ ip, hasCfToken: cfToken.length > 0, tokenLen: cfToken.length }, "[submissions] POST received");
+  req.log.info({
+    ip,
+    body: { name: !!name, email: !!email, victimWallet: !!victimWallet, thiefWallet: !!thiefWallet, chains, txHashes: !!txHashes, description: !!description },
+    "cf-turnstile-response": { present: cfToken.length > 0, length: cfToken.length, preview: cfToken.slice(0, 20) || "(empty)" },
+  }, "[submissions] POST received — full body summary");
 
   // ── Turnstile verification ──────────────────────────────────────────────────
-  const secretConfigured = !!process.env["TURNSTILE_SECRET_KEY"];
-  const captchaOk = await verifyTurnstile(cfToken);
-  req.log.info({ captchaOk, secretConfigured }, "[submissions] Turnstile result");
-  if (!captchaOk) {
-    res.status(400).json({ error: "captcha_failed", message: "CAPTCHA verification failed. Please refresh and try again." });
+  const turnstileResult = await verifyTurnstile(cfToken);
+  if (turnstileResult.skipped) {
+    req.log.info("[submissions] No Turnstile key — skipping check");
+  } else {
+    req.log.info({ result: turnstileResult }, "[submissions] Cloudflare siteverify result");
+  }
+  if (!turnstileResult.ok) {
+    res.status(400).json({ error: "captcha_failed", message: `Security check failed (${turnstileResult.errorCodes?.join(", ") ?? "unknown"}). Please refresh and try again.` });
     return;
   }
 

@@ -74,36 +74,37 @@ async function requireOwner(req: Request, res: Response): Promise<boolean> {
 }
 
 // ---------------------------------------------------------------------------
-// GET /api/analysts — list from Postgres; no Supabase admin call
+// GET /api/analysts — list from Supabase analysts table (simple, no join)
 // ---------------------------------------------------------------------------
 router.get("/analysts", async (req, res): Promise<void> => {
   if (!await requireOwner(req, res)) return;
 
-  try {
-    const rows = await db
-      .select({
-        id: analystsTable.id,
-        email: analystsTable.email,
-        department: analystsTable.department,
-        createdAt: sql<string>`${analystsTable.createdAt}::text`,
-        lastLogin: sql<string | null>`max(case when ${activityLogsTable.action} = 'login' then ${activityLogsTable.timestamp} end)::text`,
-      })
-      .from(analystsTable)
-      .leftJoin(activityLogsTable, eq(activityLogsTable.userEmail, analystsTable.email))
-      .groupBy(analystsTable.id)
-      .orderBy(desc(analystsTable.createdAt));
+  const supabase = getAnonClient();
+  if (!supabase) {
+    res.status(500).json({ error: "server_config", message: "Supabase is not configured." });
+    return;
+  }
 
-    res.json(rows.map((r) => ({
+  const { data, error } = await supabase
+    .from("analysts")
+    .select("id, email, department, created_at")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    req.log.error({ error }, "GET /analysts supabase query failed");
+    res.status(500).json({ error: "db_error", message: error.message });
+    return;
+  }
+
+  res.json(
+    (data ?? []).map((r: { id: number; email: string; department: string; created_at: string }) => ({
       id: r.id,
       email: r.email,
       department: r.department,
-      createdAt: r.createdAt,
-      lastLogin: r.lastLogin ?? null,
-    })));
-  } catch (err) {
-    req.log.error({ err }, "GET /analysts failed");
-    res.status(500).json({ error: "db_error", message: String(err) });
-  }
+      createdAt: r.created_at,
+      lastLogin: null,
+    }))
+  );
 });
 
 // ---------------------------------------------------------------------------

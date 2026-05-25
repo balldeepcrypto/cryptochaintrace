@@ -265,6 +265,15 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   xdc2a0f8B4D3ac1D66a72A0e29eCFd60b79Fe54f7Cc: { label: "Gate.io XDC",   type: "exchange" },
   xdc0bdf7ED8a08e99aBb3acB37fEc88bF01DB4fcbae: { label: "Bitrue XDC 2",  type: "exchange" },
   xdc15adad47B4Cd4b14fB8B3FaF8Fd02DF62a3cE8Dc: { label: "OKX XDC",      type: "exchange" },
+  // XDC exchange wallets (0x-prefixed format — May 2026)
+  "0x86c334119af88d8daa1bbd4e982b24c410a0301":   { label: "HitBTC XDC",   type: "exchange" },
+  "0xd0ad6bc1c9e6fd9fc1be1d674109e1afcc78b058":  { label: "Bybit XDC",    type: "exchange" },
+  "0x4e5d2ddf1c5060a64d70eec1731710f49a76d2bf":  { label: "KuCoin XDC",   type: "exchange" },
+  "0x43b96a1bbe34ccf6d67b334ee86405fb950bdcaa":  { label: "Huobi XDC",    type: "exchange" },
+  "0x472c619028ba67b817b48f8d64dbb7699ce0fadf":  { label: "Bitfinex XDC", type: "exchange" },
+  "0xf29f049144467b3dc55e19205c30c1737942f23a":  { label: "MEXC XDC",     type: "exchange" },
+  "0x377b8ce04761754e8ac153b47805a9cf6b190873":  { label: "Upbit XDC",    type: "exchange" },
+  "0xab782bc7d4a2b306825de5a7730034f8f63ee1bc":  { label: "Bitvavo XDC",  type: "exchange" },
   // ── Ethereum / EVM ─────────────────────────────────────────────────────────
   "0x28c6c06298d514db089934071355e5743bf21d60": { label: "Binance Hot",    type: "exchange" },
   "0x21a31ee1afc51d94c2efccaa2092ad1028285549": { label: "Binance Cold",   type: "exchange" },

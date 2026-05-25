@@ -133,36 +133,73 @@ export const PDF_CSS = `
 
   @media print {
     @page {
-      margin: 24mm 18mm 22mm;
-      size: A4;
+      size: letter portrait;
+      margin: 0.5in;
       @top-right { content: counter(page); font-family: Arial, sans-serif; font-size: 7pt; color: #888; }
     }
     body { padding: 0; }
     .no-print { display: none !important; }
     .running-hdr { display: block !important; }
 
+    /* The report container must never be treated as a single unbreakable block */
+    .report { break-inside: auto !important; page-break-inside: auto !important; }
+
     /* Section headers never stranded at bottom of page */
-    .section-sep { page-break-after: avoid; page-break-before: auto; }
-    .title-border, .title-inner { page-break-inside: avoid; }
-    .cover { page-break-inside: avoid; page-break-after: always; }
+    .section-sep {
+      page-break-after: avoid; break-after: avoid;
+      page-break-before: auto; break-before: auto;
+      page-break-inside: avoid; break-inside: avoid;
+    }
+    .title-border, .title-inner {
+      page-break-inside: avoid; break-inside: avoid;
+    }
+    .cover {
+      page-break-inside: avoid; break-inside: avoid;
+      page-break-after: always; break-after: always;
+    }
 
     /* Keep TX direction + all details + memo together */
-    .tx-in, .tx-out { page-break-inside: avoid; page-break-after: avoid; }
-    .tx-detail { page-break-inside: avoid; page-break-before: avoid; page-break-after: avoid; }
-    .memo-line { page-break-inside: avoid; page-break-before: avoid; }
+    .tx-in, .tx-out {
+      page-break-inside: avoid; break-inside: avoid;
+      page-break-after: avoid; break-after: avoid;
+    }
+    .tx-detail {
+      page-break-inside: avoid; break-inside: avoid;
+      page-break-before: avoid; break-before: avoid;
+      page-break-after: avoid; break-after: avoid;
+    }
+    .memo-line {
+      page-break-inside: avoid; break-inside: avoid;
+      page-break-before: avoid; break-before: avoid;
+    }
 
     /* Keep labeled section openers with first finding */
-    .private-line, .exchange-line, .dag-official-line, .warn-line { page-break-after: avoid; }
+    .private-line, .exchange-line, .dag-official-line, .warn-line {
+      page-break-after: avoid; break-after: avoid;
+    }
     /* Audit log & signature — keep header with first detail line */
-    .audit-header-line, .sig-header-line { page-break-after: avoid; }
-    .sig-hash-line { page-break-before: avoid; page-break-after: avoid; }
+    .audit-header-line, .sig-header-line {
+      page-break-after: avoid; break-after: avoid;
+    }
+    .sig-hash-line {
+      page-break-before: avoid; break-before: avoid;
+      page-break-after: avoid; break-after: avoid;
+    }
     /* Hop trail blocks */
-    .hop-tx-label { page-break-after: avoid; }
-    .hop-endpoint-line, .hop-arrow-line { page-break-inside: avoid; page-break-after: avoid; }
+    .hop-tx-label { page-break-after: avoid; break-after: avoid; }
+    .hop-endpoint-line, .hop-arrow-line {
+      page-break-inside: avoid; break-inside: avoid;
+      page-break-after: avoid; break-after: avoid;
+    }
     /* Finding headers always lead their block */
-    .finding-header { page-break-after: avoid; }
-    .meta-line { page-break-after: avoid; }
-    .end-rule, .thin-rule { page-break-before: avoid; }
+    .finding-header { page-break-after: avoid; break-after: avoid; }
+    .meta-line { page-break-after: avoid; break-after: avoid; }
+    .end-rule, .thin-rule {
+      page-break-before: avoid; break-before: avoid;
+    }
+    /* Tables */
+    table { break-inside: auto; page-break-inside: auto; }
+    tr { break-inside: avoid; page-break-inside: avoid; }
   }
 
   body {
@@ -598,7 +635,7 @@ export function exportAsPdf(title: string, content: string): void {
 <div class="save-bar no-print">
   <div>
     <div style="font-weight:bold;font-size:11pt;">CryptoChainTrace &mdash; ${escHtml(title)}</div>
-    <div class="save-bar-text">Click &ldquo;Save as PDF&rdquo; in the print dialog that opens</div>
+    <div class="save-bar-text">&#x2705; Use the blue &ldquo;Save as PDF&rdquo; button in the print dialog that opens. Full report will now export completely.</div>
   </div>
   <button class="save-btn" onclick="window.print()">&#8964;&nbsp; Save as PDF</button>
 </div>
@@ -624,7 +661,7 @@ export function exportAsPdf(title: string, content: string): void {
 
 <script>
   window.addEventListener('load', function () {
-    setTimeout(function () { window.print(); }, 400);
+    setTimeout(function () { window.print(); }, 800);
   });
 </script>
 </body>

@@ -1,0 +1,64 @@
+We need to fix PDF export truncation so the full Multi-Wallet Exchange Flows report (and ALL future reports) always exports completely as 102+ pages with every section (Bitfinex, Uphold, Bybit, Gate.io, etc.) showing fully.
+
+Add this code exactly where the report is rendered (most likely in the component that generates the Multi-Wallet Exchange Flows or the main report container):
+
+1. Add this global print CSS at the top of the report file or in a <style> tag inside the main report component:
+
+<style jsx global>{`
+  @media print {
+    @page {
+      size: letter portrait;
+      margin: 0.5in;
+    }
+    
+    .report-container,
+    .report-section {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      page-break-after: auto !important;
+    }
+    
+    .report-section + .report-section {
+      page-break-before: always !important;
+    }
+    
+    .exchange-flow-header {
+      page-break-before: always !important;
+    }
+    
+    .no-print { display: none !important; }
+    body * { visibility: visible !important; }
+    
+    table, .tx-list {
+      page-break-inside: auto !important;
+    }
+    tr {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+    }
+  }
+`}</style>
+
+2. Wrap every major exchange flow section (Bitfinex, Uphold, Bybit, Gate.io, etc.) in a div like this:
+
+<div className="report-section mb-8 border border-border/30 p-6 rounded-xl bg-card">
+  {/* existing section content */}
+</div>
+
+3. In the print handler (the button that opens the print dialog), update it to this:
+
+const handlePrint = () => {
+  // Force full render of all sections
+  setForceFullRender?.(true); // if you have any lazy/conditional rendering
+  
+  setTimeout(() => {
+    window.print();
+  }, 800); // small delay to let browser fully render
+};
+
+4. Change the on-screen instruction text from “Click 'Save as PDF' in the print dialog” to:
+“✅ Use the blue 'Save as PDF' button in the print dialog that opens. Full report will now export completely.”
+
+Make this change apply to ALL reports (Commingle Check, Exchange Flows, Trail Trace, etc.) so we never have truncation again.
+
+Do this now, push to GitHub, regenerate the exact same Multi-Wallet Exchange Flows report for the 49 wallets, and confirm that Uphold + all 9 exchanges now appear fully in the saved PDF.

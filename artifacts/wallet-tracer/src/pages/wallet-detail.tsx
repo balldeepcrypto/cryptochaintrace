@@ -7253,7 +7253,7 @@ export default function WalletDetail() {
             {/* Footer */}
             <div className="px-5 py-3 border-t border-border/30 shrink-0 flex items-center justify-between gap-3 flex-wrap bg-muted/5">
               <span className="text-[10px] font-mono text-muted-foreground/50">
-                Click outside to close · PDF opens a print dialog — choose "Save as PDF"
+                Click outside to close · ✅ Use the blue "Save as PDF" button in the print dialog — full report exports completely
               </span>
               <div className="flex items-center gap-2">
                 <button

@@ -57,7 +57,7 @@ export default function ReportView() {
           <p className="font-mono text-xs text-slate-400 mt-0.5">{title}</p>
         </div>
         <button
-          onClick={() => { window.print(); setPrinted(true); }}
+          onClick={() => { setPrinted(true); setTimeout(() => window.print(), 800); }}
           className={`flex items-center gap-2 text-xs font-mono font-bold px-4 py-2 rounded border transition-colors ${
             printed
               ? "border-green-500/50 text-green-400 bg-green-950/20"

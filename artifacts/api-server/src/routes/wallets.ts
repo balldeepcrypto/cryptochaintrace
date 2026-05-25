@@ -452,12 +452,17 @@ async function xdcBlocksScanFetch(params: Record<string, string>): Promise<Recor
   return withRetry("XDC:blocksscan", async () => {
     const resp = await fetchWithTimeout(`${XDC_BLOCKSSCAN}?${qs}`, {
       headers: { "User-Agent": "CryptoChainTrace/1.0", "Accept": "application/json" },
-    }, 12000);
+    }, 15000);
     if (!resp.ok) throw new Error(`BlocksScan HTTP ${resp.status}`);
     const data = await resp.json() as Record<string, unknown>;
+    const status = String(data["status"] ?? "");
     const msg = String(data["message"] ?? "");
-    if (msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("error")) {
-      throw new Error(`BlocksScan error: ${msg}`);
+    // Only throw on access-denied; log everything else so it surfaces in Vercel logs
+    if (msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("rate limit")) {
+      throw new Error(`BlocksScan denied: ${msg}`);
+    }
+    if (status !== "1") {
+      console.warn(`[XDC] BlocksScan non-1 status=${status} msg=${msg} result=${JSON.stringify(data["result"])?.slice(0, 80)}`);
     }
     return data;
   });
@@ -766,11 +771,14 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
 
     if (chain === "xdc") {
       const rpcAddr = normalizeXdcAddress(address);
-      // Fetch balance + recent txs from api.xdcscan.io in parallel
+      console.warn(`[XDC] wallet info fetch rpcAddr=${rpcAddr}`);
+      // Fetch balance + full tx list from api.xdcscan.io in parallel (offset=1000 to get full history)
       const [balData, recentData] = await Promise.allSettled([
         xdcBlocksScanFetch({ module: "account", action: "balance", address: rpcAddr }),
-        xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "100", sort: "desc" }),
+        xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "1000", sort: "desc" }),
       ]);
+      console.warn(`[XDC] balData status=${balData.status}`, balData.status === "rejected" ? balData.reason : "");
+      console.warn(`[XDC] recentData status=${recentData.status}`, recentData.status === "rejected" ? recentData.reason : "");
       // Balance: api.xdcscan.io returns decimal wei string; RPC fallback returns hex (BigInt handles both)
       let rawBal = balData.status === "fulfilled" ? String(balData.value["result"] ?? "") : "";
       if (!rawBal || rawBal === "0") {
@@ -781,23 +789,19 @@ router.get("/wallets/:address", async (req, res): Promise<void> => {
       }
       const balance = weiToEth(rawBal === "" ? "0" : rawBal);
       const balanceUsd = parseFloat((parseFloat(balance) * priceUsd).toFixed(2));
-      // Tx list for first/last seen and count
+      // Tx list for first/last seen and count — full 1000-tx fetch for accuracy
       const recentTxs = recentData.status === "fulfilled" && Array.isArray(recentData.value["result"])
         ? recentData.value["result"] as Record<string, unknown>[]
         : [];
+      console.warn(`[XDC] recentTxs.length=${recentTxs.length}`);
       // api.xdcscan.io may return all results at once; estimate count from result length
       let txCount = recentTxs.length;
-      if (txCount >= 100) txCount = 101; // signal "100+" — frontend shows it as high-volume
+      if (txCount >= 1000) txCount = 1001; // signal "1000+" — high-volume
       const lastSeen = recentTxs.length > 0 ? new Date(Number(recentTxs[0]["timeStamp"]) * 1000).toISOString() : null;
-      // First seen: fetch oldest tx separately
-      let firstSeen: string | null = null;
-      if (recentTxs.length > 0) {
-        try {
-          const firstData = await xdcBlocksScanFetch({ module: "account", action: "txlist", address: rpcAddr, page: "1", offset: "1", sort: "asc" });
-          const firstTxs = Array.isArray(firstData["result"]) ? firstData["result"] as Record<string, unknown>[] : [];
-          if (firstTxs.length > 0) firstSeen = new Date(Number(firstTxs[0]["timeStamp"]) * 1000).toISOString();
-        } catch { firstSeen = recentTxs.length > 0 ? new Date(Number(recentTxs[recentTxs.length - 1]["timeStamp"]) * 1000).toISOString() : null; }
-      }
+      // First seen: oldest tx is last item in desc-sorted list (already have full history)
+      const firstSeen: string | null = recentTxs.length > 0
+        ? new Date(Number(recentTxs[recentTxs.length - 1]["timeStamp"]) * 1000).toISOString()
+        : null;
       const tags = guessTags(false, txCount);
       res.json(GetWalletResponse.parse({
         address, chain, balance, balanceUsd, transactionCount: txCount,
@@ -1217,14 +1221,17 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       let usedBlocksScan = false;
       // cursor = page number as string for server-side pagination
       let xdcPageNum = cursorParam ? Math.max(1, parseInt(cursorParam) || 1) : page;
+      console.warn(`[XDC] txlist fetch rpcAddr=${rpcAddr} xdcPageNum=${xdcPageNum} limit=${limit}`);
       try {
         // xdcscan may return all results at once regardless of page/offset params,
-        // so we always fetch with offset=1000 and apply server-side slicing.
+        // so we always fetch with offset=10000 and apply server-side slicing.
         const bsData = await xdcBlocksScanFetch({
           module: "account", action: "txlist",
-          address: rpcAddr, page: "1", offset: "1000", sort: "desc",
+          address: rpcAddr, page: "1", offset: "10000", sort: "desc",
         });
-        const allTxs = Array.isArray(bsData["result"]) ? bsData["result"] as Record<string, unknown>[] : [];
+        const resultRaw = bsData["result"];
+        console.warn(`[XDC] txlist result type=${Array.isArray(resultRaw) ? "array" : typeof resultRaw} len=${Array.isArray(resultRaw) ? resultRaw.length : String(resultRaw).slice(0, 60)}`);
+        const allTxs = Array.isArray(resultRaw) ? resultRaw as Record<string, unknown>[] : [];
         total = allTxs.length;
         // Apply server-side pagination slice
         const startIdx = (xdcPageNum - 1) * limit;

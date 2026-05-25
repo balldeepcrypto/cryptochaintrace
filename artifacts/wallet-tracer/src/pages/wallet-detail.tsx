@@ -952,6 +952,17 @@ const XRP_BATCH = 500;
 const OTHER_BATCH = 1000;
 const MAX_TOTAL = 25000;
 
+// Helper to resolve KNOWN_LABELS for any chain — handles XDC xdc→0x normalisation
+// and a lowercase fallback so lookups are robust across address formats.
+const getKnownInfo = (addr: string, chain: string): { label: string; type: string } | null => {
+  if (!addr) return null;
+  let lookupAddr = addr.trim();
+  if (chain.toLowerCase() === "xdc" && lookupAddr.toLowerCase().startsWith("xdc")) {
+    lookupAddr = "0x" + lookupAddr.slice(3).toLowerCase();
+  }
+  return KNOWN_LABELS[lookupAddr] ?? KNOWN_LABELS[addr] ?? KNOWN_LABELS[addr.toLowerCase()] ?? null;
+};
+
 export default function WalletDetail() {
   const params = useParams();
   const [, setLocation] = useLocation();
@@ -4458,7 +4469,7 @@ export default function WalletDetail() {
         ? <span className="text-muted-foreground text-xs">CONTRACT CREATION</span>
         : <span className="text-muted-foreground text-xs">—</span>;
     }
-    const known = KNOWN_LABELS[addr];
+    const known = getKnownInfo(addr, chain) ?? undefined;
     const saved = savedWallets.has(addr);
     const explorerAddrUrl = WALLET_EXPLORER_MAP[chain];
     return (
@@ -4588,20 +4599,13 @@ export default function WalletDetail() {
       {/* ── Header ── */}
       <div className="flex flex-col gap-3">
         {/* ── Big wallet label at the very top ── */}
-        {(() => {
-          let lookupAddr = address;
-          if (chain.toLowerCase() === "xdc" && address.toLowerCase().startsWith("xdc")) {
-            lookupAddr = "0x" + address.slice(3).toLowerCase();
-          }
-          const known = KNOWN_LABELS[lookupAddr] || KNOWN_LABELS[address] || KNOWN_LABELS[address.toLowerCase()];
-          return known ? (
-            <div className="flex items-center gap-3 mb-2">
-              {getKnownBadge(known, "lg")}
-            </div>
-          ) : (
-            <h1 className="text-3xl font-bold text-zinc-400 mb-2">Unknown Wallet</h1>
-          );
-        })()}
+        {getKnownInfo(address, chain) ? (
+          <div className="flex items-center gap-3 mb-2">
+            {getKnownBadge(getKnownInfo(address, chain)!, "lg")}
+          </div>
+        ) : (
+          <h1 className="text-3xl font-bold text-zinc-400 mb-2">Unknown Wallet</h1>
+        )}
         {/* ── Badges row ── */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-mono rounded uppercase border border-primary/20">{chain}</span>
@@ -5990,7 +5994,7 @@ export default function WalletDetail() {
                   <div className={`w-2 h-2 rounded-full ${c.dot} shrink-0`} />
                   <span className={`text-xs font-mono ${c.text} flex-1 truncate min-w-0`}>{address}</span>
                   <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0 uppercase">Primary</span>
-                  {KNOWN_LABELS[address] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[address])}</span>}
+                  {getKnownInfo(address, chain) && <span className="shrink-0">{getKnownBadge(getKnownInfo(address, chain)!)}</span>}
                 </div>
               ); })()}
 
@@ -6002,7 +6006,7 @@ export default function WalletDetail() {
                     <div className={`w-2 h-2 rounded-full ${c.dot} shrink-0`} />
                     <span className={`text-xs font-mono ${c.text} flex-1 truncate min-w-0`}>{w}</span>
                     <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">Wallet {i + 2}</span>
-                    {KNOWN_LABELS[w] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[w])}</span>}
+                    {getKnownInfo(w, chain) && <span className="shrink-0">{getKnownBadge(getKnownInfo(w, chain)!)}</span>}
                     <button
                       onClick={() => setMultiWallets((prev) => prev.filter((_, j) => j !== i))}
                       className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"
@@ -6380,7 +6384,7 @@ export default function WalletDetail() {
                 <div className="w-2 h-2 rounded-full bg-amber-400 shrink-0" />
                 <span className="text-xs font-mono text-amber-300 flex-1 truncate min-w-0">{address}</span>
                 <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0 uppercase">Target</span>
-                {KNOWN_LABELS[address] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[address])}</span>}
+                {getKnownInfo(address, chain) && <span className="shrink-0">{getKnownBadge(getKnownInfo(address, chain)!)}</span>}
               </div>
 
               <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider pt-1">Comparison Wallets</div>
@@ -6389,7 +6393,7 @@ export default function WalletDetail() {
                   <div className="w-2 h-2 rounded-full bg-muted-foreground/60 shrink-0" />
                   <span className="text-xs font-mono text-foreground flex-1 truncate min-w-0">{w}</span>
                   <span className="text-[10px] font-mono text-muted-foreground/60 shrink-0">Wallet {i + 1}</span>
-                  {KNOWN_LABELS[w] && <span className="shrink-0">{getKnownBadge(KNOWN_LABELS[w])}</span>}
+                  {getKnownInfo(w, chain) && <span className="shrink-0">{getKnownBadge(getKnownInfo(w, chain)!)}</span>}
                   <button
                     onClick={() => setCommingleWallets((prev) => { const next = prev.filter((_, j) => j !== i); try { localStorage.setItem("chaintrace-commingle-wallets", JSON.stringify(next)); } catch { /* noop */ } return next; })}
                     className="text-muted-foreground/60 hover:text-red-400 transition-colors shrink-0 ml-1"

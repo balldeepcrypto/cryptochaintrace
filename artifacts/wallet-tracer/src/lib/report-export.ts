@@ -7,125 +7,138 @@ function escHtml(s: string): string {
 }
 
 export function renderReportHtml(content: string): string {
-  return content
-    .split("\n")
-    .map((line) => {
-      const esc = escHtml(line);
-      const tr = line.trim();
+  // Inner line-by-line processor (unchanged logic)
+  const processLines = (text: string): string =>
+    text
+      .split("\n")
+      .map((line) => {
+        const esc = escHtml(line);
+        const tr = line.trim();
 
-      if (!tr) return '<div class="blank"></div>';
+        if (!tr) return '<div class="blank"></div>';
 
-      if (line.startsWith("╔") || line.startsWith("╚"))
-        return `<div class="title-border">${esc}</div>`;
-      if (line.startsWith("║"))
-        return `<div class="title-inner">${esc}</div>`;
+        if (line.startsWith("╔") || line.startsWith("╚"))
+          return `<div class="title-border">${esc}</div>`;
+        if (line.startsWith("║"))
+          return `<div class="title-inner">${esc}</div>`;
 
-      if (/^═+$/.test(tr))
-        return '<div class="end-rule"></div>';
+        if (/^═+$/.test(tr))
+          return '<div class="end-rule"></div>';
 
-      // Named section headers (─── TIER 1...) vs plain rule lines
-      if (tr.startsWith("─── "))
-        return `<div class="section-sep">${esc}</div>`;
-      if (/^─+$/.test(tr))
-        return '<div class="thin-rule"></div>';
+        // Named section headers (─── TIER 1...) vs plain rule lines
+        if (tr.startsWith("─── "))
+          return `<div class="section-sep">${esc}</div>`;
+        if (/^─+$/.test(tr))
+          return '<div class="thin-rule"></div>';
 
-      if (line.includes("↳ Memo") || line.includes("↳ Destination Tag") ||
-          line.includes("↳ Memos") || line.includes("↳ Destination Tags"))
-        return `<div class="memo-line">${esc}</div>`;
+        if (line.includes("↳ Memo") || line.includes("↳ Destination Tag") ||
+            line.includes("↳ Memos") || line.includes("↳ Destination Tags"))
+          return `<div class="memo-line">${esc}</div>`;
 
-      if (line.includes("◄ DAG OFFICIAL ENTITY") || line.includes("DAG OFFICIAL ENTITY"))
-        return `<div class="dag-official-line">${esc}</div>`;
+        if (line.includes("◄ DAG OFFICIAL ENTITY") || line.includes("DAG OFFICIAL ENTITY"))
+          return `<div class="dag-official-line">${esc}</div>`;
 
-      if (line.includes("◄ OFFICIAL") || line.includes("COLDWALLET") ||
-          line.includes("◄ EXCHANGE FLOW") || line.includes("◄ BRIDGE FLOW") ||
-          line.includes("EXCHANGE / CUSTODIAL"))
-        return `<div class="exchange-line">${esc}</div>`;
+        if (line.includes("◄ OFFICIAL") || line.includes("COLDWALLET") ||
+            line.includes("◄ EXCHANGE FLOW") || line.includes("◄ BRIDGE FLOW") ||
+            line.includes("EXCHANGE / CUSTODIAL"))
+          return `<div class="exchange-line">${esc}</div>`;
 
-      if (line.includes("★ PRIVATE") || line.includes("PRIVATE WALLET CONNECTIONS"))
-        return `<div class="private-line">${esc}</div>`;
+        if (line.includes("★ PRIVATE") || line.includes("PRIVATE WALLET CONNECTIONS"))
+          return `<div class="private-line">${esc}</div>`;
 
-      if (line.includes("⚠") || line.includes("COMMINGLING"))
-        return `<div class="warn-line">${esc}</div>`;
+        if (line.includes("⚠") || line.includes("COMMINGLING"))
+          return `<div class="warn-line">${esc}</div>`;
 
-      if (line.includes("HIGH RISK"))
-        return `<div class="risk-high">${esc}</div>`;
-      if (line.includes("MEDIUM RISK"))
-        return `<div class="risk-med">${esc}</div>`;
-      if (line.includes("LOW RISK") || line.includes("LOW-MEDIUM RISK"))
-        return `<div class="risk-low">${esc}</div>`;
+        if (line.includes("HIGH RISK"))
+          return `<div class="risk-high">${esc}</div>`;
+        if (line.includes("MEDIUM RISK"))
+          return `<div class="risk-med">${esc}</div>`;
+        if (line.includes("LOW RISK") || line.includes("LOW-MEDIUM RISK"))
+          return `<div class="risk-low">${esc}</div>`;
 
-      // ── Hop-by-hop trail display ───────────────────────────────────────────
-      // Target/shared endpoint addresses: "  addr  ← TARGET WALLET" / "← SHARED NODE"
-      if (line.includes("← TARGET") || line.includes("← SHARED"))
-        return `<div class="hop-endpoint-line">${esc}</div>`;
-      // Hop arrow connector: "  ↓  Hop N"
-      if (tr.startsWith("↓  Hop") || tr.startsWith("↓ Hop"))
-        return `<div class="hop-arrow-line">${esc}</div>`;
-      // "Full Trail" and "Transactions — Hop N" section labels
-      if (line.includes("Full Trail") || line.includes("Transactions — Hop "))
-        return `<div class="hop-tx-label">${esc}</div>`;
-      // "trace X separately" investigation notes
-      if (line.includes(": trace ") && line.includes("separately"))
-        return `<div class="hop-note-line">${esc}</div>`;
+        // ── Hop-by-hop trail display ───────────────────────────────────────────
+        // Target/shared endpoint addresses: "  addr  ← TARGET WALLET" / "← SHARED NODE"
+        if (line.includes("← TARGET") || line.includes("← SHARED"))
+          return `<div class="hop-endpoint-line">${esc}</div>`;
+        // Hop arrow connector: "  ↓  Hop N"
+        if (tr.startsWith("↓  Hop") || tr.startsWith("↓ Hop"))
+          return `<div class="hop-arrow-line">${esc}</div>`;
+        // "Full Trail" and "Transactions — Hop N" section labels
+        if (line.includes("Full Trail") || line.includes("Transactions — Hop "))
+          return `<div class="hop-tx-label">${esc}</div>`;
+        // "trace X separately" investigation notes
+        if (line.includes(": trace ") && line.includes("separately"))
+          return `<div class="hop-note-line">${esc}</div>`;
 
-      // ── TX direction lines — all report formats ────────────────────────────
-      // Connection Finder / Path Trace: "  Direction : [IN ]" or "  Direction : [OUT]"
-      if (tr.startsWith("Direction") && line.includes("[IN ]"))
-        return `<div class="tx-in">${esc}</div>`;
-      if (tr.startsWith("Direction") && line.includes("[OUT]"))
-        return `<div class="tx-out">${esc}</div>`;
-      // Commingle / Trail / Investigative / Exchange Flows: "├─ [IN ]  From: ..."
-      if (line.includes("[IN ]") && line.includes("From:"))
-        return `<div class="tx-in">${esc}</div>`;
-      if (line.includes("[OUT]") && line.includes("From:"))
-        return `<div class="tx-out">${esc}</div>`;
+        // ── TX direction lines — all report formats ────────────────────────────
+        // Connection Finder / Path Trace: "  Direction : [IN ]" or "  Direction : [OUT]"
+        if (tr.startsWith("Direction") && line.includes("[IN ]"))
+          return `<div class="tx-in">${esc}</div>`;
+        if (tr.startsWith("Direction") && line.includes("[OUT]"))
+          return `<div class="tx-out">${esc}</div>`;
+        // Commingle / Trail / Investigative / Exchange Flows: "├─ [IN ]  From: ..."
+        if (line.includes("[IN ]") && line.includes("From:"))
+          return `<div class="tx-in">${esc}</div>`;
+        if (line.includes("[OUT]") && line.includes("From:"))
+          return `<div class="tx-out">${esc}</div>`;
 
-      // ── TX detail lines — all report formats ──────────────────────────────
-      // Covers every spacing variant used across Commingle, Trail, Investigative,
-      // Exchange Flows, Connection Finder, and Path Trace generators.
-      if (!line.includes("TX Count") && !line.includes("Wallet") && (
-          line.includes("  Amount:")     || line.includes("  Amount :") || line.includes("  Amount    :") ||
-          line.includes("  TX    :")     || line.includes("  TX     :") || line.includes("  TX Hash") ||
-          line.includes("  Date  :")     || line.includes("  Date   :") || line.includes("  Date      :") ||
-          line.includes("  From      :") || line.includes("  To        :") || line.includes("  To  :") ||
-          line.includes("  Tag    :")    || line.includes("  Memo   :") ||
-          line.includes("  Taint     :") || line.includes("  Origin Amount")
-        ))
-        return `<div class="tx-detail">${esc}</div>`;
+        // ── TX detail lines — all report formats ──────────────────────────────
+        // Covers every spacing variant used across Commingle, Trail, Investigative,
+        // Exchange Flows, Connection Finder, and Path Trace generators.
+        if (!line.includes("TX Count") && !line.includes("Wallet") && (
+            line.includes("  Amount:")     || line.includes("  Amount :") || line.includes("  Amount    :") ||
+            line.includes("  TX    :")     || line.includes("  TX     :") || line.includes("  TX Hash") ||
+            line.includes("  Date  :")     || line.includes("  Date   :") || line.includes("  Date      :") ||
+            line.includes("  From      :") || line.includes("  To        :") || line.includes("  To  :") ||
+            line.includes("  Tag    :")    || line.includes("  Memo   :") ||
+            line.includes("  Taint     :") || line.includes("  Origin Amount")
+          ))
+          return `<div class="tx-detail">${esc}</div>`;
 
-      // ── Legacy TX lines (trail reports, wallet detail reports) ──
-      const hasTxRef = line.includes("TX:") || line.includes("TA:");
-      if (hasTxRef && (line.includes(" IN ") || (line.includes("+") && line.includes(" IN"))))
-        return `<div class="tx-in">${esc}</div>`;
-      if (hasTxRef && (line.includes("OUT") || line.includes("−")))
-        return `<div class="tx-out">${esc}</div>`;
+        // ── Legacy TX lines (trail reports, wallet detail reports) ──
+        const hasTxRef = line.includes("TX:") || line.includes("TA:");
+        if (hasTxRef && (line.includes(" IN ") || (line.includes("+") && line.includes(" IN"))))
+          return `<div class="tx-in">${esc}</div>`;
+        if (hasTxRef && (line.includes("OUT") || line.includes("−")))
+          return `<div class="tx-out">${esc}</div>`;
 
-      // Numbered finding header lines: "  01. addr  [LABEL]"
-      if (/^\s{2}\d{2}\.\s/.test(line))
-        return `<div class="finding-header">${esc}</div>`;
+        // Numbered finding header lines: "  01. addr  [LABEL]"
+        if (/^\s{2}\d{2}\.\s/.test(line))
+          return `<div class="finding-header">${esc}</div>`;
 
-      // ── Audit log & tamper-evident signature sections ────────────────────────
-      if (tr === "AUDIT LOG \u2014 CHAIN OF CUSTODY")
-        return `<div class="audit-header-line">${esc}</div>`;
-      if (tr.startsWith("DIGITAL SIGNATURE") || tr.includes("TAMPER-EVIDENT SEAL"))
-        return `<div class="sig-header-line">${esc}</div>`;
-      if (tr.startsWith("Report Hash  :"))
-        return `<div class="sig-hash-line">${esc}</div>`;
-      if (line.includes("cryptographically signed") || line.includes("invalidate this hash"))
-        return `<div class="sig-note-line">${esc}</div>`;
+        // ── Audit log & tamper-evident signature sections ────────────────────────
+        if (tr === "AUDIT LOG \u2014 CHAIN OF CUSTODY")
+          return `<div class="audit-header-line">${esc}</div>`;
+        if (tr.startsWith("DIGITAL SIGNATURE") || tr.includes("TAMPER-EVIDENT SEAL"))
+          return `<div class="sig-header-line">${esc}</div>`;
+        if (tr.startsWith("Report Hash  :"))
+          return `<div class="sig-hash-line">${esc}</div>`;
+        if (line.includes("cryptographically signed") || line.includes("invalidate this hash"))
+          return `<div class="sig-note-line">${esc}</div>`;
 
-      if (
-        /^(Generated|Chain|Target|Comparison[\s\d]*|Primary|Total Wallets|Tracked Wallets|Depth|Min Tx|NOTE|Report Type|Generated by|Timestamp|Target Wallet|Nodes Scanned|Report Version|Platform|Min Tx Amount)\s*[:\|]/.test(tr) ||
-        /^Wallet\s+\w/.test(tr)
-      )
-        return `<div class="meta-line">${esc}</div>`;
+        if (
+          /^(Generated|Chain|Target|Comparison[\s\d]*|Primary|Total Wallets|Tracked Wallets|Depth|Min Tx|NOTE|Report Type|Generated by|Timestamp|Target Wallet|Nodes Scanned|Report Version|Platform|Min Tx Amount)\s*[:\|]/.test(tr) ||
+          /^Wallet\s+\w/.test(tr)
+        )
+          return `<div class="meta-line">${esc}</div>`;
 
-      if (tr.startsWith("Generated by CryptoChainTrace"))
-        return `<div class="footer-line">${esc}</div>`;
+        if (tr.startsWith("Generated by CryptoChainTrace"))
+          return `<div class="footer-line">${esc}</div>`;
 
-      return `<div class="line">${esc}</div>`;
-    })
-    .join("");
+        return `<div class="line">${esc}</div>`;
+      })
+      .join("");
+
+  // Full Package joins 4 sub-reports with \n\n════...════\n\n — split and wrap each
+  // section in its own <div class="report-section"> so print CSS can force page breaks
+  // between them while still allowing natural breaks within each long section.
+  const sections = content.split(/\n\n═{20,}\n\n/);
+  if (sections.length > 1) {
+    return sections
+      .map((s) => `<div class="report-section">${processLines(s)}</div>`)
+      .join("");
+  }
+  return processLines(content);
 }
 
 export const PDF_CSS = `
@@ -143,6 +156,19 @@ export const PDF_CSS = `
 
     /* The report container must never be treated as a single unbreakable block */
     .report { break-inside: auto !important; page-break-inside: auto !important; }
+
+    /* ── Report sections: force a new page before each of the 4 sub-reports ── */
+    .report-section {
+      page-break-inside: avoid !important;
+      break-inside: avoid !important;
+      page-break-after: auto !important;
+      margin-bottom: 30px;
+    }
+    .report-section + .report-section {
+      page-break-before: always !important;
+      break-before: always !important;
+    }
+    h1, h2 { page-break-after: avoid !important; break-after: avoid !important; }
 
     /* Section headers never stranded at bottom of page */
     .section-sep {
@@ -318,6 +344,11 @@ export const PDF_CSS = `
     text-transform: uppercase;
     border-top: 0.5pt solid #fca5a5;
     padding-top: 6pt;
+  }
+
+  /* ── Report section wrapper ──────────────────────────────────────────────── */
+  .report-section {
+    margin-bottom: 30pt;
   }
 
   /* ── Base line styles ────────────────────────────────────────────────────── */

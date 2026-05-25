@@ -4587,6 +4587,21 @@ export default function WalletDetail() {
 
       {/* ── Header ── */}
       <div className="flex flex-col gap-3">
+        {/* ── Big wallet label at the very top ── */}
+        {(() => {
+          let lookupAddr = address;
+          if (chain.toLowerCase() === "xdc" && address.toLowerCase().startsWith("xdc")) {
+            lookupAddr = "0x" + address.slice(3).toLowerCase();
+          }
+          const known = KNOWN_LABELS[lookupAddr] || KNOWN_LABELS[address] || KNOWN_LABELS[address.toLowerCase()];
+          return known ? (
+            <div className="flex items-center gap-3 mb-2">
+              {getKnownBadge(known, "lg")}
+            </div>
+          ) : (
+            <h1 className="text-3xl font-bold text-zinc-400 mb-2">Unknown Wallet</h1>
+          );
+        })()}
         {/* ── Badges row ── */}
         <div className="flex items-center gap-2 flex-wrap">
           <span className="px-2 py-0.5 bg-primary/10 text-primary text-xs font-mono rounded uppercase border border-primary/20">{chain}</span>
@@ -4601,7 +4616,6 @@ export default function WalletDetail() {
               <Tag className="w-3 h-3" /> {tag.toUpperCase()}
             </span>
           ))}
-          {KNOWN_LABELS[address] && getKnownBadge(KNOWN_LABELS[address], "lg")}
           {savedWallets.has(address) && (
             <span className="flex items-center gap-1 px-2 py-0.5 bg-yellow-950/50 text-yellow-400 text-xs font-mono rounded border border-yellow-500/20">
               <Bookmark className="w-3 h-3 fill-yellow-400" /> SAVED

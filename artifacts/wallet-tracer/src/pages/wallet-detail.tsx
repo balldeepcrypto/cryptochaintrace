@@ -297,7 +297,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "0x77134cbc06cb00b66f4c7e623d5fdbf6777635ec": { label: "MEXC ETH",       type: "exchange" },
   "0x4fdaf3ef3af2b3c3b4e5f94c0e6d70fed7b3c830": { label: "Bybit ETH",      type: "exchange" },
   "0x1ab4973a48dc892cd9971ece8e01dcc7688f8f23": { label: "Bybit ETH 2",    type: "exchange" },
-  "0x0d0707963952f2fba59dd06f2b425ace40b492fe": { label: "Gate.io ETH",    type: "exchange" },
+  "0x0d0707963952f2fba59dd06f2b425ace40b492fe": { label: "Gate.io",        type: "exchange" },
   "0x7793cd85c11a924478d358d49b05b37b91ab9d79": { label: "Gate.io ETH 2",  type: "exchange" },
   "0x12d66f87a04a9e220743712ce6d9bb1b5616b8fc": { label: "Tornado Cash 0.1 ETH Pool (Mixer)", type: "mixer" },
   "0x47ce0c6ed5b0ce3d3a51fdb1c52dc66a7c3c2936": { label: "Tornado Cash 1 ETH Pool (Mixer)",   type: "mixer" },
@@ -421,7 +421,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   // ── Uphold ETH ─────────────────────────────────────────────────────────────
   "0x1c727a55ea3c11b0ab7d3a361fe0f3c47ce6de5d": { label: "Uphold ETH",            type: "exchange" },
   "0x66ae6b09a65bd0d459c38b5dc443fc2a4cfde886": { label: "Uphold Labs",            type: "exchange" },
-  "0x3d8fc1cffaa110f7a7f9f8bc237b73d54c4abf61": { label: "Uphold ETH 2",          type: "exchange" },
+  "0x3d8fc1cffaa110f7a7f9f8bc237b73d54c4abf61": { label: "Uphold",                type: "exchange" },
   "0x352e50481b9e0b30f9ca70efc27a52d298f6697":  { label: "Uphold ETH 3",          type: "exchange" },
   "0x6e5d4a298332e51a83539a57461e803bcf409050": { label: "Uphold ETH 4",          type: "exchange" },
   "0xa95350d70b18fa29f6b5eb8d627ceeeee499340d": { label: "Uphold ETH 5",          type: "exchange" },

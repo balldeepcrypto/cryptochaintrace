@@ -961,6 +961,14 @@ const normalizeXdcAddress = (addr: string): string => {
   return a;
 };
 
+// Universal address normalizer — applies chain-specific normalization.
+// For XDC: xdc-prefix → 0x-prefix + lowercase. All other chains: unchanged.
+// Use this for EVERY address that appears in a URL, query key, or fetch call.
+const getNormalizedAddress = (addr: string, chain: string): string => {
+  if (chain !== "xdc") return addr;
+  return normalizeXdcAddress(addr);
+};
+
 // Helper to resolve KNOWN_LABELS for any chain — handles XDC xdc→0x normalisation
 // and a lowercase fallback so lookups are robust across address formats.
 const getKnownInfo = (addr: string, chain: string): { label: string; type: string } | null => {
@@ -979,8 +987,11 @@ export default function WalletDetail() {
   type ChainId = "ethereum" | "bitcoin" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
   const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
   // For XDC, normalise xdc-prefix → 0x-prefix so the API always gets a valid address.
-  // All other chains use the address as-is.
-  const txAddress = chain === "xdc" ? normalizeXdcAddress(address) : address;
+  // All other chains use the address as-is. Used for EVERY URL and React Query cache key.
+  const txAddress = getNormalizedAddress(address, chain);
+  if (chain === "xdc") {
+    console.log(`[XDC FETCH] Normalized address for ${address} → ${txAddress}`);
+  }
 
   // ── Ledger view toggles ──
   const [groupByCounterparty, setGroupByCounterparty] = useState(true);
@@ -3268,8 +3279,17 @@ export default function WalletDetail() {
   }, [address, chain, initLimit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { data: wallet, isLoading: walletLoading, error: walletError } = useGetWallet(
-    address, { chain },
-    { query: { enabled: !!address, queryKey: getGetWalletQueryKey(address, { chain }) } }
+    txAddress, { chain },
+    {
+      query: {
+        enabled: !!txAddress,
+        queryKey: getGetWalletQueryKey(txAddress, { chain }),
+        staleTime: chain === "xdc" ? 0 : Infinity,
+        refetchOnWindowFocus: false,
+        refetchOnMount: chain === "xdc" ? true : false,
+        refetchOnReconnect: false,
+      },
+    }
   );
 
   // Initial page — staleTime: Infinity + refetchOnWindowFocus: false prevent background
@@ -3279,15 +3299,19 @@ export default function WalletDetail() {
   // always runs on navigation. The txInitializedRef guard below prevents accumulated
   // Load More pages from being overwritten by a background re-fetch.
   const xlmChain = chain === "xlm";
+  const xdcChain = chain === "xdc";
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
     txAddress, { chain, page: 1, limit: initLimit },
     {
       query: {
         enabled: !!txAddress,
         queryKey: getGetWalletTransactionsQueryKey(txAddress, { chain, page: 1, limit: initLimit }),
-        staleTime: xlmChain ? 0 : Infinity,
+        // XDC: always fetch fresh — xdc-prefix vs 0x-prefix addresses may have
+        // been cached as empty results; force refetch every time to avoid stale empties.
+        // XLM: same reason (merged/closed accounts).  All others: Infinity (stable).
+        staleTime: (xlmChain || xdcChain) ? 0 : Infinity,
         refetchOnWindowFocus: false,
-        refetchOnMount: xlmChain ? true : false,
+        refetchOnMount: (xlmChain || xdcChain) ? true : false,
         refetchOnReconnect: false,
       },
     }

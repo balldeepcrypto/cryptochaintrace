@@ -367,7 +367,27 @@ const XDC_RPC_ENDPOINTS = [
   "https://erpc.xinfin.network",
   "https://rpc.ankr.com/xdc",
 ];
-const XDC_BLOCKSSCAN = "https://api.xdcscan.io/api";
+// XDC transaction APIs — tried in order until one succeeds.
+// Primary: Etherscan V2 with chainId=50 (XDC mainnet) — free API key from etherscan.io works.
+// Fallback 1: xdcscan.com (new official domain, V1 deprecated without key).
+// Fallback 2: xdcscan.io (legacy domain, blocked on some cloud IPs).
+// NOTE: Do NOT set a custom User-Agent — "CryptoChainTrace/1.0" triggers HTTP 502 on xdcscan.io.
+const XDC_ETHERSCAN_KEY = process.env.ETHERSCAN_API_KEY ?? "";
+const XDC_XDCSCAN_KEY = process.env.XDCSCAN_API_KEY ?? "";
+const XDC_API_ENDPOINTS: Array<{ base: string; extra: Record<string, string>; label: string }> = [
+  ...(XDC_ETHERSCAN_KEY ? [{
+    base: "https://api.etherscan.io/v2/api",
+    extra: { chainid: "50", apikey: XDC_ETHERSCAN_KEY },
+    label: "etherscan-v2",
+  }] : []),
+  ...(XDC_XDCSCAN_KEY ? [{
+    base: "https://api.xdcscan.com/api",
+    extra: { apikey: XDC_XDCSCAN_KEY },
+    label: "xdcscan-com-keyed",
+  }] : []),
+  { base: "https://api.xdcscan.com/api", extra: {}, label: "xdcscan-com" },
+  { base: "https://api.xdcscan.io/api",  extra: {}, label: "xdcscan-io"  },
+];
 
 // ── Hedera (HBAR) Mirror Node — primary + fallback ────────────────────────────
 // CRITICAL: order=desc is broken on the public mirror node for ALL accounts.
@@ -448,24 +468,43 @@ async function xdcRpc(method: string, params: unknown[]): Promise<unknown> {
 }
 
 async function xdcBlocksScanFetch(params: Record<string, string>): Promise<Record<string, unknown>> {
-  const qs = new URLSearchParams(params).toString();
-  return withRetry("XDC:blocksscan", async () => {
-    const resp = await fetchWithTimeout(`${XDC_BLOCKSSCAN}?${qs}`, {
-      headers: { "User-Agent": "CryptoChainTrace/1.0", "Accept": "application/json" },
-    }, 15000);
-    if (!resp.ok) throw new Error(`BlocksScan HTTP ${resp.status}`);
-    const data = await resp.json() as Record<string, unknown>;
-    const status = String(data["status"] ?? "");
-    const msg = String(data["message"] ?? "");
-    // Only throw on access-denied; log everything else so it surfaces in Vercel logs
-    if (msg.toLowerCase().includes("denied") || msg.toLowerCase().includes("rate limit")) {
-      throw new Error(`BlocksScan denied: ${msg}`);
+  let lastErr: Error = new Error("XDC API unavailable — no working endpoint found");
+
+  for (const { base, extra, label } of XDC_API_ENDPOINTS) {
+    const qs = new URLSearchParams({ ...params, ...extra }).toString();
+    try {
+      const data = await withRetry(`XDC:${label}`, async () => {
+        // No custom User-Agent — "CryptoChainTrace/1.0" triggers HTTP 502 on xdcscan.io
+        const resp = await fetchWithTimeout(`${base}?${qs}`, {
+          headers: { "Accept": "application/json" },
+        }, 15000);
+        if (!resp.ok) throw new Error(`XDC ${label} HTTP ${resp.status}`);
+        const d = await resp.json() as Record<string, unknown>;
+        const msg = String(d["message"] ?? "");
+        const msgL = msg.toLowerCase();
+        // Reject soft errors — try next endpoint
+        if (
+          msgL.includes("deprecated") || msgL.includes("denied") ||
+          msgL.includes("rate limit") || msgL.includes("invalid api key") ||
+          msgL.includes("missing") || msgL.includes("notok")
+        ) {
+          throw new Error(`XDC ${label} rejected: ${msg}`);
+        }
+        const status = String(d["status"] ?? "");
+        if (status !== "1") {
+          console.warn(`[XDC] ${label} non-1 status=${status} msg=${msg} result=${JSON.stringify(d["result"])?.slice(0, 80)}`);
+        }
+        return d;
+      });
+      console.warn(`[XDC] ${label} succeeded`);
+      return data;
+    } catch (e) {
+      lastErr = e instanceof Error ? e : new Error(String(e));
+      console.warn(`[XDC] ${label} failed: ${lastErr.message}`);
     }
-    if (status !== "1") {
-      console.warn(`[XDC] BlocksScan non-1 status=${status} msg=${msg} result=${JSON.stringify(data["result"])?.slice(0, 80)}`);
-    }
-    return data;
-  });
+  }
+
+  throw lastErr;
 }
 
 // Constellation Network DAG public explorer API — primary + fallback

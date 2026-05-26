@@ -4481,11 +4481,14 @@ export default function WalletDetail() {
       await runMultiAnalysis([address, ...pkgWallets]);
 
       // 3. Fetch TX maps for exchange flows
+      // Union of pkgWallets + multiWallets so exchange flows always mirrors
+      // the standalone Exchange Flows button (which uses multiWallets).
       setFullPkgProgress("Step 3/4: Fetching exchange flow data…");
+      const allFetchWallets = [...new Set([...pkgWallets, ...multiWallets])];
       const walletTxMap = new Map<string, Tx[]>();
       walletTxMap.set(address, allTxs);
       await Promise.all(
-        pkgWallets.map(async (w) => {
+        allFetchWallets.map(async (w) => {
           const wAddr = chain === "xdc" ? normalizeXdcAddress(w) : w;
           try {
             const resp = await fetch(`/api/wallets/${encodeURIComponent(wAddr)}/transactions?chain=${chain}&limit=200`);
@@ -4502,6 +4505,14 @@ export default function WalletDetail() {
         })
       );
 
+      // Build ordered exchWalletTxMap matching standalone Exchange Flows button:
+      // [address, ...multiWallets] — if multiWallets empty, fall back to allFetchWallets
+      const exchOrderedWallets = multiWallets.length > 0
+        ? [address, ...multiWallets]
+        : [address, ...pkgWallets];
+      const exchWalletTxMap = new Map<string, Tx[]>();
+      for (const w of exchOrderedWallets) exchWalletTxMap.set(w, walletTxMap.get(w) ?? []);
+
       // 4. Generate all 3 reports + executive summary
       setFullPkgProgress("Step 4/4: Generating reports…");
       const commingleText = commingleResultRef.current
@@ -4510,7 +4521,7 @@ export default function WalletDetail() {
       const funnelText = multiResultRef.current
         ? generateMultiReport(walletTxMap)
         : "(Funnel analysis did not produce results)";
-      const exchText = generateMultiExchangeFlowsReport(walletTxMap);
+      const exchText = generateMultiExchangeFlowsReport(exchWalletTxMap);
       const summaryText = generateExecutiveSummary(commingleText, funnelText, exchText, victimWallet, victimName);
 
       const divider = `\n\n${"═".repeat(64)}\n\n`;

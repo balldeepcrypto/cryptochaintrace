@@ -12,6 +12,8 @@ import {
 } from "@workspace/api-zod";
 import { walletCache, txCache, connCache, WALLET_TTL, TX_TTL, CONN_TTL } from "../lib/cache";
 
+console.log("🔑 ETHERSCAN_API_KEY loaded:", !!process.env.ETHERSCAN_API_KEY, "| XDC_ETHERSCAN_KEY will be:", !!(process.env.ETHERSCAN_API_KEY ?? ""));
+
 const router: IRouter = Router();
 
 const ETHERSCAN_BASE = "https://api.etherscan.io/api";

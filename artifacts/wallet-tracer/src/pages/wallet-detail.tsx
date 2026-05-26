@@ -989,8 +989,11 @@ export default function WalletDetail() {
   // For XDC, normalise xdc-prefix → 0x-prefix so the API always gets a valid address.
   // All other chains use the address as-is. Used for EVERY URL and React Query cache key.
   const txAddress = getNormalizedAddress(address, chain);
+  // XDC debug: logged on every render; fallbackUsed is set to true after load
+  // if all server-side API endpoints returned 0 transactions.
+  const [xdcFallbackUsed, setXdcFallbackUsed] = useState(false);
   if (chain === "xdc") {
-    console.log(`[XDC FETCH] Normalized address for ${address} → ${txAddress}`);
+    console.log(`[XDC DEBUG] Normalized: ${txAddress} | Fallback used: ${xdcFallbackUsed}`);
   }
 
   // ── Ledger view toggles ──

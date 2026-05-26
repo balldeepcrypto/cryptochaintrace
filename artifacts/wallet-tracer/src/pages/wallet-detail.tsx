@@ -952,6 +952,15 @@ const XRP_BATCH = 500;
 const OTHER_BATCH = 1000;
 const MAX_TOTAL = 25000;
 
+// Normalize XDC addresses: xdc-prefix → 0x-prefix, lowercase.
+// Safe to call on any chain — returns the address unchanged for non-XDC chains.
+const normalizeXdcAddress = (addr: string): string => {
+  if (!addr) return addr;
+  let a = addr.trim().toLowerCase();
+  if (a.startsWith("xdc")) a = "0x" + a.slice(3);
+  return a;
+};
+
 // Helper to resolve KNOWN_LABELS for any chain — handles XDC xdc→0x normalisation
 // and a lowercase fallback so lookups are robust across address formats.
 const getKnownInfo = (addr: string, chain: string): { label: string; type: string } | null => {
@@ -969,6 +978,9 @@ export default function WalletDetail() {
   const address = (params.address || "").trim();
   type ChainId = "ethereum" | "bitcoin" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
   const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
+  // For XDC, normalise xdc-prefix → 0x-prefix so the API always gets a valid address.
+  // All other chains use the address as-is.
+  const txAddress = chain === "xdc" ? normalizeXdcAddress(address) : address;
 
   // ── Ledger view toggles ──
   const [groupByCounterparty, setGroupByCounterparty] = useState(true);
@@ -3268,11 +3280,11 @@ export default function WalletDetail() {
   // Load More pages from being overwritten by a background re-fetch.
   const xlmChain = chain === "xlm";
   const { data: transactionsData, isLoading: txLoading } = useGetWalletTransactions(
-    address, { chain, page: 1, limit: initLimit },
+    txAddress, { chain, page: 1, limit: initLimit },
     {
       query: {
-        enabled: !!address,
-        queryKey: getGetWalletTransactionsQueryKey(address, { chain, page: 1, limit: initLimit }),
+        enabled: !!txAddress,
+        queryKey: getGetWalletTransactionsQueryKey(txAddress, { chain, page: 1, limit: initLimit }),
         staleTime: xlmChain ? 0 : Infinity,
         refetchOnWindowFocus: false,
         refetchOnMount: xlmChain ? true : false,
@@ -3297,15 +3309,27 @@ export default function WalletDetail() {
     );
   }, [transactionsData]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── Fetch one page from the backend ──
+  // ── Fetch one page from the backend (max 2 attempts) ──
   async function fetchPage(cursor: string, limit: number): Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }> {
-    const url = `/api/wallets/${encodeURIComponent(address)}/transactions?chain=${chain}&limit=${limit}&cursor=${encodeURIComponent(cursor)}`;
-    const res = await fetch(url);
-    if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 100)}` : ""}`);
+    const url = `/api/wallets/${encodeURIComponent(txAddress)}/transactions?chain=${chain}&limit=${limit}&cursor=${encodeURIComponent(cursor)}`;
+    let lastErr: Error | null = null;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const res = await fetch(url);
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          lastErr = new Error(`HTTP ${res.status}${body ? `: ${body.slice(0, 100)}` : ""}`);
+          if (attempt < 2) { await new Promise(r => setTimeout(r, 800)); continue; }
+          throw lastErr;
+        }
+        return res.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
+      } catch (err) {
+        lastErr = err instanceof Error ? err : new Error(String(err));
+        if (attempt < 2) { await new Promise(r => setTimeout(r, 800)); }
+      }
     }
-    return res.json() as Promise<{ transactions: Tx[]; nextCursor: string | null; hasMore: boolean }>;
+    console.error(`[fetchPage] Failed after 2 attempts for ${txAddress} (${chain}):`, lastErr?.message);
+    throw lastErr!;
   }
 
   const loadMoreLabel = chain === "dag" ? "LOAD MORE (+250)" : chain === "xrp" ? "LOAD MORE (+500)" : "LOAD MORE (+1000)";
@@ -4355,12 +4379,19 @@ export default function WalletDetail() {
       walletTxMap.set(address, allTxs);
       await Promise.all(
         pkgWallets.map(async (w) => {
+          const wAddr = chain === "xdc" ? normalizeXdcAddress(w) : w;
           try {
-            const resp = await fetch(`/api/wallets/${encodeURIComponent(w)}/transactions?chain=${chain}&limit=200`);
-            if (!resp.ok) { walletTxMap.set(w, []); return; }
+            const resp = await fetch(`/api/wallets/${encodeURIComponent(wAddr)}/transactions?chain=${chain}&limit=200`);
+            if (!resp.ok) {
+              console.error(`[runFullPackage] TX fetch failed for ${wAddr} (${chain}): HTTP ${resp.status}`);
+              walletTxMap.set(w, []); return;
+            }
             const data = await resp.json() as { transactions: Tx[] };
             walletTxMap.set(w, data.transactions ?? []);
-          } catch { walletTxMap.set(w, []); }
+          } catch (err) {
+            console.error(`[runFullPackage] TX fetch error for ${wAddr} (${chain}):`, err instanceof Error ? err.message : String(err));
+            walletTxMap.set(w, []);
+          }
         })
       );
 

@@ -1,0 +1,26 @@
+Add three new capabilities to the CryptoChainTrace app in wallet-detail.tsx. Make all changes surgical and consistent with existing code style (getKnownInfo, runFullPackage, generateExecutiveSummary, generateMultiExchangeFlowsReport, etc.). Do not break existing functionality.
+
+1. NEW HELPER: Add a module-level function `detectPeelChainPatterns(txs: Tx[], chain: string)` right before the component. 
+   It should scan a wallet's transaction history and return an object with:
+   - peelChainScore: number (0-100, higher = stronger peel/layering signals)
+   - patternsDetected: string[] (e.g. "Multiple small outflows after large inflow", "High unique counterparty count with small amounts", "Repeated outflows to new addresses then to known exchanges", "Timing clustering of outflows")
+   - suspiciousOutflowCount: number
+   - recommendedAction: string (short plain-English note)
+   Use simple but effective XRPL-aware heuristics (destination tags, timing, amount patterns, repeated small outflows to fresh addresses, flows toward known exchange labels via getKnownInfo). Call it on relevant wallets in commingle and exchange flows analysis.
+
+2. BETTER VISUALIZATION / GRAPH EXPORT:
+   - In generateExecutiveSummary (and the full report assembly), add a new section titled "KEY FLOW VISUALIZATION" that includes:
+     a) A Mermaid.js flowchart summary of the top 5-8 most important flows (victim → shared nodes → exchanges). Format it so the user can copy-paste directly into https://mermaid.live
+     b) A compact ASCII/text-based flow summary for quick reading in the PDF.
+   - Also add a small "Export for Graph Tools" note with a JSON snippet of the main nodes/edges that can be copied into Gephi / Cytoscape / yEd.
+
+3. NEW "RECOMMENDED SUBPOENA TARGETS" SECTION:
+   - Create a new helper `generateSubpoenaTargets(commingleResult, multiResult, exchFlows)` that returns clean formatted text.
+   - It must aggregate all exchange hits from commingleResult.exchFlows + multi-wallet exchange flows.
+   - Prioritize US-regulated exchanges first (Uphold, Robinhood, Coinbase, Kraken, Gemini, Bitstamp, etc.).
+   - For each target include: Exchange name + label, deposit address(es), total volume (XRP + USD est.), TX count, why it's high-value (KYC potential, direct commingling, peel-chain endpoint, etc.), and a short suggested subpoena scope sentence.
+   - Insert this as a prominent new subsection in generateExecutiveSummary (right after the risk assessment / priorities, before the full reports divider). Also reference it clearly in the Full Package output.
+
+After adding, update runFullPackage so the new subpoena targets and visualization sections are automatically included in the generated fullReport string and reportJsonData.
+
+Run typecheck, push to GitHub, and confirm the new sections appear cleanly in the Full Package report and Executive Summary. Keep all existing report structure, dividers, hashes, and PDF export behavior intact.

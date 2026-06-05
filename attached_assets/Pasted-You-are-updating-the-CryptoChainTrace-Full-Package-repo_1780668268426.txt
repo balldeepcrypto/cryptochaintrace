@@ -1,0 +1,53 @@
+You are updating the CryptoChainTrace Full Package report generation logic in wallet-detail.tsx. Make the following surgical, high-quality improvements. Do not rewrite large sections of code unnecessarily. Keep all existing functionality intact.
+
+1. Add “Key Findings + Top Priority Actions” Box
+Right after the OVERALL RISK ASSESSMENT line in generateExecutiveSummary(), insert a new prominent boxed section called:
+
+KEY FINDINGS & TOP PRIORITY ACTIONS
+
+This box should contain 4–5 clear, numbered, high-impact action items based on the current analysis results (commingle findings, peel-chain risk, top exchange flows, and highest-risk wallets). Make it concise and actionable for law enforcement. Use a clean bordered style.
+
+2. Refine §7 – Subpoena / KYC Templates (Option A)
+- Continue generating the Top 5 highest-priority dynamic subpoena templates.
+- Make these Top 5 templates shorter and cleaner while keeping all critical information.
+- Keep strong US-regulated exchange prioritization (★).
+- After the Top 5 dynamic templates, add a new comprehensive section titled:
+
+MASTER SUBPOENA / KYC DATA REQUEST LANGUAGE
+
+This Master section should be a detailed, ready-to-reference block containing strong legal language and a comprehensive list of all major categories of digital information that exchanges can typically provide (account holder details, KYC/AML documents, IP logs, full transaction history, linked payment methods, device fingerprinting, SARs, internal notes, etc.). Make it copy-paste friendly and positioned as a thorough reference template.
+
+3. Simplify Mermaid Chart in §6 (Key Flow Visualization)
+Significantly reduce clutter in the Mermaid chart:
+- Only include the top 6–8 highest-volume flows.
+- Only show wallets and exchanges that actually have edges in those flows.
+- Keep the shared convergence nodes (dashed edges) but limit them to the most relevant ones.
+- The goal is a clean, readable hub-and-spoke style chart.
+
+4. Improve Section Separation in Full Package Reports
+In the Full Package report assembly (runFullPackage), improve visual and page-break separation between the major sections:
+- Executive Summary
+- Commingle Check
+- Intersection / Funnel Analysis
+- Exchange Flows
+- Recommended Subpoena Targets + Templates
+- How to Use This Report
+
+Add clearer visual dividers and ensure proper page-break behavior when exporting to PDF.
+
+5. Add “How to Use This Report” Guidance Section
+At the very end of the Full Package report, add a new practical section titled:
+
+HOW TO USE THIS REPORT
+
+Include concise guidance on:
+- Which sections matter most for law enforcement
+- How to use the Top 5 templates vs the Master Data Request section
+- How to use the Graph Export JSON
+- Recommendations on prioritization when submitting reports
+
+After making the changes:
+- Run typecheck and confirm it passes cleanly.
+- Push to GitHub with a clear commit message.
+
+Make all changes surgical and high-quality. Prioritize readability and law-enforcement usability.

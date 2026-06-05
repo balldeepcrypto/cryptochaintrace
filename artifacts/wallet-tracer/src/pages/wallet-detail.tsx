@@ -1120,6 +1120,81 @@ const getKnownInfo = (addr: string, chain: string): { label: string; type: strin
   return KNOWN_LABELS[lookupAddr] ?? KNOWN_LABELS[addr] ?? KNOWN_LABELS[addr.toLowerCase()] ?? null;
 };
 
+// ─── Peel-chain / layering pattern detector ───────────────────────────────────
+// Module-level so it can be called from any report generator without closure.
+function detectPeelChainPatterns(txs: Tx[], chain: string): {
+  peelChainScore: number;
+  patternsDetected: string[];
+  suspiciousOutflowCount: number;
+  recommendedAction: string;
+} {
+  if (txs.length === 0) {
+    return { peelChainScore: 0, patternsDetected: [], suspiciousOutflowCount: 0, recommendedAction: "Insufficient data." };
+  }
+  const patterns: string[] = [];
+  let score = 0;
+
+  const inTxs  = txs.filter(t => t.direction === "in");
+  const outTxs = txs.filter(t => t.direction === "out");
+  const outVals = outTxs.map(t => parseFloat(t.value) || 0).filter(v => v > 0);
+  const medianOutVal = outVals.length > 0
+    ? [...outVals].sort((a, b) => a - b)[Math.floor(outVals.length / 2)]
+    : 0;
+
+  // H1: Multiple small outflows shortly after a large inflow
+  const largeInflows = inTxs.filter(t => medianOutVal > 0 && (parseFloat(t.value) || 0) > medianOutVal * 5);
+  let smallOutAfterLargeIn = 0;
+  for (const bigIn of largeInflows) {
+    const inTime = new Date(bigIn.timestamp).getTime();
+    const followOuts = outTxs.filter(t => {
+      const ot = new Date(t.timestamp).getTime();
+      return ot > inTime && ot < inTime + 86_400_000 &&
+             (parseFloat(t.value) || 0) < (parseFloat(bigIn.value) || 0) * 0.5;
+    });
+    smallOutAfterLargeIn += followOuts.length;
+  }
+  if (smallOutAfterLargeIn >= 3) { patterns.push("Multiple small outflows after large inflow"); score += 25; }
+
+  // H2: Many unique counterparties with below-average amounts
+  const outCPs    = new Set(outTxs.map(t => t.to).filter(Boolean));
+  const avgOutVal = outVals.length > 0 ? outVals.reduce((s, v) => s + v, 0) / outVals.length : 0;
+  const smallOuts = outTxs.filter(t => (parseFloat(t.value) || 0) < avgOutVal * 0.3);
+  if (outCPs.size >= 5 && outTxs.length > 0 && smallOuts.length / outTxs.length > 0.5) {
+    patterns.push("High unique counterparty count with small amounts"); score += 20;
+  }
+
+  // H3: Outflows to known exchange addresses (layering endpoint)
+  const exchOutCount = outTxs.filter(t => t.to && getKnownInfo(t.to, chain)?.type === "exchange").length;
+  if (exchOutCount >= 2) { patterns.push("Repeated outflows to known exchange addresses"); score += 30; }
+
+  // H4: Timing clustering — burst of outflows within 1 hour
+  if (outTxs.length >= 3) {
+    const sorted = outTxs.map(t => new Date(t.timestamp).getTime()).filter(isFinite).sort((a, b) => a - b);
+    let maxCluster = 0;
+    for (let i = 0; i < sorted.length; i++) {
+      const c = sorted.filter(t => t - sorted[i] >= 0 && t - sorted[i] <= 3_600_000).length;
+      if (c > maxCluster) maxCluster = c;
+    }
+    if (maxCluster >= 4) { patterns.push("Timing clustering of outflows"); score += 15; }
+  }
+
+  // H5: XRP destination tags on outflows — exchange deposit layering signal
+  if (chain === "xrp") {
+    type TxT = Tx & { destinationTag?: number | null };
+    const tagOuts = (outTxs as TxT[]).filter(t => t.destinationTag != null);
+    if (tagOuts.length >= 2) { patterns.push("XRP destination tags on outflows — exchange deposit layering"); score += 10; }
+  }
+
+  score = Math.min(100, score);
+  const suspiciousOutflowCount = smallOuts.length + exchOutCount;
+  let recommendedAction = "No significant layering signals detected.";
+  if      (score >= 60) recommendedAction = "HIGH peel-chain likelihood — trace each outflow hop; subpoena identified exchange endpoints immediately.";
+  else if (score >= 30) recommendedAction = "MEDIUM peel-chain signals — expand TX history and investigate exchange deposit addresses.";
+  else if (score  >  0) recommendedAction = "LOW signals — monitor for additional layering activity and re-run with full history.";
+
+  return { peelChainScore: score, patternsDetected: patterns, suspiciousOutflowCount, recommendedAction };
+}
+
 export default function WalletDetail() {
   const params = useParams();
   const [, setLocation] = useLocation();
@@ -2679,6 +2754,97 @@ export default function WalletDetail() {
     });
   }
 
+  // ── SUBPOENA TARGETS — aggregates exchange hits for law enforcement use ──────
+  function generateSubpoenaTargets(
+    commingleResult: CommingleCheckResult | null,
+    _multiResult: MultiAnalysisResult | null,
+    exchWalletTxMap: Map<string, Tx[]>,
+  ): string {
+    const chainUp = chain.toUpperCase();
+    const rule    = "─".repeat(64);
+    const US_REGULATED = new Set([
+      "Coinbase", "COINBASE", "Kraken", "KRAKEN", "Gemini", "GEMINI",
+      "Bitstamp", "BITSTAMP", "Uphold", "UPHOLD", "Robinhood", "ROBINHOOD",
+      "Binance.US", "BINANCE.US", "Bittrex", "BITTREX", "eToro", "ETORO",
+      "ETORO", "eETORO",
+    ]);
+
+    type ExchEntry = { exchAddr: string; exchLabel: string; exchType: string; txs: Tx[]; sourceWallets: Set<string> };
+    const exchMap = new Map<string, ExchEntry>();
+
+    const addTx = (exchAddr: string, exchLabel: string, exchType: string, tx: Tx, wallet: string) => {
+      if (!exchMap.has(exchAddr)) exchMap.set(exchAddr, { exchAddr, exchLabel, exchType, txs: [], sourceWallets: new Set() });
+      const e = exchMap.get(exchAddr)!;
+      if (!e.txs.find(t => t.hash === tx.hash)) e.txs.push(tx);
+      e.sourceWallets.add(wallet);
+    };
+
+    for (const flow of (commingleResult?.exchFlows ?? [])) {
+      for (const tx of flow.txs) addTx(flow.exchAddr, flow.exchLabel, flow.exchType, tx, flow.sourceWallet);
+    }
+    for (const [wallet, txs] of exchWalletTxMap) {
+      for (const tx of txs) {
+        const cp = tx.direction === "in" ? tx.from : tx.to;
+        if (!cp) continue;
+        const kn = getKnownInfo(cp, chain);
+        if (!kn || !["exchange", "bridge", "genesis"].includes(kn.type)) continue;
+        addTx(cp, kn.label, kn.type, tx, wallet);
+      }
+    }
+
+    if (exchMap.size === 0) return "  No exchange targets identified. Load full TX history and re-run.";
+
+    const sorted = Array.from(exchMap.values()).sort((a, b) => {
+      const aUS = US_REGULATED.has(a.exchLabel.split(/\s+/)[0]) ? 0 : 1;
+      const bUS = US_REGULATED.has(b.exchLabel.split(/\s+/)[0]) ? 0 : 1;
+      if (aUS !== bUS) return aUS - bUS;
+      return b.txs.length - a.txs.length;
+    });
+
+    const out: string[] = [];
+    out.push(`  ${sorted.length} subpoena target${sorted.length !== 1 ? "s" : ""} across ${exchMap.size} exchange address${exchMap.size !== 1 ? "es" : ""}.`);
+    out.push(``);
+
+    sorted.forEach((entry, idx) => {
+      const isUS    = US_REGULATED.has(entry.exchLabel.split(/\s+/)[0]);
+      const flagUS  = isUS ? "  ★ US-REGULATED — HIGH PRIORITY" : "";
+      const inTxs   = entry.txs.filter(t => t.direction === "in");
+      const outTxs  = entry.txs.filter(t => t.direction === "out");
+      const vol     = entry.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+      const usd     = entry.txs.reduce((s, t) => s + (t.valueUsd > 0 ? t.valueUsd : 0), 0);
+      const usdStr  = usd > 0
+        ? `  [$${usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
+        : "";
+      const walletList = Array.from(entry.sourceWallets)
+        .map((w, i) => `W${i + 1}:${w.length > 14 ? w.slice(0, 6) + "…" + w.slice(-4) : w}`)
+        .join("  ");
+      const peel    = detectPeelChainPatterns(entry.txs, chain);
+
+      const reasons: string[] = [];
+      if (isUS)                          reasons.push("US-regulated — KYC/AML records legally accessible via subpoena");
+      if (entry.sourceWallets.size > 1)  reasons.push(`Shared by ${entry.sourceWallets.size} tracked wallets — direct commingling evidence`);
+      if (peel.peelChainScore >= 30)     reasons.push(`Peel-chain score ${peel.peelChainScore}/100 — layering likely`);
+      if (inTxs.length > 0 && outTxs.length > 0) reasons.push("Bidirectional flows — possible custodial account with balance");
+      if (reasons.length === 0)          reasons.push("Exchange deposit address — account holder identity obtainable via KYC request");
+
+      out.push(`  TARGET ${idx + 1}/${sorted.length}${flagUS}`);
+      out.push(`  Exchange  : ${entry.exchLabel}  [${entry.exchType.toUpperCase()}]`);
+      out.push(`  Address   : ${entry.exchAddr}`);
+      out.push(`  Txs       : ${entry.txs.length}  (IN: ${inTxs.length}  OUT: ${outTxs.length})`);
+      out.push(`  Volume    : ${vol.toFixed(4)} ${chainUp}${usdStr}`);
+      out.push(`  Wallets   : ${entry.sourceWallets.size}  [${walletList}]`);
+      reasons.forEach(r => out.push(`  ✓ ${r}`));
+      out.push(`  SCOPE: Account records for ${entry.exchAddr.slice(0, 16)}… — holder name/ID, registration`);
+      out.push(`         IP, linked payment methods, full TX history, withdrawals, KYC documents.`);
+      if (peel.patternsDetected.length > 0) {
+        out.push(`  PEEL SIGNALS: ${peel.patternsDetected.join(" · ")}`);
+      }
+      out.push(`  ${rule}`);
+    });
+
+    return out.join("\n");
+  }
+
   // ── EXECUTIVE SUMMARY — combines Commingle + Funnel + Exchange reports ───────
   function generateExecutiveSummary(
     _commingleText: string,
@@ -2686,6 +2852,7 @@ export default function WalletDetail() {
     _exchangeText: string,
     victimWalletAddr: string,
     victimPersonName: string,
+    exchWalletTxMap?: Map<string, Tx[]>,
   ): string {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
@@ -2819,6 +2986,101 @@ export default function WalletDetail() {
       lines.push(`   · No high-priority findings. Load full TX history and re-run for broader coverage.`);
       lines.push(`   · Consider expanding the wallet list to include additional suspect addresses.`);
     }
+
+    // ─── SECTION 5: RECOMMENDED SUBPOENA TARGETS ─────────────────────────────
+    lines.push(``);
+    lines.push(`5. RECOMMENDED SUBPOENA TARGETS`);
+    lines.push(`   ${"─".repeat(60)}`);
+    lines.push(generateSubpoenaTargets(cr, mr, exchWalletTxMap ?? new Map()));
+
+    // ─── SECTION 6: KEY FLOW VISUALIZATION ───────────────────────────────────
+    lines.push(``);
+    lines.push(`6. KEY FLOW VISUALIZATION`);
+    lines.push(`   ${"─".repeat(60)}`);
+    {
+      const shortA  = (a: string) => a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
+      const mkLbl   = (a: string) => { const kn = getKnownInfo(a, chain); return kn ? `${kn.label} (${shortA(a)})` : shortA(a); };
+      const allWallets = cr ? [address, ...cr.comparisonWallets] : [address];
+
+      // ASCII flow summary
+      lines.push(`   ASCII Flow Summary:`);
+      const topFlows = exchFlows.slice(0, 8);
+      if (topFlows.length > 0) {
+        for (const f of topFlows) {
+          const vol = f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const wi  = allWallets.indexOf(f.sourceWallet);
+          const src = wi >= 0 ? `W${wi + 1}` : shortA(f.sourceWallet);
+          lines.push(`   ${src} ──[${vol.toFixed(2)} ${chainUp}]──► ${f.exchLabel} (${shortA(f.exchAddr)})`);
+        }
+      } else {
+        lines.push(`   (No exchange flows detected in loaded history)`);
+      }
+      if (mr) {
+        const privNodes = [...mr.sharedCounterparties, ...mr.commonEndpoints]
+          .filter(s => !["exchange", "bridge"].includes(s.knownInfo?.type ?? ""))
+          .slice(0, 3);
+        if (privNodes.length > 0) {
+          lines.push(``);
+          lines.push(`   Shared Private Nodes:`);
+          for (const n of privNodes) {
+            const wLabels = allWallets.map((_, i) => `W${i + 1}`).join(" + ");
+            lines.push(`   ${wLabels} ──[shared]──► ${mkLbl(n.address)}`);
+          }
+        }
+      }
+
+      // Mermaid.js flowchart
+      lines.push(``);
+      lines.push(`   Mermaid.js Flowchart — paste into https://mermaid.live :`);
+      lines.push(`   ${"─".repeat(60)}`);
+      const mermaid: string[] = ["graph LR"];
+      const mNodeMap = new Map<string, string>();
+      let mIdx = 0;
+      const mId = (a: string) => { if (!mNodeMap.has(a)) mNodeMap.set(a, `N${mIdx++}`); return mNodeMap.get(a)!; };
+      allWallets.forEach((w, i) => {
+        mermaid.push(`  ${mId(w)}["W${i + 1}\\n${shortA(w)}"]`);
+      });
+      for (const f of topFlows) {
+        const vol = f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const kn  = getKnownInfo(f.exchAddr, chain);
+        mermaid.push(`  ${mId(f.exchAddr)}["${kn?.label ?? shortA(f.exchAddr)}\\nEXCHANGE"]`);
+        mermaid.push(`  ${mId(f.sourceWallet)} -->|"${vol.toFixed(0)} ${chainUp}"| ${mId(f.exchAddr)}`);
+      }
+      if (mr) {
+        const privSh = [...mr.sharedCounterparties, ...mr.commonEndpoints]
+          .filter(s => !["exchange", "bridge"].includes(s.knownInfo?.type ?? ""))
+          .slice(0, 3);
+        for (const n of privSh) {
+          mermaid.push(`  ${mId(n.address)}["SHARED\\n${shortA(n.address)}"]`);
+          allWallets.forEach(w => mermaid.push(`  ${mId(w)} -.->|"shared"| ${mId(n.address)}`));
+        }
+      }
+      mermaid.forEach(l => lines.push(`   ${l}`));
+      lines.push(`   ${"─".repeat(60)}`);
+
+      // Graph export JSON for Gephi / Cytoscape / yEd
+      lines.push(``);
+      lines.push(`   Graph Export JSON (Gephi / Cytoscape / yEd):`);
+      lines.push(`   ${"─".repeat(60)}`);
+      const gNodes = allWallets.map((w, i) => ({ id: w, label: `W${i + 1}`, type: "wallet" }));
+      for (const f of topFlows) {
+        if (!gNodes.find(n => n.id === f.exchAddr)) {
+          gNodes.push({ id: f.exchAddr, label: f.exchLabel, type: "exchange" });
+        }
+      }
+      const gEdges = topFlows.map(f => ({
+        source: f.sourceWallet,
+        target: f.exchAddr,
+        txCount: f.txs.length,
+        volume: parseFloat(f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0).toFixed(4)),
+        chain: chainUp,
+      }));
+      JSON.stringify({ nodes: gNodes, edges: gEdges }, null, 2)
+        .split("\n")
+        .forEach(l => lines.push(`   ${l}`));
+      lines.push(`   ${"─".repeat(60)}`);
+    }
+
     lines.push(``);
     lines.push(`${"═".repeat(64)}`);
     lines.push(`FULL REPORTS FOLLOW IN THREE SECTIONS BELOW.`);
@@ -4582,7 +4844,7 @@ export default function WalletDetail() {
         ? generateMultiReport(walletTxMap)
         : "(Funnel analysis did not produce results)";
       const exchText = generateMultiExchangeFlowsReport(exchWalletTxMap);
-      const summaryText = generateExecutiveSummary(commingleText, funnelText, exchText, victimWallet, victimName);
+      const summaryText = generateExecutiveSummary(commingleText, funnelText, exchText, victimWallet, victimName, exchWalletTxMap);
 
       const divider = `\n\n${"═".repeat(64)}\n\n`;
       const fullReport = [summaryText, commingleText, funnelText, exchText].join(divider);

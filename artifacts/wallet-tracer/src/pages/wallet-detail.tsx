@@ -2907,6 +2907,25 @@ export default function WalletDetail() {
       lines.push(`   Tiers 3–6          : ${cr.tieredCounts[2] + cr.tieredCounts[3] + cr.tieredCounts[4] + cr.tieredCounts[5]} shared node${(cr.tieredCounts[2] + cr.tieredCounts[3] + cr.tieredCounts[4] + cr.tieredCounts[5]) !== 1 ? "s" : ""}`);
       lines.push(`   Private Convergence: ${privFindings} address${privFindings !== 1 ? "es" : ""}`);
       lines.push(`   Exchange Shared    : ${exchFindings} address${exchFindings !== 1 ? "es" : ""}`);
+      // Peel-chain risk summary
+      {
+        const pcWalletMap = new Map<string, Tx[]>();
+        for (const [w, txs] of Object.entries(cr.walletTxs)) pcWalletMap.set(w, txs);
+        if (exchWalletTxMap) for (const [w, txs] of exchWalletTxMap) if (!pcWalletMap.has(w)) pcWalletMap.set(w, txs);
+        if (pcWalletMap.size > 0) {
+          const pcScores = Array.from(pcWalletMap.values()).map(txs => detectPeelChainPatterns(txs, chain).peelChainScore);
+          const pcHigh   = pcScores.filter(s => s >= 55).length;
+          const pcMed    = pcScores.filter(s => s >= 40 && s < 55).length;
+          const pcTotal  = pcHigh + pcMed;
+          if (pcTotal > 0) {
+            lines.push(`   Peel-Chain Risk    : ${pcTotal} wallet${pcTotal !== 1 ? "s" : ""} show moderate-to-high layering signals (40–100/100)`);
+            lines.push(`     · High risk (≥55): ${pcHigh} wallet${pcHigh !== 1 ? "s" : ""}   · Moderate (40–54): ${pcMed} wallet${pcMed !== 1 ? "s" : ""}`);
+            lines.push(`     See §5 Subpoena Targets for full peel-chain signal details.`);
+          } else {
+            lines.push(`   Peel-Chain Risk    : No moderate-to-high layering signals in loaded TX history`);
+          }
+        }
+      }
       if (tier1Count > 0) {
         lines.push(``);
         lines.push(`   ⚠ CRITICAL: ${tier1Count} DIRECT shared address${tier1Count !== 1 ? "es" : ""} detected.`);
@@ -2991,6 +3010,77 @@ export default function WalletDetail() {
     lines.push(``);
     lines.push(`5. RECOMMENDED SUBPOENA TARGETS`);
     lines.push(`   ${"─".repeat(60)}`);
+    {
+      // Build sorted exchange target list for the top-10 summary box
+      const US_REG_S5 = new Set([
+        "Coinbase","COINBASE","Kraken","KRAKEN","Gemini","GEMINI",
+        "Bitstamp","BITSTAMP","Uphold","UPHOLD","Robinhood","ROBINHOOD",
+        "Binance.US","BINANCE.US","Bittrex","BITTREX","eToro","ETORO",
+      ]);
+      type T10E = { addr: string; label: string; vol: number; usd: number; wallets: Set<string>; txCount: number; peelScore: number };
+      const t10Map = new Map<string, T10E>();
+      const addT10 = (addr: string, label: string, tx: Tx, wallet: string) => {
+        if (!t10Map.has(addr)) t10Map.set(addr, { addr, label, vol: 0, usd: 0, wallets: new Set(), txCount: 0, peelScore: 0 });
+        const e = t10Map.get(addr)!;
+        e.txCount++;
+        e.vol += parseFloat(tx.value) || 0;
+        if (tx.valueUsd > 0) e.usd += tx.valueUsd;
+        e.wallets.add(wallet);
+      };
+      for (const flow of (cr?.exchFlows ?? [])) {
+        for (const tx of flow.txs) addT10(flow.exchAddr, flow.exchLabel, tx, flow.sourceWallet);
+      }
+      for (const [wallet, txs] of (exchWalletTxMap ?? new Map())) {
+        for (const tx of txs) {
+          const cp = tx.direction === "in" ? tx.from : tx.to;
+          if (!cp) continue;
+          const kn5 = getKnownInfo(cp, chain);
+          if (!kn5 || !["exchange","bridge","genesis"].includes(kn5.type)) continue;
+          addT10(cp, kn5.label, tx, wallet);
+        }
+      }
+      // Compute peel scores per exchange (from flows into that exchange)
+      for (const [addr, e] of t10Map) {
+        const flowTxs = (cr?.exchFlows ?? []).filter(f => f.exchAddr === addr).flatMap(f => f.txs);
+        if (flowTxs.length > 0) e.peelScore = detectPeelChainPatterns(flowTxs, chain).peelChainScore;
+      }
+      const sorted5 = Array.from(t10Map.values()).sort((a, b) => {
+        const aUS = US_REG_S5.has(a.label.split(/\s+/)[0]) ? 0 : 1;
+        const bUS = US_REG_S5.has(b.label.split(/\s+/)[0]) ? 0 : 1;
+        if (aUS !== bUS) return aUS - bUS;
+        if (a.wallets.size !== b.wallets.size) return b.wallets.size - a.wallets.size;
+        return b.vol - a.vol;
+      });
+      const top10 = sorted5.slice(0, 10);
+
+      if (top10.length > 0) {
+        lines.push(`   Below are the ${top10.length} highest-priority exchange addresses for immediate subpoena /`);
+        lines.push(`   KYC requests, ranked by US regulatory reach, commingling strength, and volume.`);
+        lines.push(``);
+        const col90 = "─".repeat(92);
+        lines.push(`   ${col90}`);
+        lines.push(`   #   Exchange               Address                   Volume              Wlts  Peel    Reason`);
+        lines.push(`   ${col90}`);
+        top10.forEach((e, i) => {
+          const isUS  = US_REG_S5.has(e.label.split(/\s+/)[0]);
+          const rank  = `#${i + 1}`.padEnd(3);
+          const name  = (e.label + (isUS ? " ★" : "")).slice(0, 23).padEnd(23);
+          const addr  = `${e.addr.slice(0, 10)}…${e.addr.slice(-5)}`.padEnd(17);
+          const vol   = `${e.vol.toLocaleString("en-US", { maximumFractionDigits: 0 })} ${chainUp}`.padEnd(19);
+          const wlts  = String(e.wallets.size).padStart(4);
+          const peel  = (e.peelScore > 0 ? `${e.peelScore}/100` : "N/A").padEnd(7);
+          const why   = isUS               ? "US-regulated ★"
+                      : e.wallets.size > 1 ? `${e.wallets.size} wallets commingled`
+                      : e.peelScore >= 30  ? "Peel-chain signals"
+                      :                     "Exchange deposit";
+          lines.push(`   ${rank} ${name} ${addr} ${vol} ${wlts}  ${peel} ${why}`);
+        });
+        lines.push(`   ${col90}`);
+        lines.push(``);
+        lines.push(`   Full target details (all identified exchange addresses):`);
+        lines.push(`   ${"─".repeat(60)}`);
+      }
+    }
     lines.push(generateSubpoenaTargets(cr, mr, exchWalletTxMap ?? new Map()));
 
     // ─── SECTION 6: KEY FLOW VISUALIZATION ───────────────────────────────────
@@ -2998,86 +3088,163 @@ export default function WalletDetail() {
     lines.push(`6. KEY FLOW VISUALIZATION`);
     lines.push(`   ${"─".repeat(60)}`);
     {
-      const shortA  = (a: string) => a.length > 12 ? `${a.slice(0, 6)}…${a.slice(-4)}` : a;
-      const mkLbl   = (a: string) => { const kn = getKnownInfo(a, chain); return kn ? `${kn.label} (${shortA(a)})` : shortA(a); };
+      const shortA  = (a: string) => a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a;
+      const fmtV    = (v: number) =>
+        v >= 1_000_000 ? `${(v / 1_000_000).toFixed(2)}M ${chainUp}`
+        : v >= 1_000   ? `${(v / 1_000).toFixed(2)}K ${chainUp}`
+        :                `${v.toFixed(4)} ${chainUp}`;
       const allWallets = cr ? [address, ...cr.comparisonWallets] : [address];
 
-      // ASCII flow summary
-      lines.push(`   ASCII Flow Summary:`);
-      const topFlows = exchFlows.slice(0, 8);
-      if (topFlows.length > 0) {
-        for (const f of topFlows) {
-          const vol = f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-          const wi  = allWallets.indexOf(f.sourceWallet);
-          const src = wi >= 0 ? `W${wi + 1}` : shortA(f.sourceWallet);
-          lines.push(`   ${src} ──[${vol.toFixed(2)} ${chainUp}]──► ${f.exchLabel} (${shortA(f.exchAddr)})`);
+      // Sort exchange flows by volume descending for all subsequent use
+      const sortedFlows = [...exchFlows].sort((a, b) => {
+        const vA = a.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const vB = b.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        return vB - vA;
+      }).slice(0, 10);
+
+      // Peel scores per wallet (for insights bullet)
+      const pcMap6 = new Map<string, Tx[]>();
+      for (const [w, txs] of Object.entries(cr?.walletTxs ?? {})) pcMap6.set(w, txs);
+      if (exchWalletTxMap) for (const [w, txs] of exchWalletTxMap) if (!pcMap6.has(w)) pcMap6.set(w, txs);
+      const walletPeels = Array.from(pcMap6.entries())
+        .map(([w, txs]) => ({ wallet: w, score: detectPeelChainPatterns(txs, chain).peelChainScore }))
+        .sort((a, b) => b.score - a.score);
+      const topPeel    = walletPeels[0];
+      const totalVol6  = sortedFlows.reduce((s, f) => s + f.txs.reduce((ss, t) => ss + (parseFloat(t.value) || 0), 0), 0);
+      const uniqueExch6 = new Set(sortedFlows.map(f => f.exchAddr)).size;
+
+      // ── Key Visualization Insights ────────────────────────────────────────
+      lines.push(`   Key Visualization Insights:`);
+      if (sortedFlows.length > 0) {
+        const tf   = sortedFlows[0];
+        const tfVol = tf.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+        const tfWI  = allWallets.indexOf(tf.sourceWallet);
+        const tfSrc = tfWI >= 0 ? `W${tfWI + 1}` : shortA(tf.sourceWallet);
+        lines.push(`   · Top flow: ${tfSrc} → ${tf.exchLabel} — ${fmtV(tfVol)} (${tf.txs.length} tx${tf.txs.length !== 1 ? "s" : ""})`);
+      }
+      if (mr) {
+        const privCount = [...mr.sharedCounterparties, ...mr.commonEndpoints]
+          .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? "")).length;
+        if (privCount > 0) {
+          const topN = [...mr.sharedCounterparties, ...mr.commonEndpoints]
+            .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? ""))[0];
+          lines.push(`   · ${privCount} private convergence node${privCount !== 1 ? "s" : ""} shared by 2+ wallets — top: ${shortA(topN.address)} (${topN.appearances.length} wallets)`);
+        }
+      }
+      if (topPeel && topPeel.score >= 30) {
+        const tpWI  = allWallets.indexOf(topPeel.wallet);
+        const tpLbl = tpWI >= 0 ? `W${tpWI + 1}` : shortA(topPeel.wallet);
+        lines.push(`   · Highest peel-chain score: ${tpLbl} — ${topPeel.score}/100 (${topPeel.score >= 55 ? "HIGH" : "MODERATE"} layering risk — immediate subpoena recommended)`);
+      }
+      if (totalVol6 > 0) {
+        lines.push(`   · Total exchange-directed volume: ${fmtV(totalVol6)} across ${uniqueExch6} exchange address${uniqueExch6 !== 1 ? "es" : ""}`);
+      }
+      lines.push(``);
+
+      // ── ASCII Flow Summary — top 10 by volume ────────────────────────────
+      lines.push(`   ASCII Flow Summary (top ${sortedFlows.length} highest-volume flows):`);
+      if (sortedFlows.length > 0) {
+        for (const f of sortedFlows) {
+          const vol  = f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const wi   = allWallets.indexOf(f.sourceWallet);
+          const src  = wi >= 0 ? `W${wi + 1}` : shortA(f.sourceWallet);
+          const volFmt = vol.toLocaleString("en-US", { maximumFractionDigits: 2 });
+          lines.push(`   ${src} → [${volFmt} ${chainUp}] → ${f.exchLabel} (${shortA(f.exchAddr)})`);
         }
       } else {
         lines.push(`   (No exchange flows detected in loaded history)`);
       }
       if (mr) {
         const privNodes = [...mr.sharedCounterparties, ...mr.commonEndpoints]
-          .filter(s => !["exchange", "bridge"].includes(s.knownInfo?.type ?? ""))
+          .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? ""))
           .slice(0, 3);
         if (privNodes.length > 0) {
           lines.push(``);
           lines.push(`   Shared Private Nodes:`);
           for (const n of privNodes) {
-            const wLabels = allWallets.map((_, i) => `W${i + 1}`).join(" + ");
-            lines.push(`   ${wLabels} ──[shared]──► ${mkLbl(n.address)}`);
+            const kn6   = getKnownInfo(n.address, chain);
+            const lbl6  = kn6 ? `${kn6.label} (${shortA(n.address)})` : shortA(n.address);
+            const ws6   = n.appearances.slice(0, 4).map(a => {
+              const wi2 = allWallets.indexOf(a.wallet);
+              return wi2 >= 0 ? `W${wi2 + 1}` : shortA(a.wallet);
+            }).join(", ");
+            lines.push(`   ${ws6} ──[shared]──► ${lbl6}`);
           }
         }
       }
 
-      // Mermaid.js flowchart
+      // ── Mermaid.js Flowchart — hub-and-spoke ─────────────────────────────
       lines.push(``);
       lines.push(`   Mermaid.js Flowchart — paste into https://mermaid.live :`);
       lines.push(`   ${"─".repeat(60)}`);
-      const mermaid: string[] = ["graph LR"];
-      const mNodeMap = new Map<string, string>();
-      let mIdx = 0;
-      const mId = (a: string) => { if (!mNodeMap.has(a)) mNodeMap.set(a, `N${mIdx++}`); return mNodeMap.get(a)!; };
-      allWallets.forEach((w, i) => {
-        mermaid.push(`  ${mId(w)}["W${i + 1}\\n${shortA(w)}"]`);
-      });
-      for (const f of topFlows) {
-        const vol = f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-        const kn  = getKnownInfo(f.exchAddr, chain);
-        mermaid.push(`  ${mId(f.exchAddr)}["${kn?.label ?? shortA(f.exchAddr)}\\nEXCHANGE"]`);
-        mermaid.push(`  ${mId(f.sourceWallet)} -->|"${vol.toFixed(0)} ${chainUp}"| ${mId(f.exchAddr)}`);
-      }
-      if (mr) {
-        const privSh = [...mr.sharedCounterparties, ...mr.commonEndpoints]
-          .filter(s => !["exchange", "bridge"].includes(s.knownInfo?.type ?? ""))
-          .slice(0, 3);
-        for (const n of privSh) {
-          mermaid.push(`  ${mId(n.address)}["SHARED\\n${shortA(n.address)}"]`);
-          allWallets.forEach(w => mermaid.push(`  ${mId(w)} -.->|"shared"| ${mId(n.address)}`));
+      {
+        const mermaid: string[] = ["graph LR"];
+        const mNodeMap = new Map<string, string>();
+        let mIdx = 0;
+        const mId = (a: string) => { if (!mNodeMap.has(a)) mNodeMap.set(a, `N${mIdx++}`); return mNodeMap.get(a)!; };
+        // Top 5 flows by volume → hub-and-spoke
+        const hubFlows = sortedFlows.slice(0, 5);
+        const activeWallets = new Set(hubFlows.map(f => f.sourceWallet));
+        allWallets.forEach((w, i) => {
+          if (activeWallets.has(w) || i < Math.min(3, allWallets.length)) {
+            mermaid.push(`  ${mId(w)}["W${i + 1}\\n${shortA(w)}"]`);
+          }
+        });
+        for (const f of hubFlows) {
+          const vol = f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const kn  = getKnownInfo(f.exchAddr, chain);
+          mermaid.push(`  ${mId(f.exchAddr)}["${(kn?.label ?? shortA(f.exchAddr)).replace(/"/g, "'")}\\nEXCHANGE"]`);
+          mermaid.push(`  ${mId(f.sourceWallet)} -->|"${fmtV(vol)}"| ${mId(f.exchAddr)}`);
         }
+        // Shared convergence nodes (dashed)
+        if (mr) {
+          const privSh = [...mr.sharedCounterparties, ...mr.commonEndpoints]
+            .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? ""))
+            .slice(0, 2);
+          for (const n of privSh) {
+            mermaid.push(`  ${mId(n.address)}["SHARED\\n${shortA(n.address)}"]`);
+            allWallets.slice(0, Math.min(4, allWallets.length)).forEach(w => {
+              mermaid.push(`  ${mId(w)} -.->|"shared"| ${mId(n.address)}`);
+            });
+          }
+        }
+        mermaid.forEach(l => lines.push(`   ${l}`));
       }
-      mermaid.forEach(l => lines.push(`   ${l}`));
       lines.push(`   ${"─".repeat(60)}`);
 
-      // Graph export JSON for Gephi / Cytoscape / yEd
+      // ── Graph Export JSON ─────────────────────────────────────────────────
       lines.push(``);
       lines.push(`   Graph Export JSON (Gephi / Cytoscape / yEd):`);
       lines.push(`   ${"─".repeat(60)}`);
-      const gNodes = allWallets.map((w, i) => ({ id: w, label: `W${i + 1}`, type: "wallet" }));
-      for (const f of topFlows) {
-        if (!gNodes.find(n => n.id === f.exchAddr)) {
-          gNodes.push({ id: f.exchAddr, label: f.exchLabel, type: "exchange" });
+      {
+        const gNodes: Array<{ id: string; label: string; type: string; volume?: number }> =
+          allWallets.map((w, i) => ({ id: w, label: `W${i + 1}`, type: "wallet" }));
+        const gEdges: Array<{ source: string; target: string; label: string; txCount: number; volume: number; chain: string }> = [];
+        for (const f of sortedFlows) {
+          const vol = parseFloat(f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0).toFixed(4));
+          if (!gNodes.find(n => n.id === f.exchAddr)) {
+            gNodes.push({ id: f.exchAddr, label: f.exchLabel, type: "exchange", volume: vol });
+          }
+          gEdges.push({ source: f.sourceWallet, target: f.exchAddr, label: `${vol} ${chainUp}`, txCount: f.txs.length, volume: vol, chain: chainUp });
         }
+        if (mr) {
+          const privSh = [...mr.sharedCounterparties, ...mr.commonEndpoints]
+            .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? ""))
+            .slice(0, 5);
+          for (const n of privSh) {
+            if (!gNodes.find(nd => nd.id === n.address)) {
+              const kn7 = getKnownInfo(n.address, chain);
+              gNodes.push({ id: n.address, label: kn7 ? kn7.label : `SHARED(${n.appearances.length}w)`, type: "shared_node" });
+            }
+            allWallets.forEach(w => {
+              gEdges.push({ source: w, target: n.address, label: "shared", txCount: 0, volume: 0, chain: chainUp });
+            });
+          }
+        }
+        JSON.stringify({ nodes: gNodes, edges: gEdges }, null, 2)
+          .split("\n")
+          .forEach(l => lines.push(`   ${l}`));
       }
-      const gEdges = topFlows.map(f => ({
-        source: f.sourceWallet,
-        target: f.exchAddr,
-        txCount: f.txs.length,
-        volume: parseFloat(f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0).toFixed(4)),
-        chain: chainUp,
-      }));
-      JSON.stringify({ nodes: gNodes, edges: gEdges }, null, 2)
-        .split("\n")
-        .forEach(l => lines.push(`   ${l}`));
       lines.push(`   ${"─".repeat(60)}`);
     }
 

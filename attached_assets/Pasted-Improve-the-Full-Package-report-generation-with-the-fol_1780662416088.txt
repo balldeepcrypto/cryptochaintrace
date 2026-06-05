@@ -1,0 +1,38 @@
+Improve the Full Package report generation with the following targeted enhancements. Make all changes surgical and preserve existing report structure, dividers, SHA-256 hashing, and PDF export behavior.
+
+1. Add a clean "Top 10 Highest Priority Subpoena Targets" summary box at the very beginning of section 5 (RECOMMENDED SUBPOENA TARGETS) in generateExecutiveSummary.
+
+   - Only show the top 10 targets (already sorted by US-regulated + highest volume/shared wallets).
+   - For each of the 10, display: Rank, Exchange name, Address (truncated), Total Volume (XRP + USD), Number of tracked wallets touching it, Peel-chain score (if available), and a one-line justification.
+   - Add a short intro line: "Below are the 10 highest-priority exchange addresses for immediate subpoena / KYC requests based on volume, commingling strength, and US regulatory reach."
+   - Keep the full list of 67 targets below the summary box exactly as it currently works.
+
+2. Surface peel-chain detection in the main Commingle Check section of the Executive Summary.
+
+   - In the COMMINGLING CHECK SUMMARY area, add a new line after "Private Convergence" and "Exchange Shared":
+     "Peel-Chain / Layering Risk Detected: X wallets show moderate-to-high peel-chain scores (40–80/100). See detailed signals in the Subpoena Targets section."
+   - If possible, also show a small summary count: "High peel risk (≥55): X wallets" and "Moderate peel risk (40–54): Y wallets".
+   - Do not overhaul the entire Commingle table — just add clear visibility of peel-chain findings in the summary block.
+
+3. Polish section 6 (KEY FLOW VISUALIZATION) to make it more readable and useful:
+
+   a. ASCII Flow Summary
+      - Change it to show the Top 8–10 highest-volume flows (sorted by XRP amount descending) instead of the current small/random sample.
+      - Format example: "W4 → [12,000,000 XRP] → Bitstamp Exchange (rDsbeo...CdBv)"
+
+   b. Mermaid.js Flowchart
+      - Improve structure: Focus on the major shared private convergence nodes + the largest exchange off-ramps.
+      - Use a cleaner layout (hub-and-spoke or grouped style). Reduce clutter from showing every single wallet.
+      - Keep it copy-paste ready for mermaid.live.
+
+   c. Graph Export JSON
+      - Ensure the full JSON is generated with both "nodes" and "edges" arrays so it can be properly imported into Gephi / Cytoscape / yEd.
+
+   d. Add a short "Key Visualization Insights" section at the top of §6 (2–4 bullets) summarizing the most important takeaways from the flows and shared nodes.
+
+After making the changes:
+- Run TypeScript typecheck and confirm no errors.
+- Push the changes to GitHub.
+- Confirm the updates appear correctly when running Full Package on an XRP wallet set.
+
+Only modify the report generation logic (primarily generateExecutiveSummary and any related helper functions). Do not change existing interfaces, PDF export styling, or core analysis functions unless necessary for these display improvements.

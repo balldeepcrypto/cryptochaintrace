@@ -2805,37 +2805,61 @@ export default function WalletDetail() {
     out.push(`  ${sorted.length} subpoena target${sorted.length !== 1 ? "s" : ""} across ${exchMap.size} exchange address${exchMap.size !== 1 ? "es" : ""}.`);
     out.push(``);
 
+    const FULL_DETAIL_LIMIT = 15;
     sorted.forEach((entry, idx) => {
-      const isUS    = US_REGULATED.has(entry.exchLabel.split(/\s+/)[0]);
-      const flagUS  = isUS ? "  ★ US-REGULATED — HIGH PRIORITY" : "";
-      const inTxs   = entry.txs.filter(t => t.direction === "in");
-      const outTxs  = entry.txs.filter(t => t.direction === "out");
-      const vol     = entry.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-      const usd     = entry.txs.reduce((s, t) => s + (t.valueUsd > 0 ? t.valueUsd : 0), 0);
-      const usdStr  = usd > 0
+      const isUS = US_REGULATED.has(entry.exchLabel.split(/\s+/)[0]);
+      const vol  = entry.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+      const usd  = entry.txs.reduce((s, t) => s + (t.valueUsd > 0 ? t.valueUsd : 0), 0);
+      const usdStr = usd > 0
         ? `  [$${usd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}]`
         : "";
-      const walletList = Array.from(entry.sourceWallets)
-        .map((w, i) => `W${i + 1}:${w.length > 14 ? w.slice(0, 6) + "…" + w.slice(-4) : w}`)
-        .join("  ");
-      const peel    = detectPeelChainPatterns(entry.txs, chain);
+
+      if (idx === FULL_DETAIL_LIMIT) {
+        out.push(``);
+        out.push(`  ${"─".repeat(74)}`);
+        out.push(`  LOWER-PRIORITY TARGETS — ${sorted.length - FULL_DETAIL_LIMIT} remaining (condensed)`);
+        out.push(`  ${"─".repeat(74)}`);
+        out.push(`  #    Exchange                 Address                  Txs    Volume`);
+        out.push(`  ${"─".repeat(74)}`);
+      }
+
+      if (idx >= FULL_DETAIL_LIMIT) {
+        const rank   = `#${idx + 1}`.padEnd(4);
+        const name   = (entry.exchLabel + (isUS ? " ★" : "")).slice(0, 24).padEnd(24);
+        const addr   = `${entry.exchAddr.slice(0, 10)}…${entry.exchAddr.slice(-5)}`.padEnd(18);
+        const txC    = String(entry.txs.length).padStart(4);
+        const volFmt = `${vol.toFixed(0)} ${chainUp}`;
+        out.push(`  ${rank} ${name} ${addr} ${txC}  ${volFmt}`);
+        if (idx === sorted.length - 1) out.push(`  ${"─".repeat(74)}`);
+        return;
+      }
+
+      // Full detail for top FULL_DETAIL_LIMIT entries
+      const flagUS = isUS ? "  ★ US-REGULATED — HIGH PRIORITY" : "";
+      const inTxs  = entry.txs.filter(t => t.direction === "in");
+      const outTxs = entry.txs.filter(t => t.direction === "out");
+      const peel   = detectPeelChainPatterns(entry.txs, chain);
 
       const reasons: string[] = [];
-      if (isUS)                          reasons.push("US-regulated — KYC/AML records legally accessible via subpoena");
-      if (entry.sourceWallets.size > 1)  reasons.push(`Shared by ${entry.sourceWallets.size} tracked wallets — direct commingling evidence`);
-      if (peel.peelChainScore >= 30)     reasons.push(`Peel-chain score ${peel.peelChainScore}/100 — layering likely`);
+      if (isUS)                         reasons.push("US-regulated — KYC/AML records legally accessible via 18 U.S.C. § 2703");
+      if (entry.sourceWallets.size > 1) reasons.push(`Shared by ${entry.sourceWallets.size} tracked wallets — direct commingling evidence`);
+      if (peel.peelChainScore >= 30)    reasons.push(`Peel-chain score ${peel.peelChainScore}/100 — layering pattern detected`);
       if (inTxs.length > 0 && outTxs.length > 0) reasons.push("Bidirectional flows — possible custodial account with balance");
-      if (reasons.length === 0)          reasons.push("Exchange deposit address — account holder identity obtainable via KYC request");
+      if (reasons.length === 0)         reasons.push("Exchange deposit — holder identity obtainable via KYC subpoena");
 
       out.push(`  TARGET ${idx + 1}/${sorted.length}${flagUS}`);
       out.push(`  Exchange  : ${entry.exchLabel}  [${entry.exchType.toUpperCase()}]`);
       out.push(`  Address   : ${entry.exchAddr}`);
       out.push(`  Txs       : ${entry.txs.length}  (IN: ${inTxs.length}  OUT: ${outTxs.length})`);
       out.push(`  Volume    : ${vol.toFixed(4)} ${chainUp}${usdStr}`);
-      out.push(`  Wallets   : ${entry.sourceWallets.size}  [${walletList}]`);
+      out.push(`  Wallets sending to this address (${entry.sourceWallets.size}):`);
+      Array.from(entry.sourceWallets).forEach(w => {
+        const knW = getKnownInfo(w, chain);
+        out.push(`    · ${w}${knW ? `  [${knW.label}]` : ""}`);
+      });
       reasons.forEach(r => out.push(`  ✓ ${r}`));
-      out.push(`  SCOPE: Account records for ${entry.exchAddr.slice(0, 16)}… — holder name/ID, registration`);
-      out.push(`         IP, linked payment methods, full TX history, withdrawals, KYC documents.`);
+      out.push(`  SCOPE: Account holder identity, registration IP, linked bank/payment accounts,`);
+      out.push(`         complete TX history, withdrawal destinations, KYC/AML documentation.`);
       if (peel.patternsDetected.length > 0) {
         out.push(`  PEEL SIGNALS: ${peel.patternsDetected.join(" · ")}`);
       }
@@ -2882,10 +2906,16 @@ export default function WalletDetail() {
     lines.push(`Chain         : ${chainUp}`);
     lines.push(`Primary Wallet: ${address}`);
     if (cr) {
-      cr.comparisonWallets.forEach((w, i) => {
-        const kn = KNOWN_LABELS[w];
-        lines.push(`Wallet ${String(i + 2).padStart(2, " ")}     : ${w}${kn ? `  [${kn.label}]` : ""}`);
+      // Show only known/labeled wallets in the header — omit unlabeled to keep it concise
+      const allHeaderW = [address, ...cr.comparisonWallets];
+      const labeledHeaderW = allHeaderW.filter(w => !!KNOWN_LABELS[w]);
+      const unlabeledHeaderCount = allHeaderW.length - labeledHeaderW.length;
+      labeledHeaderW.forEach(w => {
+        lines.push(`Notable Wallet: ${w}  [${KNOWN_LABELS[w]!.label}]`);
       });
+      if (unlabeledHeaderCount > 0) {
+        lines.push(`Other Wallets : ${unlabeledHeaderCount} unlabeled (full list in Commingle Check Report)`);
+      }
       lines.push(`Total Wallets : ${cr.comparisonWallets.length + 1}`);
     }
     if (victimWalletAddr) {
@@ -2981,6 +3011,139 @@ export default function WalletDetail() {
       }
       if (kfN === 0) {
         lines.push(`   Run Full Package with loaded transaction history to generate key findings.`);
+        lines.push(``);
+      }
+    }
+
+    // ── MASTER DATA REQUEST — placed here for immediate law enforcement access ──
+    {
+      const mDiv  = "═".repeat(67);
+      const mDash = "─".repeat(67);
+      lines.push(``);
+      lines.push(`   ${mDiv}`);
+      lines.push(`   MASTER DATA REQUEST — USE IN ALL SUBPOENAS & KYC LETTERS`);
+      lines.push(`   ${mDiv}`);
+      lines.push(`   The following categories constitute a legally comprehensive data request`);
+      lines.push(`   suitable for any cryptocurrency exchange subject to U.S. jurisdiction,`);
+      lines.push(`   MLAT treaty obligations, or voluntary disclosure obligations. Each item`);
+      lines.push(`   is specifically drafted to foreclose partial or evasive responses.`);
+      lines.push(`   Include the full list — or cite this section by reference — in any`);
+      lines.push(`   subpoena, Section 2703 request, legal hold letter, or MLAT filing.`);
+      lines.push(``);
+      const masterSectionsTop: Array<[string, string[]]> = [
+        ["A. ACCOUNT HOLDER IDENTITY & KYC DOCUMENTS", [
+          " 1. The full legal name(s) of all account holders as provided during registration",
+          "    and as updated at any point, including all prior names and aliases of record.",
+          " 2. Dates of birth, places of birth, and all government-issued identification",
+          "    documents submitted at any stage of the account lifecycle, including passport",
+          "    numbers, driver's license numbers, national ID numbers, and issuing jurisdiction.",
+          " 3. All email addresses, phone numbers (including mobile/WhatsApp), usernames,",
+          "    display names, and account aliases — both currently active and historical.",
+          " 4. All physical addresses and mailing addresses provided, including billing",
+          "    addresses associated with any linked payment method.",
+          " 5. Declared nationality, citizenship status, country of tax residence, and",
+          "    source-of-funds declarations (SoF) submitted at account opening or update.",
+          " 6. All KYC/AML documentation submitted at any stage, including but not limited",
+          "    to: proof of identity, proof of address, source-of-wealth declarations,",
+          "    and political exposure person (PEP) screening results.",
+          " 7. Enhanced Due Diligence (EDD) records, account verification tier, and the",
+          "    specific documentation used to achieve each verification level.",
+          " 8. All photographs, selfie images, and liveness-check biometric data submitted",
+          "    during identity verification — including the date and device of submission.",
+          " 9. Employer information, business name, and occupation as declared by the",
+          "    account holder at any time.",
+        ]],
+        ["B. IP ADDRESSES, DEVICE FINGERPRINTS & SESSION LOGS", [
+          "10. The full IP address logs associated with: (a) initial account registration;",
+          "    (b) all subsequent logins, whether successful or failed; (c) all transactions",
+          "    including deposits, withdrawals, and trades; (d) all password reset events;",
+          "    (e) all two-factor authentication (2FA) enrollment or modification events;",
+          "    (f) all changes to account security settings — each with complete timestamps.",
+          "11. Geolocation data derived from IP addresses, including city, region, country,",
+          "    and ISP or hosting provider for each recorded IP address.",
+          "12. Device fingerprint records including device IDs, hardware identifiers,",
+          "    browser fingerprints, and any other device-identifying attributes captured.",
+          "13. User-agent strings, browser names/versions, OS versions, and app versions",
+          "    recorded for each authenticated session.",
+          "14. Mobile device information: device model, IMEI, IMSI, SIM details, OS version.",
+          "15. Complete session logs including session tokens, duration, and all actions",
+          "    taken during each authenticated session.",
+          "16. VPN, proxy, Tor exit node, or anonymizing service usage detected by the platform.",
+          "17. API key records: all keys created, permissions, IP addresses used, and logs.",
+        ]],
+        ["C. TRANSACTION HISTORY & BLOCKCHAIN ADDRESSES", [
+          "18. The complete on-chain transaction history: all deposits, withdrawals, and",
+          "    internal transfers — timestamps (UTC), counterparty addresses, amounts in",
+          "    native asset and USD equivalent, TX hashes, and block numbers.",
+          "19. All blockchain wallet addresses ever associated with this account: deposit,",
+          "    withdrawal, and whitelisted addresses — active, archived, or removed.",
+          "20. All internal transfer records (account-to-account / sub-account).",
+          "21. All fiat on-ramp/off-ramp records: originating bank, beneficiary bank,",
+          "    wire reference numbers, ACH batch IDs, dates, and amounts.",
+          "22. Complete trade history: spot, margin, futures, and options — price, volume,",
+          "    fees, timestamps.",
+          "23. Staking, lending, earn, rewards, and airdrop records with amounts and dates.",
+        ]],
+        ["D. LINKED PAYMENT METHODS & FINANCIAL ACCOUNTS", [
+          "24. All bank accounts ever linked: bank name, account holder name(s), full or",
+          "    masked account number, routing / IBAN / SWIFT/BIC, and linking date.",
+          "25. All credit/debit cards ever linked: card type, last 4 digits, cardholder",
+          "    name, issuing bank name, and dates added/removed.",
+          "26. All third-party payment processor records: PayPal, Venmo, Apple Pay,",
+          "    Google Pay, Zelle, Square, Cash App, and any regional processors.",
+          "27. All withdrawal destination records: full beneficiary wallet address or bank",
+          "    account details for every withdrawal ever processed.",
+          "28. P2P trading counterparties and payment method details.",
+        ]],
+        ["E. COMPLIANCE, SUSPICIOUS ACTIVITY & INTERNAL RECORDS", [
+          "29. All Suspicious Activity Reports (SARs) filed with FinCEN or any FIU in",
+          "    connection with this account or any transactions on the subject address(es).",
+          "30. All Currency Transaction Reports (CTRs) filed in connection with this account.",
+          "31. All account restrictions, holds, freezes, suspensions, and closures — with",
+          "    specific compliance reason and date for each action.",
+          "32. All internal AML monitoring alerts: alert type, score, triggering transaction,",
+          "    and disposition (cleared, escalated, or SAR filed).",
+          "33. All internal risk scores, customer risk ratings, and AML tier classifications.",
+          "34. All communications between account holder and exchange (email, chat, tickets).",
+          "35. All accounts linked by shared device fingerprint, IP address, email domain,",
+          "    phone number, payment method, or KYC documents.",
+          "36. Referral network records: who referred this account and who it referred.",
+          "37. All chargeback, dispute, and fraud investigation records.",
+        ]],
+        ["F. CORPORATE / BUSINESS ACCOUNT RECORDS (if applicable)", [
+          "38. Business registration: articles of incorporation, EIN/TIN, registered address,",
+          "    jurisdiction of incorporation, and date of formation.",
+          "39. Beneficial ownership: all individuals with ≥10% ownership or control,",
+          "    with supporting KYC documentation.",
+          "40. All authorized signatories, account administrators, and their KYC documents.",
+          "41. Corporate resolution authorizing the exchange account.",
+        ]],
+        ["G. ADVANCED & ANCILLARY DATA", [
+          "42. Cold/hot wallet segregation records for large institutional deposits.",
+          "43. Custodial/omnibus account records, including sub-ledger entries.",
+          "44. Any data previously provided to other law enforcement agencies on this",
+          "    account — including the requesting agency and date of production.",
+          "45. Any legal holds, preservation notices, or court orders previously received",
+          "    by the exchange related to this account.",
+        ]],
+        ["H. MANDATORY PRESERVATION DIRECTIVE", [
+          "Pursuant to 18 U.S.C. § 2703(f), you are directed to IMMEDIATELY AND COMPLETELY",
+          "PRESERVE all records, data, logs, metadata, and communications related to the",
+          "account(s) and address(es) identified in this request — including all categories",
+          "A through G above — from the date of receipt until explicit written release.",
+          "",
+          "This obligation applies notwithstanding any routine data deletion policies or",
+          "automated purge processes. Intentional or negligent destruction, alteration, or",
+          "concealment of records subject to this directive may constitute obstruction of",
+          "justice under 18 U.S.C. § 1519, exposing your organization and responsible",
+          "individuals to criminal liability.",
+        ]],
+      ];
+      for (const [secTitle, items] of masterSectionsTop) {
+        lines.push(`   ${mDash}`);
+        lines.push(`   ${secTitle}`);
+        lines.push(`   ${mDash}`);
+        for (const item of items) lines.push(`   ${item}`);
         lines.push(``);
       }
     }
@@ -3304,43 +3467,9 @@ export default function WalletDetail() {
       }
       lines.push(`   ${"─".repeat(60)}`);
 
-      // ── Graph Export JSON ─────────────────────────────────────────────────
       lines.push(``);
-      lines.push(`   Graph Export JSON (Gephi / Cytoscape / yEd):`);
-      lines.push(`   Copy the entire JSON block below (including opening and closing braces) and`);
-      lines.push(`   paste it directly into Gephi (File → Import Network from Text), Cytoscape`);
-      lines.push(`   (Apps → cytoscape.js), or yEd (File → Import → GraphML after conversion).`);
-      lines.push(`   ${"─".repeat(60)}`);
-      {
-        const gNodes: Array<{ id: string; label: string; type: string; volume?: number }> =
-          allWallets.map((w, i) => ({ id: w, label: `W${i + 1}`, type: "wallet" }));
-        const gEdges: Array<{ source: string; target: string; label: string; txCount: number; volume: number; chain: string }> = [];
-        for (const f of sortedFlows) {
-          const vol = parseFloat(f.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0).toFixed(4));
-          if (!gNodes.find(n => n.id === f.exchAddr)) {
-            gNodes.push({ id: f.exchAddr, label: f.exchLabel, type: "exchange", volume: vol });
-          }
-          gEdges.push({ source: f.sourceWallet, target: f.exchAddr, label: `${vol} ${chainUp}`, txCount: f.txs.length, volume: vol, chain: chainUp });
-        }
-        if (mr) {
-          const privSh = [...mr.sharedCounterparties, ...mr.commonEndpoints]
-            .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? ""))
-            .slice(0, 5);
-          for (const n of privSh) {
-            if (!gNodes.find(nd => nd.id === n.address)) {
-              const kn7 = getKnownInfo(n.address, chain);
-              gNodes.push({ id: n.address, label: kn7 ? kn7.label : `SHARED(${n.appearances.length}w)`, type: "shared_node" });
-            }
-            allWallets.forEach(w => {
-              gEdges.push({ source: w, target: n.address, label: "shared", txCount: 0, volume: 0, chain: chainUp });
-            });
-          }
-        }
-        JSON.stringify({ nodes: gNodes, edges: gEdges }, null, 2)
-          .split("\n")
-          .forEach(l => lines.push(`   ${l}`));
-      }
-      lines.push(`   ${"─".repeat(60)}`);
+      lines.push(`   [Graph JSON export omitted from this report to reduce length.]`);
+      lines.push(`   [Run the standalone Exchange Flows report to generate and copy the full JSON block.]`);
     }
 
     // ─── SECTION 7: READY-TO-USE SUBPOENA / KYC TEMPLATES ───────────────────

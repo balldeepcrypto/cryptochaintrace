@@ -1,0 +1,47 @@
+Improve the Full Package report with the following changes. Keep all modifications surgical and preserve existing report structure, formatting, dividers, and PDF export behavior.
+
+=== 1. HIGH PRIORITY: Prioritize USA-based exchanges in Top 10 and Subpoena sections ===
+- In the Top 10 Priority Subpoena Targets table (§5), strongly prioritize U.S.-regulated exchanges (Coinbase, Kraken, Gemini, Bitstamp, Robinhood, Uphold, eToro, etc.).
+- Sort order should be:
+  1. U.S.-regulated exchanges first (sorted by volume + number of wallets touched)
+  2. Then top international exchanges
+- Apply the same U.S.-first logic when generating the new Subpoena Letter Templates (see section 5 below).
+- Clearly mark U.S. exchanges with a ★ symbol (already partially done — keep/enhance this).
+
+=== 2. HIGH PRIORITY: Simplify Mermaid.js Flowchart in §6 ===
+- Change the Mermaid chart to only show the **top 8–10 highest-volume flows** + the major shared convergence nodes (instead of trying to show all 49 wallets).
+- Use a cleaner hub-and-spoke or grouped layout.
+- Keep top exchanges as clear hubs.
+- Use dashed lines only for shared/private convergence nodes.
+- Goal: Much cleaner and more readable diagram on mermaid.live.
+
+=== 3. MEDIUM PRIORITY: Improve "Shared Private Nodes" section in §6 ===
+- Reformat the current raw list into a clean, scannable format (use a small table or well-structured bullet list).
+- Example:
+  Shared Private Convergence Nodes (selected):
+  • rHnNEFWB...qqCeQf ← shared by W2, W3, W4, W5 (4 wallets)
+  • r93oSNBK...NDPaX5 ← shared by W2, W3 (2 wallets)
+
+=== 4. MEDIUM PRIORITY: Improve Graph Export JSON section ===
+- Add a short instruction line above the JSON:
+  "Copy the entire JSON block below (including the opening and closing braces) and paste it into Gephi, Cytoscape, or yEd."
+- Ensure the full JSON is included without truncation.
+
+=== 5. NEW FEATURE: Auto-Generated Subpoena Letter Templates ===
+Add a new section at the end of the Full Package report called:
+
+"7. READY-TO-USE SUBPOENA / KYC TEMPLATES"
+
+Requirements:
+- Automatically generate 3 professional subpoena/KYC request templates.
+- Prioritize U.S.-regulated exchanges first (same logic as the Top 10 table).
+- Each template should include:
+  - Professional header addressed to Legal / Compliance
+  - Specific wallet address(es) being requested
+  - Clear list of data requested (account holder identity, KYC/AML documents, IP logs, full transaction history, linked payment methods, etc.)
+  - Reference to the victim wallet and investigation
+  - Professional but direct tone suitable for law enforcement use
+- Clearly label each template (e.g. "SUBPOENA TEMPLATE – ROBINHOOD XRP")
+- Add a short intro paragraph explaining that these are ready-to-customize templates.
+
+Do not break any existing functionality. After changes, run TypeScript typecheck and push to GitHub.

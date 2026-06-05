@@ -3157,18 +3157,18 @@ export default function WalletDetail() {
       if (mr) {
         const privNodes = [...mr.sharedCounterparties, ...mr.commonEndpoints]
           .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? ""))
-          .slice(0, 3);
+          .slice(0, 6);
         if (privNodes.length > 0) {
           lines.push(``);
-          lines.push(`   Shared Private Nodes:`);
+          lines.push(`   Shared Private Convergence Nodes:`);
           for (const n of privNodes) {
-            const kn6   = getKnownInfo(n.address, chain);
-            const lbl6  = kn6 ? `${kn6.label} (${shortA(n.address)})` : shortA(n.address);
-            const ws6   = n.appearances.slice(0, 4).map(a => {
+            const kn6  = getKnownInfo(n.address, chain);
+            const lbl6 = kn6 ? ` (${kn6.label})` : "";
+            const ws6  = n.appearances.slice(0, 6).map(a => {
               const wi2 = allWallets.indexOf(a.wallet);
               return wi2 >= 0 ? `W${wi2 + 1}` : shortA(a.wallet);
             }).join(", ");
-            lines.push(`   ${ws6} ──[shared]──► ${lbl6}`);
+            lines.push(`   • ${shortA(n.address)}${lbl6} ← shared by ${ws6} (${n.appearances.length} wallet${n.appearances.length !== 1 ? "s" : ""})`);
           }
         }
       }
@@ -3182,11 +3182,11 @@ export default function WalletDetail() {
         const mNodeMap = new Map<string, string>();
         let mIdx = 0;
         const mId = (a: string) => { if (!mNodeMap.has(a)) mNodeMap.set(a, `N${mIdx++}`); return mNodeMap.get(a)!; };
-        // Top 5 flows by volume → hub-and-spoke
-        const hubFlows = sortedFlows.slice(0, 5);
+        // Top 8 highest-volume flows → hub-and-spoke, only wallets with active edges
+        const hubFlows = sortedFlows.slice(0, Math.min(8, sortedFlows.length));
         const activeWallets = new Set(hubFlows.map(f => f.sourceWallet));
         allWallets.forEach((w, i) => {
-          if (activeWallets.has(w) || i < Math.min(3, allWallets.length)) {
+          if (activeWallets.has(w)) {
             mermaid.push(`  ${mId(w)}["W${i + 1}\\n${shortA(w)}"]`);
           }
         });
@@ -3200,11 +3200,14 @@ export default function WalletDetail() {
         if (mr) {
           const privSh = [...mr.sharedCounterparties, ...mr.commonEndpoints]
             .filter(s => !["exchange","bridge"].includes(s.knownInfo?.type ?? ""))
-            .slice(0, 2);
+            .slice(0, 3);
           for (const n of privSh) {
             mermaid.push(`  ${mId(n.address)}["SHARED\\n${shortA(n.address)}"]`);
-            allWallets.slice(0, Math.min(4, allWallets.length)).forEach(w => {
-              mermaid.push(`  ${mId(w)} -.->|"shared"| ${mId(n.address)}`);
+            // Only connect wallets that actually appear in this shared node
+            n.appearances.slice(0, 5).forEach(a => {
+              if (allWallets.includes(a.wallet)) {
+                mermaid.push(`  ${mId(a.wallet)} -.->|"shared"| ${mId(n.address)}`);
+              }
             });
           }
         }
@@ -3215,6 +3218,9 @@ export default function WalletDetail() {
       // ── Graph Export JSON ─────────────────────────────────────────────────
       lines.push(``);
       lines.push(`   Graph Export JSON (Gephi / Cytoscape / yEd):`);
+      lines.push(`   Copy the entire JSON block below (including opening and closing braces) and`);
+      lines.push(`   paste it directly into Gephi (File → Import Network from Text), Cytoscape`);
+      lines.push(`   (Apps → cytoscape.js), or yEd (File → Import → GraphML after conversion).`);
       lines.push(`   ${"─".repeat(60)}`);
       {
         const gNodes: Array<{ id: string; label: string; type: string; volume?: number }> =
@@ -3246,6 +3252,131 @@ export default function WalletDetail() {
           .forEach(l => lines.push(`   ${l}`));
       }
       lines.push(`   ${"─".repeat(60)}`);
+    }
+
+    // ─── SECTION 7: READY-TO-USE SUBPOENA / KYC TEMPLATES ───────────────────
+    lines.push(``);
+    lines.push(`7. READY-TO-USE SUBPOENA / KYC TEMPLATES`);
+    lines.push(`   ${"─".repeat(60)}`);
+    lines.push(`   The following templates are auto-generated from the exchange data above.`);
+    lines.push(`   Customize with your agency/counsel details before filing. U.S.-regulated`);
+    lines.push(`   exchanges are shown first — subpoenas to U.S. entities carry the strongest`);
+    lines.push(`   legal compellability under 18 U.S.C. § 2703 / FinCEN rules.`);
+    lines.push(``);
+    {
+      const US_REG_S7 = new Set([
+        "Coinbase","COINBASE","Kraken","KRAKEN","Gemini","GEMINI",
+        "Bitstamp","BITSTAMP","Uphold","UPHOLD","Robinhood","ROBINHOOD",
+        "Binance.US","BINANCE.US","Bittrex","BITTREX","eToro","ETORO",
+      ]);
+      type T7E = { addr: string; label: string; vol: number; wallets: Set<string>; txCount: number; isUS: boolean };
+      const t7Map = new Map<string, T7E>();
+      const addT7 = (addr: string, label: string, tx: Tx, wallet: string) => {
+        if (!t7Map.has(addr)) t7Map.set(addr, { addr, label, vol: 0, wallets: new Set(), txCount: 0, isUS: US_REG_S7.has(label.split(/\s+/)[0]) });
+        const e7 = t7Map.get(addr)!;
+        e7.txCount++;
+        e7.vol += parseFloat(tx.value) || 0;
+        e7.wallets.add(wallet);
+      };
+      for (const flow of (cr?.exchFlows ?? [])) {
+        for (const tx of flow.txs) addT7(flow.exchAddr, flow.exchLabel, tx, flow.sourceWallet);
+      }
+      for (const [wallet, txs] of (exchWalletTxMap ?? new Map())) {
+        for (const tx of txs) {
+          const cp = tx.direction === "in" ? tx.from : tx.to;
+          if (!cp) continue;
+          const kn7b = getKnownInfo(cp, chain);
+          if (!kn7b || !["exchange","bridge","genesis"].includes(kn7b.type)) continue;
+          addT7(cp, kn7b.label, tx, wallet);
+        }
+      }
+      const sorted7 = Array.from(t7Map.values()).sort((a, b) => {
+        if (a.isUS !== b.isUS) return a.isUS ? -1 : 1;
+        if (a.wallets.size !== b.wallets.size) return b.wallets.size - a.wallets.size;
+        return b.vol - a.vol;
+      }).slice(0, 3);
+
+      if (sorted7.length === 0) {
+        lines.push(`   No exchange targets identified. Run Full Package with exchange flows loaded.`);
+      } else {
+        const nowDateStr = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+        const allTracked = cr ? [address, ...cr.comparisonWallets] : [address];
+        sorted7.forEach((entry, idx) => {
+          const divLine = "═".repeat(66);
+          lines.push(`   ${divLine}`);
+          lines.push(`   SUBPOENA TEMPLATE ${idx + 1} OF ${sorted7.length} — ${entry.label.toUpperCase()}${entry.isUS ? " ★ (US-REGULATED)" : ""}`);
+          lines.push(`   ${divLine}`);
+          lines.push(``);
+          lines.push(`   TO:   Legal / Compliance Department`);
+          lines.push(`         ${entry.label}${entry.isUS ? "" : " (International Exchange)"}`);
+          lines.push(`         [Exchange's registered legal address — verify before filing]`);
+          lines.push(``);
+          lines.push(`   FROM: [Law Enforcement Agency / Legal Counsel Name]`);
+          lines.push(`   DATE: ${nowDateStr}`);
+          lines.push(`   RE:   Request for Account Records — Blockchain Forensics Investigation`);
+          lines.push(``);
+          lines.push(`   DEAR COMPLIANCE OFFICER,`);
+          lines.push(``);
+          lines.push(`   Pursuant to [applicable legal authority — e.g., 18 U.S.C. § 2703, MLAT,`);
+          lines.push(`   subpoena, court order, or local equivalent], we hereby request all records`);
+          lines.push(`   associated with the deposit address(es) listed below.`);
+          lines.push(``);
+          lines.push(`   SUBJECT ADDRESS (${chainUp}):`);
+          lines.push(`     ${entry.addr}`);
+          lines.push(``);
+          lines.push(`   INVESTIGATION CONTEXT:`);
+          if (victimWalletAddr) {
+            lines.push(`     This request relates to a blockchain forensics investigation tracing`);
+            lines.push(`     funds from victim wallet:`);
+            lines.push(`       ${victimWalletAddr}${victimPersonName ? `  (${victimPersonName})` : ""}`);
+            lines.push(`     on the ${chainUp} network. Transaction analysis identified funds flowing`);
+            lines.push(`     to the above ${entry.label} deposit address.`);
+          } else {
+            lines.push(`     This request relates to a blockchain forensics investigation on the`);
+            lines.push(`     ${chainUp} network. Transaction analysis identified the above address`);
+            lines.push(`     as a significant exchange endpoint for the tracked wallet cluster.`);
+          }
+          lines.push(`     Tracked wallets in this investigation:`);
+          allTracked.slice(0, 8).forEach((w, i) => lines.push(`       W${i + 1}: ${w}`));
+          lines.push(`     Observed activity: ${entry.txCount} transaction${entry.txCount !== 1 ? "s" : ""} totaling`);
+          lines.push(`     ${entry.vol.toLocaleString("en-US", { maximumFractionDigits: 4 })} ${chainUp} to/from the subject address.`);
+          lines.push(``);
+          lines.push(`   DATA REQUESTED:`);
+          lines.push(`     1. Full legal name, date of birth, and government-issued ID of all`);
+          lines.push(`        account holder(s) associated with the subject address.`);
+          lines.push(`     2. All email addresses, phone numbers, usernames, and aliases.`);
+          lines.push(`     3. IP address logs and geolocation data for account registration`);
+          lines.push(`        and all subsequent logins and transactions.`);
+          lines.push(`     4. Complete transaction history for the subject address, including`);
+          lines.push(`        all deposits, withdrawals, and internal transfers.`);
+          lines.push(`     5. All linked bank accounts, payment methods, debit/credit cards,`);
+          lines.push(`        and external wallet withdrawal destinations.`);
+          lines.push(`     6. KYC/AML documentation submitted at account opening or update.`);
+          lines.push(`     7. Any Suspicious Activity Reports (SARs) filed for this account.`);
+          lines.push(`     8. All account notes, flags, restrictions, or internal compliance`);
+          lines.push(`        records related to this account.`);
+          lines.push(`     9. Records of any accounts linked by shared device fingerprint,`);
+          lines.push(`        IP address, or payment method to the subject account.`);
+          lines.push(``);
+          lines.push(`   RESPONSE REQUESTED BY: [Date — typically 14–21 days from service]`);
+          lines.push(``);
+          lines.push(`   Please direct your response to:`);
+          lines.push(`     [Investigating Officer / Attorney Name]`);
+          lines.push(`     [Agency / Firm Name]`);
+          lines.push(`     [Address, Phone, Email]`);
+          lines.push(``);
+          lines.push(`   Under penalty of perjury, we certify this request is made in good faith`);
+          lines.push(`   as part of an ongoing lawful investigation.`);
+          lines.push(``);
+          lines.push(`   Signed: _________________________________`);
+          lines.push(`           [Name, Title, Badge / Bar Number]`);
+          lines.push(`           [Agency / Firm]    Date: ___________`);
+          lines.push(``);
+          lines.push(`   NOTE: Auto-generated by CryptoChainTrace. Verify all details, add case`);
+          lines.push(`   numbers, and have legal counsel review before filing.`);
+          if (idx < sorted7.length - 1) lines.push(``);
+        });
+      }
     }
 
     lines.push(``);

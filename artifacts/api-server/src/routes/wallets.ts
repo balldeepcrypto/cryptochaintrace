@@ -1799,7 +1799,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
   // Scale fetch limits with requested depth
   type EdgeMapEntry = { totalValue: string; totalValueUsd: number; count: number; lastSeen: string };
   const hop1TxLimit = depth === 1 ? 30 : depth <= 3 ? 50 : 80;
-  const basePeerCap = depth === 1 ? 20 : depth === 2 ? 30 : depth <= 4 ? 40 : 50;
+  const basePeerCap = depth === 1 ? 20 : depth === 2 ? 30 : depth <= 4 ? 40 : depth <= 5 ? 55 : 65;
 
   // Merge edge helper used in BFS expansion
   const mergeEdge = (
@@ -1847,8 +1847,8 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       // BFS hop-2 expansion: fetch top peers' neighbors
       if (depth >= 2) {
         const hop1Peers = Array.from(peerSet).filter(p => p !== address);
-        const maxExpand = depth <= 2 ? 8 : depth <= 4 ? 12 : 15;
-        const hop2Limit = depth <= 2 ? 15 : 20;
+        const maxExpand = depth <= 2 ? 8 : depth <= 4 ? 12 : depth <= 5 ? 15 : 18;
+        const hop2Limit = depth <= 2 ? 15 : depth <= 4 ? 20 : 25;
         const sortedPeers = hop1Peers
           .map(p => {
             const fwd = edgeMap.get(`${address}:${p}`);
@@ -1890,7 +1890,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
             .filter(([, srcs]) => srcs.size >= 2)
             .map(([addr]) => addr)
             .filter(a => a !== address && !hop1Set.has(a))
-            .slice(0, depth <= 3 ? 5 : 8);
+            .slice(0, depth <= 3 ? 5 : depth <= 4 ? 8 : 12);
 
           if (hop2CommNodes.length > 0) {
             await Promise.allSettled(hop2CommNodes.map(async (pAddr) => {
@@ -1905,6 +1905,29 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
                 }
               } catch { /* skip */ }
             }));
+          }
+
+          // Hop-4 (depth 5-6 only): expand any known exchange addresses now in peerSet.
+          // Exchanges are high-value investigation targets — fetching their recent txs
+          // reveals additional connected wallets and strengthens exchange detection.
+          if (depth >= 5) {
+            const exchInPeerSet = Array.from(peerSet)
+              .filter(p => p !== address && getGraphLabel(p) !== null && !hop1Set.has(p));
+            const hop4Targets = exchInPeerSet.slice(0, depth >= 6 ? 8 : 5);
+            if (hop4Targets.length > 0) {
+              await Promise.allSettled(hop4Targets.map(async (pAddr) => {
+                try {
+                  const r4 = await xrplRpc("account_tx", { account: pAddr, limit: 10, forward: false });
+                  const txs4 = (r4["transactions"] as Array<Record<string, unknown>>) ?? [];
+                  for (const entry of txs4) {
+                    const p4 = parseXrpEntry(entry);
+                    if (!p4) continue;
+                    peerSet.add(p4.from); peerSet.add(p4.to);
+                    mergeEdge(edgeMap, `${p4.from}:${p4.to}`, p4.val.toFixed(6), p4.val * priceUsd, p4.ts);
+                  }
+                } catch { /* skip */ }
+              }));
+            }
           }
         }
       }

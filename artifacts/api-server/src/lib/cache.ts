@@ -57,4 +57,4 @@ export const connCache   = new TTLCache(500);
 // TTLs (milliseconds)
 export const WALLET_TTL = 2 * 60 * 1000;  // 2 min — balance + profile data
 export const TX_TTL     = 1 * 60 * 1000;  // 1 min — first page of transactions
-export const CONN_TTL   = 30 * 60 * 1000; // 30 min — connection graph (long TTL ensures repeated forensic queries return identical results)
+export const CONN_TTL   = 4 * 60 * 60 * 1000; // 4 hr — connection graph (long TTL keeps deep-graph results stable across an investigation session)

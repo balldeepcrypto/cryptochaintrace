@@ -1,0 +1,44 @@
+Add a hybrid analytical layer to the Graph Investigative Report with the following features:
+
+### 1. Peel-Chain Risk Scoring
+- Add peel-chain / layering risk detection to commingling hubs and high-volume nodes in the current graph.
+- Calculate a peel score (0–100) for relevant wallets based on patterns such as:
+  - Large inflows followed by many small outflows
+  - High number of unique counterparties with below-average amounts
+  - Repeated flows to known exchange addresses
+  - Timing clustering of outflows
+- Display the peel score clearly in the report for hubs and high-risk nodes.
+- Highlight any wallets with moderate-to-high peel scores (≥ 55) with a visual indicator.
+
+### 2. Key Findings Box
+- Add a short, prominent "Key Findings" section near the top of the Graph Investigative Report (right after the summary stats, before the commingling hubs section).
+- Automatically generate 4–6 concise, actionable bullet points that summarize the most important discoveries from this specific graph trace.
+- Examples of what to include:
+  - Strongest commingling hubs by strength score
+  - Major exchange flows and total volume moving through exchanges
+  - Wallets showing high peel-chain risk
+  - Notable funneling or convergence patterns
+  - Any high-value direct connections from the center wallet
+- Keep the language clear and investigative (suitable for law enforcement review).
+
+### 3. Top Subpoena Targets Section
+- Add a new section called "Recommended Subpoena Targets" (show top 8–10 exchanges found in the current graph).
+- Rank exchanges using this priority order:
+  1. US-regulated exchanges first (Coinbase, Kraken, Gemini, Bitstamp, Robinhood, Uphold, eToro, Bittrex, etc.)
+  2. Then by total volume flowing through them in the graph
+  3. Then by number of connected wallets in the graph
+- For each target display:
+  - Exchange name + label
+  - Wallet address
+  - Total volume (XRP + USD)
+  - Number of wallets in the graph connected to it
+  - One short justification line (e.g. "High volume hub receiving from 3 commingling nodes")
+- Mark US-regulated exchanges clearly (e.g. with a star or "US-REGULATED" tag).
+
+### 4. General Requirements
+- Keep all existing features working (Focus Mode, volume-scaled edges/nodes, hub strength scoring, 6-hop improvements, etc.).
+- Do not make the report significantly longer or bloated. Keep new sections concise and scannable.
+- Maintain the current professional dark theme and law enforcement-friendly formatting.
+- Ensure the new sections appear cleanly in both the on-screen report and the PDF/JSON exports.
+
+The goal is to transform the Graph Investigative Report from a data dump into a clear, actionable intelligence document that highlights the most important leads and recommended next steps.

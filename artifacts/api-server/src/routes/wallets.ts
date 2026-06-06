@@ -1578,6 +1578,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
   const query = GetWalletConnectionsQueryParams.safeParse(req.query);
   const chain = query.success ? query.data.chain : "ethereum";
+  const depth = query.success && query.data.depth ? Math.min(Math.max(Number(query.data.depth), 1), 6) : 1;
   const evmChainsConn = ["ethereum", "polygon", "bsc"];
   const rawAddressConn = params.data.address;
 
@@ -1590,7 +1591,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
   const priceUsd = PRICE_MAP[chain] ?? 1;
 
   // ── Cache check ────────────────────────────────────────────────────────────
-  const cCacheKey = `c:${chain}:${address}`;
+  const cCacheKey = `c:${chain}:${address}:${depth}`;
   const cCacheHit = connCache.get(cCacheKey);
   if (cCacheHit) { res.setHeader("X-Cache", "HIT"); res.json(cCacheHit); return; }
   interceptCache(res, connCache, cCacheKey, CONN_TTL);
@@ -1617,37 +1618,120 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     return { nodes, edges, centerAddress: center };
   };
 
+  // Scale fetch limits with requested depth
+  type EdgeMapEntry = { totalValue: string; totalValueUsd: number; count: number; lastSeen: string };
+  const hop1TxLimit = depth === 1 ? 30 : depth <= 3 ? 50 : 80;
+  const basePeerCap = depth === 1 ? 20 : depth === 2 ? 30 : depth <= 4 ? 40 : 50;
+
+  // Merge edge helper used in BFS expansion
+  const mergeEdge = (
+    edgeMap: Map<string, EdgeMapEntry>, key: string,
+    totalValue: string, usdDelta: number, ts: string,
+  ) => {
+    const ex = edgeMap.get(key);
+    if (ex) { ex.totalValueUsd += usdDelta; ex.count += 1; ex.lastSeen = ts; }
+    else edgeMap.set(key, { totalValue, totalValueUsd: usdDelta, count: 1, lastSeen: ts });
+  };
+
   try {
     if (chain === "xrp") {
-      const result = await xrplRpc("account_tx", { account: address, limit: 20, forward: false });
-      const rawTxs = (result["transactions"] as Array<Record<string, unknown>>) ?? [];
-      const peerSet = new Set<string>();
-      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
-
-      for (const entry of rawTxs) {
+      const parseXrpEntry = (entry: Record<string, unknown>): { from: string; to: string; val: number; ts: string } | null => {
         const tx = (entry["tx"] ?? entry["transaction"] ?? entry) as Record<string, unknown>;
         const meta = (entry["meta"] ?? entry["metadata"]) as Record<string, unknown> | undefined;
         const from = String(tx["Account"] ?? "");
         const to = String(tx["Destination"] ?? "");
-        if (!from || !to) continue;
-        peerSet.add(from); peerSet.add(to);
-        const rawDeliveredConn = meta?.["delivered_amount"] ?? tx["Amount"];
+        if (!from || !to) return null;
+        const rawD = meta?.["delivered_amount"] ?? tx["Amount"];
         let val: number;
-        if (typeof rawDeliveredConn === "object" && rawDeliveredConn !== null) {
-          val = parseFloat(String((rawDeliveredConn as Record<string, unknown>)["value"] ?? "0"));
+        if (typeof rawD === "object" && rawD !== null) {
+          val = parseFloat(String((rawD as Record<string, unknown>)["value"] ?? "0"));
         } else {
-          const deliveredStr = String(rawDeliveredConn ?? "0");
-          val = /^\d+$/.test(deliveredStr) ? Number(deliveredStr) / 1e6 : 0;
+          const ds = String(rawD ?? "0");
+          val = /^\d+$/.test(ds) ? Number(ds) / 1e6 : 0;
         }
         const dateVal = tx["date"] as number | undefined;
         const ts = dateVal ? new Date((dateVal + 946684800) * 1000).toISOString() : new Date().toISOString();
-        const key = `${from}:${to}`;
-        const ex = edgeMap.get(key);
-        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = ts; }
-        else edgeMap.set(key, { totalValue: val.toFixed(6), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
+        return { from, to, val, ts };
+      };
+
+      const result = await xrplRpc("account_tx", { account: address, limit: hop1TxLimit, forward: false });
+      const rawTxs = (result["transactions"] as Array<Record<string, unknown>>) ?? [];
+      const peerSet = new Set<string>();
+      const edgeMap = new Map<string, EdgeMapEntry>();
+
+      for (const entry of rawTxs) {
+        const parsed = parseXrpEntry(entry);
+        if (!parsed) continue;
+        peerSet.add(parsed.from); peerSet.add(parsed.to);
+        mergeEdge(edgeMap, `${parsed.from}:${parsed.to}`, parsed.val.toFixed(6), parsed.val * priceUsd, parsed.ts);
       }
 
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      // BFS hop-2 expansion: fetch top peers' neighbors
+      if (depth >= 2) {
+        const hop1Peers = Array.from(peerSet).filter(p => p !== address);
+        const maxExpand = depth <= 2 ? 8 : depth <= 4 ? 12 : 15;
+        const hop2Limit = depth <= 2 ? 15 : 20;
+        const sortedPeers = hop1Peers
+          .map(p => {
+            const fwd = edgeMap.get(`${address}:${p}`);
+            const rev = edgeMap.get(`${p}:${address}`);
+            return { p, w: (fwd?.totalValueUsd ?? 0) + (rev?.totalValueUsd ?? 0) };
+          })
+          .sort((a, b) => b.w - a.w)
+          .slice(0, maxExpand);
+
+        const batchSize = 5;
+        for (let i = 0; i < sortedPeers.length; i += batchSize) {
+          const batch = sortedPeers.slice(i, i + batchSize);
+          await Promise.allSettled(batch.map(async ({ p: pAddr }) => {
+            try {
+              const r2 = await xrplRpc("account_tx", { account: pAddr, limit: hop2Limit, forward: false });
+              const txs2 = (r2["transactions"] as Array<Record<string, unknown>>) ?? [];
+              for (const entry of txs2) {
+                const p2 = parseXrpEntry(entry);
+                if (!p2) continue;
+                peerSet.add(p2.from); peerSet.add(p2.to);
+                mergeEdge(edgeMap, `${p2.from}:${p2.to}`, p2.val.toFixed(6), p2.val * priceUsd, p2.ts);
+              }
+            } catch { /* skip failed peers */ }
+          }));
+        }
+
+        // Hop-3+: expand commingling nodes discovered in hop-2
+        if (depth >= 3) {
+          const hop1Set = new Set(hop1Peers);
+          const inMap2 = new Map<string, Set<string>>();
+          for (const [key] of edgeMap) {
+            const [f, t] = key.split(":");
+            if (t !== address && !hop1Set.has(t)) {
+              if (!inMap2.has(t)) inMap2.set(t, new Set());
+              inMap2.get(t)!.add(f);
+            }
+          }
+          const hop2CommNodes = [...inMap2.entries()]
+            .filter(([, srcs]) => srcs.size >= 2)
+            .map(([addr]) => addr)
+            .filter(a => a !== address && !hop1Set.has(a))
+            .slice(0, depth <= 3 ? 5 : 8);
+
+          if (hop2CommNodes.length > 0) {
+            await Promise.allSettled(hop2CommNodes.map(async (pAddr) => {
+              try {
+                const r3 = await xrplRpc("account_tx", { account: pAddr, limit: 15, forward: false });
+                const txs3 = (r3["transactions"] as Array<Record<string, unknown>>) ?? [];
+                for (const entry of txs3) {
+                  const p3 = parseXrpEntry(entry);
+                  if (!p3) continue;
+                  peerSet.add(p3.from); peerSet.add(p3.to);
+                  mergeEdge(edgeMap, `${p3.from}:${p3.to}`, p3.val.toFixed(6), p3.val * priceUsd, p3.ts);
+                }
+              } catch { /* skip */ }
+            }));
+          }
+        }
+      }
+
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
       return;
     }
@@ -1655,27 +1739,24 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     if (chain === "bitcoin") {
       const txs = await btcFetchTxs(address);
       const peerSet = new Set<string>();
-      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
-      for (const tx of txs.slice(0, 20)) {
+      const edgeMap = new Map<string, EdgeMapEntry>();
+      for (const tx of txs.slice(0, hop1TxLimit)) {
         const parsed = parseBtcTx(tx, address, priceUsd);
         if (!parsed.from || !parsed.to) continue;
         peerSet.add(parsed.from); peerSet.add(parsed.to);
-        const key = `${parsed.from}:${parsed.to}`;
         const val = parseFloat(parsed.value);
-        const ex = edgeMap.get(key);
-        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = parsed.timestamp; }
-        else edgeMap.set(key, { totalValue: parsed.value, totalValueUsd: val * priceUsd, count: 1, lastSeen: parsed.timestamp });
+        mergeEdge(edgeMap, `${parsed.from}:${parsed.to}`, parsed.value, val * priceUsd, parsed.timestamp);
       }
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, txs.length)));
       return;
     }
 
     if (chain === "dag") {
-      const data = await dagFetch(`/addresses/${address}/transactions?limit=30`);
+      const data = await dagFetch(`/addresses/${address}/transactions?limit=${hop1TxLimit}`);
       const rawTxs = (data["data"] as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
-      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+      const edgeMap = new Map<string, EdgeMapEntry>();
 
       for (const tx of rawTxs) {
         const fromAddr = String(tx["source"] ?? "");
@@ -1690,27 +1771,24 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         else edgeMap.set(key, { totalValue: val.toFixed(8), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
       }
 
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
       return;
     }
 
     if (chain === "xlm") {
-      const data = await stellarFetch(`/accounts/${address}/operations?limit=30&order=desc&join=transactions`);
+      const data = await stellarFetch(`/accounts/${address}/operations?limit=${hop1TxLimit}&order=desc&join=transactions`);
       const records = ((data["_empty"] ? [] : (data["_embedded"] as Record<string, unknown> | undefined)?.["records"]) as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
-      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+      const edgeMap = new Map<string, EdgeMapEntry>();
       for (const rec of records) {
         const parsed = parseStellarOp(rec, address, priceUsd);
         if (!parsed || !parsed.from || !parsed.to) continue;
         peerSet.add(parsed.from); peerSet.add(parsed.to);
         const val = parseFloat(parsed.value);
-        const key = `${parsed.from}:${parsed.to}`;
-        const ex = edgeMap.get(key);
-        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = parsed.timestamp; }
-        else edgeMap.set(key, { totalValue: parsed.value, totalValueUsd: val * priceUsd, count: 1, lastSeen: parsed.timestamp });
+        mergeEdge(edgeMap, `${parsed.from}:${parsed.to}`, parsed.value, val * priceUsd, parsed.timestamp);
       }
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, records.length)));
       return;
     }
@@ -1731,7 +1809,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
             const data = await coinstatsFetch(`/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=xdce-crowd-sale&limit=30`);
             const csTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
             const peerSet = new Set<string>();
-            const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+            const edgeMap = new Map<string, EdgeMapEntry>();
             for (const tx of csTxs) {
               const from = String(tx["from"] ?? tx["sender"] ?? "").toLowerCase();
               const to = String(tx["to"] ?? tx["receiver"] ?? "").toLowerCase();
@@ -1739,19 +1817,16 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
               peerSet.add(from); peerSet.add(to);
               const val = parseFloat(String(tx["amount"] ?? tx["value"] ?? "0"));
               const ts = tx["date"] ? new Date(String(tx["date"])).toISOString() : new Date().toISOString();
-              const key = `${from}:${to}`;
-              const ex = edgeMap.get(key);
-              if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = ts; }
-              else edgeMap.set(key, { totalValue: val.toFixed(6), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
+              mergeEdge(edgeMap, `${from}:${to}`, val.toFixed(6), val * priceUsd, ts);
             }
-            const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, 10);
+            const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, basePeerCap);
             res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, rpcAddr.toLowerCase(), csTxs.length)));
             return;
           } catch { /* CoinStats also failed — fall through to empty graph */ }
         }
       }
       const peerSet = new Set<string>();
-      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+      const edgeMap = new Map<string, EdgeMapEntry>();
       for (const tx of txData) {
         const from = String(tx["from"] ?? "").toLowerCase();
         const to = String(tx["to"] ?? "").toLowerCase();
@@ -1760,12 +1835,9 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         const rawVal = String(tx["value"] ?? "0");
         const val = Number(BigInt(rawVal === "" ? "0" : rawVal)) / 1e18;
         const ts = new Date(Number(tx["timeStamp"]) * 1000).toISOString();
-        const key = `${from}:${to}`;
-        const ex = edgeMap.get(key);
-        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = ts; }
-        else edgeMap.set(key, { totalValue: val.toFixed(6), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
+        mergeEdge(edgeMap, `${from}:${to}`, val.toFixed(6), val * priceUsd, ts);
       }
-      const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, 10);
+      const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, basePeerCap);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, rpcAddr.toLowerCase(), txData.length)));
       return;
     }
@@ -1775,12 +1847,13 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         // Fetch recent txs for connection graph
         const acctData = await hbarFetch(`/api/v1/accounts/${address}`);
         const createdTs = String(acctData["created_timestamp"] ?? "0").split(".")[0];
+        const hbarLimit = Math.min(hop1TxLimit, 100);
         const txData = await hbarFetch(
-          `/api/v1/transactions?account.id=${address}&order=asc&timestamp=gte:${createdTs}&limit=50`
+          `/api/v1/transactions?account.id=${address}&order=asc&timestamp=gte:${createdTs}&limit=${hbarLimit}`
         );
         const rawTxs = (txData["transactions"] as Record<string, unknown>[]) ?? [];
         const peerSet = new Set<string>();
-        const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+        const edgeMap = new Map<string, EdgeMapEntry>();
         for (const tx of rawTxs) {
           const transfers = (tx["transfers"] as Record<string, unknown>[]) ?? [];
           const net = hbarNetAmount(transfers, address);
@@ -1792,12 +1865,9 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
           const ts = new Date(Number(String(tx["consensus_timestamp"] ?? "0").split(".")[0]) * 1000).toISOString();
           const from = isOutgoing ? address : counterparty;
           const to = isOutgoing ? counterparty : address;
-          const key = `${from}:${to}`;
-          const ex = edgeMap.get(key);
-          if (ex) { ex.totalValueUsd += absHbar * priceUsd; ex.count += 1; ex.lastSeen = ts; }
-          else edgeMap.set(key, { totalValue: absHbar.toFixed(6), totalValueUsd: absHbar * priceUsd, count: 1, lastSeen: ts });
+          mergeEdge(edgeMap, `${from}:${to}`, absHbar.toFixed(6), absHbar * priceUsd, ts);
         }
-        const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+        const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
         res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
       } catch (err) {
         req.log.error({ err, address, chain: "hbar" }, "[HBAR] connections fetch failed");
@@ -1808,10 +1878,10 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
     if (COINSTATS_CHAINS.includes(chain)) {
       const connectionId = COIN_ID_MAP[chain] ?? chain;
-      const data = await coinstatsFetch(`/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=${connectionId}&limit=30`);
+      const data = await coinstatsFetch(`/wallet/transactions?address=${encodeURIComponent(address)}&connectionId=${connectionId}&limit=${Math.min(hop1TxLimit, 50)}`);
       const rawTxs = (data["transactions"] as Array<Record<string, unknown>>) ?? [];
       const peerSet = new Set<string>();
-      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+      const edgeMap = new Map<string, EdgeMapEntry>();
 
       for (const tx of rawTxs) {
         // Preserve original casing — XRP/XLM/HBAR addresses are case-sensitive
@@ -1821,13 +1891,10 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         peerSet.add(fromAddr); peerSet.add(toAddr);
         const val = parseFloat(String(tx["amount"] ?? tx["value"] ?? "0"));
         const ts = tx["date"] ? new Date(String(tx["date"])).toISOString() : new Date().toISOString();
-        const key = `${fromAddr}:${toAddr}`;
-        const ex = edgeMap.get(key);
-        if (ex) { ex.totalValueUsd += val * priceUsd; ex.count += 1; ex.lastSeen = ts; }
-        else edgeMap.set(key, { totalValue: val.toFixed(6), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
+        mergeEdge(edgeMap, `${fromAddr}:${toAddr}`, val.toFixed(6), val * priceUsd, ts);
       }
 
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
       return;
     }
@@ -1836,21 +1903,50 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       // ETH / Polygon — Blockscout v2 (no API key required)
       const { items } = await blockscoutFetchTxs(address, chain);
       const peerSet = new Set<string>();
-      const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
-      for (const tx of items) {
+      const edgeMap = new Map<string, EdgeMapEntry>();
+      const parseBlockscoutTx = (tx: Record<string, unknown>) => {
         const from = String((tx["from"] as Record<string, unknown> | null)?.["hash"] ?? "").toLowerCase();
         const toRaw = tx["to"] as Record<string, unknown> | null;
         const to = toRaw?.["hash"] != null ? String(toRaw["hash"]).toLowerCase() : null;
-        if (!from || !to) continue;
-        peerSet.add(from); peerSet.add(to);
+        if (!from || !to) return null;
         const weiValue = String(tx["value"] ?? "0");
         const ts = String(tx["timestamp"] ?? new Date().toISOString());
-        const key = `${from}:${to}`;
-        const ex = edgeMap.get(key);
-        if (ex) { ex.totalValueUsd += weiToUsd(weiValue, priceUsd); ex.count += 1; ex.lastSeen = ts; }
-        else edgeMap.set(key, { totalValue: weiToEth(weiValue), totalValueUsd: weiToUsd(weiValue, priceUsd), count: 1, lastSeen: ts });
+        return { from, to, weiValue, ts };
+      };
+      for (const tx of items) {
+        const p = parseBlockscoutTx(tx);
+        if (!p) continue;
+        peerSet.add(p.from); peerSet.add(p.to);
+        mergeEdge(edgeMap, `${p.from}:${p.to}`, weiToEth(p.weiValue), weiToUsd(p.weiValue, priceUsd), p.ts);
       }
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+
+      // BFS hop-2 expansion for ETH/Polygon (depth >= 2)
+      if (depth >= 2) {
+        const hop1Peers = Array.from(peerSet).filter(p => p !== address);
+        const maxExpandEvm = depth <= 2 ? 6 : depth <= 4 ? 10 : 14;
+        const sortedEvm = hop1Peers
+          .map(p => {
+            const fwd = edgeMap.get(`${address}:${p}`);
+            const rev = edgeMap.get(`${p}:${address}`);
+            return { p, w: (fwd?.totalValueUsd ?? 0) + (rev?.totalValueUsd ?? 0) };
+          })
+          .sort((a, b) => b.w - a.w)
+          .slice(0, maxExpandEvm);
+
+        await Promise.allSettled(sortedEvm.map(async ({ p: pAddr }) => {
+          try {
+            const { items: items2 } = await blockscoutFetchTxs(pAddr, chain);
+            for (const tx2 of items2.slice(0, 20)) {
+              const p2 = parseBlockscoutTx(tx2);
+              if (!p2) continue;
+              peerSet.add(p2.from); peerSet.add(p2.to);
+              mergeEdge(edgeMap, `${p2.from}:${p2.to}`, weiToEth(p2.weiValue), weiToUsd(p2.weiValue, priceUsd), p2.ts);
+            }
+          } catch { /* skip */ }
+        }));
+      }
+
+      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
       res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, items.length)));
       return;
     }
@@ -1858,12 +1954,12 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     // BSC (and any future EVM chain) — Etherscan-style (requires API key)
     const data = await etherscanFetch({
       module: "account", action: "txlist",
-      address, startblock: "0", endblock: "99999999", page: "1", offset: "50", sort: "desc",
+      address, startblock: "0", endblock: "99999999", page: "1", offset: String(hop1TxLimit), sort: "desc",
     }, chain);
 
     const txData = Array.isArray(data["result"]) ? (data["result"] as Array<Record<string, unknown>>) : [];
     const peerSet = new Set<string>();
-    const edgeMap = new Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>();
+    const edgeMap = new Map<string, EdgeMapEntry>();
 
     for (const tx of txData) {
       const from = String(tx["from"] ?? "").toLowerCase();
@@ -1872,17 +1968,10 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       const ts = new Date(Number(tx["timeStamp"]) * 1000).toISOString();
       if (!from || !to) continue;
       peerSet.add(from); peerSet.add(to);
-      const key = `${from}:${to}`;
-      const ex = edgeMap.get(key);
-      if (ex) { ex.totalValueUsd += weiToUsd(String(value), priceUsd); ex.count += 1; ex.lastSeen = ts; }
-      else edgeMap.set(key, {
-        totalValue: weiToEth(String(value)),
-        totalValueUsd: weiToUsd(String(value), priceUsd),
-        count: 1, lastSeen: ts,
-      });
+      mergeEdge(edgeMap, `${from}:${to}`, weiToEth(String(value)), weiToUsd(String(value), priceUsd), ts);
     }
 
-    const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, 10);
+    const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
     res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, txData.length)));
   } catch (err) {
     req.log.error({ err, address, chain }, `[${chain.toUpperCase()}] connections fetch failed — returning empty graph`);

@@ -143,7 +143,7 @@ export const GetWalletConnectionsParams = zod.object({
 
 export const getWalletConnectionsQueryChainDefault = `ethereum`;
 export const getWalletConnectionsQueryDepthDefault = 1;
-export const getWalletConnectionsQueryDepthMax = 3;
+export const getWalletConnectionsQueryDepthMax = 6;
 
 export const GetWalletConnectionsQueryParams = zod.object({
   chain: zod

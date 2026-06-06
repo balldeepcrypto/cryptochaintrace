@@ -3,11 +3,12 @@ import { useParams } from "wouter";
 import { useGetWalletConnections, getGetWalletConnectionsQueryKey } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Network, ZoomIn, ZoomOut, Maximize, AlertCircle, X, ExternalLink, FileText, Copy, Check } from "lucide-react";
+import { Network, ZoomIn, ZoomOut, Maximize, AlertCircle, X, ExternalLink, FileText, Copy, Check, BookmarkPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AddressDisplay } from "@/components/address-display";
 
 type ChainId = "ethereum" | "bitcoin" | "xrp" | "xlm" | "hbar" | "xdc" | "dag";
+type DepthStr = "1" | "2" | "3" | "4" | "5" | "6";
 
 const EXPLORER_MAP: Partial<Record<ChainId, (a: string) => string>> = {
   ethereum: (a) => `https://eth.blockscout.com/address/${a}`,
@@ -44,21 +45,35 @@ function nodeStyle(
   return   { fill: "#334155", ring: "#1e293b", glow: "rgba(71,85,105,0.25)",  radius:  8, textColor: "#94a3b8",  category: "standard" };
 }
 
+const DEPTH_LABELS: Record<DepthStr, string> = {
+  "1": "1 Hop (Quick)",
+  "2": "2 Hops (Standard)",
+  "3": "3 Hops (Deep)",
+  "4": "4 Hops (Extended)",
+  "5": "5 Hops (Thorough)",
+  "6": "6 Hops (Maximum)",
+};
+
 export default function TraceGraph() {
   const params = useParams();
   const address = params.address || "";
   const chain = (new URLSearchParams(window.location.search).get("chain") || "ethereum") as ChainId;
-  const [depth, setDepth] = useState<"1" | "2" | "3">("1");
+  const chainUp = chain.toUpperCase();
+
+  const [depth, setDepth] = useState<DepthStr>("1");
 
   const canvasRef    = useRef<HTMLCanvasElement>(null);
   const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
   const commRef      = useRef<Set<string>>(new Set());
 
-  const [hoveredAddr,  setHoveredAddr]  = useState<string | null>(null);
-  const [selectedAddr, setSelectedAddr] = useState<string | null>(null);
-  const [showNodeReport, setShowNodeReport] = useState(false);
-  const [nodeReportText, setNodeReportText] = useState("");
-  const [reportCopied,   setReportCopied]   = useState(false);
+  const [hoveredAddr,     setHoveredAddr]     = useState<string | null>(null);
+  const [selectedAddr,    setSelectedAddr]    = useState<string | null>(null);
+  const [showNodeReport,  setShowNodeReport]  = useState(false);
+  const [showGraphReport, setShowGraphReport] = useState(false);
+  const [nodeReportText,  setNodeReportText]  = useState("");
+  const [graphReportText, setGraphReportText] = useState("");
+  const [reportCopied,    setReportCopied]    = useState(false);
+  const [addedCopied,     setAddedCopied]     = useState(false);
 
   const { data: connections, isLoading, error } = useGetWalletConnections(address, {
     chain, depth: parseInt(depth),
@@ -93,18 +108,10 @@ export default function TraceGraph() {
     );
     commRef.current = commingling;
 
-    // Layout: radial rings by depth
+    // Layout: radial rings by depth (BFS from center via edges)
     const pos = new Map<string, { x: number; y: number }>();
     pos.set(connections.centerAddress, { x: CX, y: CY });
 
-    const byDepth = new Map<number, typeof connections.nodes>();
-    for (const n of connections.nodes) {
-      if (n.address === connections.centerAddress) continue;
-      const d = 1; // nodes don't carry depth in schema, treat as depth 1
-      if (!byDepth.has(d)) byDepth.set(d, []);
-      byDepth.get(d)!.push(n);
-    }
-    // Multi-depth from edges: derive depth from BFS
     const depthMap = new Map<string, number>();
     depthMap.set(connections.centerAddress, 0);
     const queue = [connections.centerAddress];
@@ -126,11 +133,17 @@ export default function TraceGraph() {
     }
     const maxD = Math.max(...[...depthGroups.keys()], 1);
     const minR = Math.min(W, H) * 0.15;
-    const maxR = Math.min(W, H) * 0.42;
+    const maxR = Math.min(W, H) * 0.44;
     for (const [d, addrs] of depthGroups) {
       const r = minR + (maxR - minR) * (d / maxD);
-      addrs.forEach((addr, i) => {
-        const angle = -Math.PI / 2 + (i / addrs.length) * 2 * Math.PI;
+      // Sort: commingling hubs and exchange nodes first for visual clarity
+      const sortedAddrs = [...addrs].sort((a, b) => {
+        const scoreA = commingling.has(a) ? 2 : connections.nodes.find(n => n.address === a)?.label ? 1 : 0;
+        const scoreB = commingling.has(b) ? 2 : connections.nodes.find(n => n.address === b)?.label ? 1 : 0;
+        return scoreB - scoreA;
+      });
+      sortedAddrs.forEach((addr, i) => {
+        const angle = -Math.PI / 2 + (i / sortedAddrs.length) * 2 * Math.PI;
         pos.set(addr, { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) });
       });
     }
@@ -143,19 +156,27 @@ export default function TraceGraph() {
     }
     positionsRef.current = pos;
 
-    // Draw edges
+    // Draw edges — highlight commingling/exchange edges more prominently
     for (const e of connections.edges) {
       const s = pos.get(e.from), t = pos.get(e.to);
       if (!s || !t) continue;
-      const hot = hovered === e.from || hovered === e.to;
+      const isHotEdge    = hovered === e.from || hovered === e.to;
+      const isCommEdge   = commingling.has(e.to) || commingling.has(e.from);
+      const isExchEdge   = connections.nodes.find(n => n.address === e.to)?.label != null;
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
       ctx.lineTo(t.x, t.y);
-      ctx.strokeStyle = hot ? "rgba(99,179,237,0.65)" : "rgba(99,179,237,0.1)";
-      ctx.lineWidth = hot ? 2 : 1;
+      ctx.strokeStyle = isHotEdge
+        ? "rgba(99,179,237,0.75)"
+        : isCommEdge
+        ? "rgba(234,179,8,0.25)"
+        : isExchEdge
+        ? "rgba(239,68,68,0.2)"
+        : "rgba(99,179,237,0.08)";
+      ctx.lineWidth = isHotEdge ? 2.5 : isCommEdge || isExchEdge ? 1.5 : 1;
       ctx.stroke();
       // Arrow at 60% along edge when hovered
-      if (hot) {
+      if (isHotEdge) {
         const px = s.x + (t.x - s.x) * 0.6, py = s.y + (t.y - s.y) * 0.6;
         const ang = Math.atan2(t.y - s.y, t.x - s.x);
         ctx.beginPath();
@@ -163,17 +184,18 @@ export default function TraceGraph() {
         ctx.lineTo(px + Math.cos(ang + Math.PI - 2.3) * 7, py + Math.sin(ang + Math.PI - 2.3) * 7);
         ctx.lineTo(px + Math.cos(ang + Math.PI + 2.3) * 7, py + Math.sin(ang + Math.PI + 2.3) * 7);
         ctx.closePath();
-        ctx.fillStyle = "rgba(99,179,237,0.65)";
+        ctx.fillStyle = "rgba(99,179,237,0.75)";
         ctx.fill();
       }
     }
 
-    // Draw nodes (back-to-front: standard → special → center)
+    // Draw nodes (back-to-front: standard → high-risk → exchange → commingling → center)
     const sorted = [...connections.nodes].sort((a, b) => {
       const rank = (n: typeof a) =>
-        n.address === connections.centerAddress ? 3 :
-        commingling.has(n.address) ? 2 :
-        n.label ? 1 : 0;
+        n.address === connections.centerAddress ? 4 :
+        commingling.has(n.address) ? 3 :
+        n.label ? 2 :
+        (n.riskScore ?? 0) > 70 ? 1 : 0;
       return rank(a) - rank(b);
     });
 
@@ -187,12 +209,12 @@ export default function TraceGraph() {
       const r  = st.radius + (isHov ? 3 : 0);
 
       // Glow ring on hover/select
-      if (isHov || isSel) {
-        const grad = ctx.createRadialGradient(p.x, p.y, r * 0.4, p.x, p.y, r + 16);
+      if (isHov || isSel || isComm || node.label) {
+        const grad = ctx.createRadialGradient(p.x, p.y, r * 0.4, p.x, p.y, r + (isHov || isSel ? 20 : 12));
         grad.addColorStop(0, st.glow);
         grad.addColorStop(1, "transparent");
         ctx.beginPath();
-        ctx.arc(p.x, p.y, r + 16, 0, 2 * Math.PI);
+        ctx.arc(p.x, p.y, r + (isHov || isSel ? 20 : 12), 0, 2 * Math.PI);
         ctx.fillStyle = grad;
         ctx.fill();
       }
@@ -215,7 +237,7 @@ export default function TraceGraph() {
       ctx.lineWidth = isHov ? 2.5 : 1.5;
       ctx.stroke();
       // Label
-      ctx.font = `${node.address === connections.centerAddress ? "bold " : ""}10px monospace`;
+      ctx.font = `${node.address === connections.centerAddress || isComm ? "bold " : ""}10px monospace`;
       ctx.textAlign = "center";
       ctx.fillStyle = isHov ? "#fff" : st.textColor;
       const lbl = node.label
@@ -225,10 +247,8 @@ export default function TraceGraph() {
     }
   }, [connections, selectedAddr]);
 
-  // Redraw whenever data / hover / selection changes
   useEffect(() => { drawGraph(hoveredAddr); }, [connections, hoveredAddr, selectedAddr, drawGraph]);
 
-  // Mouse event handlers
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !connections) return;
@@ -261,14 +281,22 @@ export default function TraceGraph() {
     };
   }, [connections]);
 
-  const selectedNode = connections?.nodes.find(n => n.address === selectedAddr) ?? null;
-  const explorerUrl  = EXPLORER_MAP[chain];
-  const isCommingling = selectedAddr ? commRef.current.has(selectedAddr) : false;
+  const selectedNode    = connections?.nodes.find(n => n.address === selectedAddr) ?? null;
+  const explorerUrl     = EXPLORER_MAP[chain];
+  const isCommingling   = selectedAddr ? commRef.current.has(selectedAddr) : false;
+
+  // Edges between selected node and center (for panel stats)
+  const edgesWithCenter = connections?.edges.filter(e =>
+    (e.from === selectedAddr && e.to === address) ||
+    (e.to === selectedAddr   && e.from === address)
+  ) ?? [];
+  const txsWithCenter  = edgesWithCenter.reduce((s, e) => s + (e.transactionCount ?? 0), 0);
+  const volWithCenter  = edgesWithCenter.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+  const usdWithCenter  = edgesWithCenter.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
 
   function genNodeReport(): string {
     if (!selectedNode) return "";
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
-    const chainUp = chain.toUpperCase();
     const nodeType = selectedNode.isContract
       ? "SMART CONTRACT"
       : isCommingling
@@ -281,7 +309,7 @@ export default function TraceGraph() {
       `║        INVESTIGATIVE REPORT — CryptoChainTrace              ║`,
       `╚══════════════════════════════════════════════════════════════╝`,
       `Generated : ${now}`,
-      `Chain     : ${chainUp}   |   Source: Trace Graph`,
+      `Chain     : ${chainUp}   |   Source: Trace Graph (${DEPTH_LABELS[depth]})`,
       ``,
       `─── NODE DETAILS ${"─".repeat(47)}`,
       ``,
@@ -290,7 +318,14 @@ export default function TraceGraph() {
       `  Type       : ${nodeType}`,
       `  Risk Score : ${selectedNode.riskScore != null ? selectedNode.riskScore : "UNSCORED"}`,
       ...(selectedNode.balance && selectedNode.balance !== "0" ? [`  Balance    : ${selectedNode.balance} ${chainUp}`] : []),
-      ...(selectedNode.transactionCount != null ? [`  Tx Count   : ${selectedNode.transactionCount}`] : []),
+      ...(selectedNode.transactionCount != null ? [`  Total Txs  : ${selectedNode.transactionCount}`] : []),
+      ...(txsWithCenter > 0 ? [
+        ``,
+        `─── CONNECTION TO CENTER WALLET ${"─".repeat(32)}`,
+        ``,
+        `  Txs w/ Center : ${txsWithCenter}`,
+        `  Volume        : ${volWithCenter.toFixed(4)} ${chainUp}${usdWithCenter > 0 ? `  ($${usdWithCenter.toLocaleString("en-US", {maximumFractionDigits: 2})})` : ""}`,
+      ] : []),
       ...(isCommingling ? [
         ``,
         `  ⚠ COMMINGLING HUB — Receives funds from multiple independent`,
@@ -299,14 +334,107 @@ export default function TraceGraph() {
       ``,
       `─── GRAPH CONTEXT ${"─".repeat(46)}`,
       ``,
-      `  Identified in connection graph for:`,
-      `  ${address}`,
+      `  Center wallet : ${address}`,
+      `  Graph depth   : ${depth} hop${parseInt(depth) !== 1 ? "s" : ""}`,
+      `  Total nodes   : ${connections?.nodes.length ?? 0}`,
+      `  Total edges   : ${connections?.edges.length ?? 0}`,
+      `  Commingle hubs: ${commRef.current.size}`,
       ``,
       `${"═".repeat(64)}`,
       `Generated by CryptoChainTrace  ·  cryptochaintrace.replit.app`,
     ];
     return lines.join("\n");
   }
+
+  function genGraphReport(): string {
+    if (!connections) return "";
+    const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
+    const commingling = commRef.current;
+    const hubNodes     = connections.nodes.filter(n => commingling.has(n.address));
+    const exchNodes    = connections.nodes.filter(n => n.label && !commingling.has(n.address));
+    const highRiskNodes = connections.nodes.filter(n => (n.riskScore ?? 0) > 70 && !commingling.has(n.address) && !n.label);
+    const sortedEdges  = [...connections.edges].sort((a, b) =>
+      parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0")
+    );
+    const lines: string[] = [
+      `╔══════════════════════════════════════════════════════════════╗`,
+      `║    GRAPH INVESTIGATIVE REPORT — CryptoChainTrace            ║`,
+      `╚══════════════════════════════════════════════════════════════╝`,
+      `Generated  : ${now}`,
+      `Chain      : ${chainUp}   |   Depth: ${depth} hop${parseInt(depth) !== 1 ? "s" : ""} (${DEPTH_LABELS[depth]})`,
+      `Center     : ${address}`,
+      ``,
+      `─── GRAPH SUMMARY ${"─".repeat(46)}`,
+      ``,
+      `  Total Nodes       : ${connections.nodes.length}`,
+      `  Total Edges       : ${connections.edges.length}`,
+      `  Commingling Hubs  : ${commingling.size}`,
+      `  Exchange Nodes    : ${exchNodes.length}`,
+      `  High-Risk Nodes   : ${highRiskNodes.length}`,
+      ``,
+    ];
+
+    if (hubNodes.length > 0) {
+      lines.push(`─── ⚠ COMMINGLING HUBS (${hubNodes.length}) ${"─".repeat(40)}`);
+      lines.push(``);
+      for (const n of hubNodes) {
+        const inEdges = connections.edges.filter(e => e.to === n.address);
+        const sources = [...new Set(inEdges.map(e => e.from))];
+        lines.push(`  ${n.address}`);
+        lines.push(`    Receives from ${sources.length} source wallet${sources.length !== 1 ? "s" : ""}:`);
+        for (const src of sources.slice(0, 5)) {
+          const vol = inEdges.filter(e => e.from === src).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+          lines.push(`    · ${src}  (${vol.toFixed(4)} ${chainUp})`);
+        }
+        lines.push(``);
+      }
+    }
+
+    if (exchNodes.length > 0) {
+      lines.push(`─── EXCHANGE / KNOWN ENTITIES (${exchNodes.length}) ${"─".repeat(33)}`);
+      lines.push(``);
+      for (const n of exchNodes) {
+        const vol = connections.edges
+          .filter(e => e.from === n.address || e.to === n.address)
+          .reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+        lines.push(`  ${n.label?.toUpperCase() ?? n.address}`);
+        lines.push(`  ${n.address}  |  Volume: ${vol.toFixed(4)} ${chainUp}`);
+        lines.push(``);
+      }
+    }
+
+    lines.push(`─── ALL NODES ${"─".repeat(50)}`);
+    lines.push(``);
+    for (const n of connections.nodes) {
+      const tag = n.address === address ? "[CENTER]"
+                : commingling.has(n.address) ? "[HUB]"
+                : n.label ? `[${n.label}]`
+                : (n.riskScore ?? 0) > 70 ? "[HIGH-RISK]"
+                : "";
+      lines.push(`  ${n.address}  ${tag}`);
+    }
+    lines.push(``);
+    lines.push(`─── TOP FLOWS (by volume) ${"─".repeat(38)}`);
+    lines.push(``);
+    for (const e of sortedEdges.slice(0, 25)) {
+      const vol = parseFloat(e.totalValue || "0");
+      const usd = e.totalValueUsd ?? 0;
+      const usdStr = usd > 0 ? `  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : "";
+      lines.push(`  ${e.from}`);
+      lines.push(`    → ${e.to}`);
+      lines.push(`    ${vol.toFixed(4)} ${chainUp}${usdStr}  |  ${e.transactionCount} tx${e.transactionCount !== 1 ? "s" : ""}`);
+      lines.push(``);
+    }
+    lines.push(`${"═".repeat(64)}`);
+    lines.push(`Generated by CryptoChainTrace  ·  cryptochaintrace.replit.app`);
+    return lines.join("\n");
+  }
+
+  const copyText = (text: string) => {
+    navigator.clipboard.writeText(text).catch(() => {});
+    setReportCopied(true);
+    setTimeout(() => setReportCopied(false), 2500);
+  };
 
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
@@ -323,14 +451,22 @@ export default function TraceGraph() {
             </div>
             <div>
               <h3 className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">Network Depth</h3>
-              <Select value={depth} onValueChange={(v: "1" | "2" | "3") => setDepth(v)}>
+              <Select value={depth} onValueChange={(v: DepthStr) => setDepth(v)}>
                 <SelectTrigger className="font-mono h-8"><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="1">1 Hop (Direct)</SelectItem>
-                  <SelectItem value="2">2 Hops (Extended)</SelectItem>
+                  <SelectItem value="1">1 Hop (Quick)</SelectItem>
+                  <SelectItem value="2">2 Hops (Standard)</SelectItem>
                   <SelectItem value="3">3 Hops (Deep)</SelectItem>
+                  <SelectItem value="4">4 Hops (Extended)</SelectItem>
+                  <SelectItem value="5">5 Hops (Thorough)</SelectItem>
+                  <SelectItem value="6">6 Hops (Maximum)</SelectItem>
                 </SelectContent>
               </Select>
+              {parseInt(depth) >= 3 && (
+                <p className="text-[10px] font-mono text-yellow-500/70 mt-1">
+                  Deeper graphs may take a few seconds to load.
+                </p>
+              )}
             </div>
             {connections && (
               <div className="pt-2 border-t border-border/50 grid grid-cols-3 gap-2 text-xs font-mono">
@@ -349,10 +485,17 @@ export default function TraceGraph() {
               </div>
             )}
             {connections && (
-              <p className="text-[10px] font-mono text-muted-foreground/50 pt-1 border-t border-border/30">
-                Click any node for details
-              </p>
+              <button
+                onClick={() => { setGraphReportText(genGraphReport()); setShowGraphReport(true); }}
+                className="w-full flex items-center justify-center gap-1.5 text-[11px] font-mono text-emerald-300 hover:text-emerald-200 bg-emerald-950/30 hover:bg-emerald-950/50 border border-emerald-500/30 hover:border-emerald-500/50 rounded px-2 py-2 transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                Generate Investigative Report from Graph
+              </button>
             )}
+            <p className="text-[10px] font-mono text-muted-foreground/50 pt-0 border-t border-border/30">
+              Click any node for details · hover for edges
+            </p>
           </div>
         </Card>
 
@@ -363,9 +506,30 @@ export default function TraceGraph() {
         </div>
       </div>
 
-      {/* ── Node info popup ── */}
+      {/* ── Canvas ── */}
+      {isLoading && (
+        <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+          <div className="flex flex-col items-center gap-3">
+            <Network className="w-8 h-8 text-primary animate-pulse" />
+            <span className="text-sm font-mono text-muted-foreground">
+              Building {DEPTH_LABELS[depth]} graph…
+            </span>
+          </div>
+        </div>
+      )}
+      {error && (
+        <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
+          <div className="flex flex-col items-center gap-3 text-destructive">
+            <AlertCircle className="w-8 h-8" />
+            <span className="text-sm font-mono">Failed to load graph data</span>
+          </div>
+        </div>
+      )}
+      <canvas ref={canvasRef} className="w-full h-full" style={{ cursor: "crosshair" }} />
+
+      {/* ── Node info panel ── */}
       {selectedNode && (
-        <div className="absolute bottom-24 right-4 z-20 pointer-events-auto w-80 max-w-[calc(100vw-2rem)]">
+        <div className="absolute bottom-24 right-4 z-20 pointer-events-auto w-[22rem] max-w-[calc(100vw-2rem)]">
           <Card className={`bg-[#0d1117]/96 backdrop-blur-sm shadow-2xl border ${
             isCommingling            ? "border-yellow-500/60" :
             selectedNode.label       ? "border-red-500/50"    :
@@ -403,7 +567,7 @@ export default function TraceGraph() {
               {/* Stats grid */}
               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/30">
                 <div className="text-center">
-                  <div className="text-[9px] font-mono text-muted-foreground mb-0.5">TXS</div>
+                  <div className="text-[9px] font-mono text-muted-foreground mb-0.5">TOTAL TXS</div>
                   <div className="text-sm font-mono font-bold">{selectedNode.transactionCount ?? "—"}</div>
                 </div>
                 <div className="text-center">
@@ -421,11 +585,37 @@ export default function TraceGraph() {
                 </div>
               </div>
 
+              {/* Connection to center stats */}
+              {txsWithCenter > 0 && selectedAddr !== address && (
+                <div className="pt-2 border-t border-border/20 space-y-1">
+                  <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider">With Center Wallet</div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="bg-border/10 rounded px-2 py-1 text-center">
+                      <div className="text-[9px] font-mono text-muted-foreground">TXS</div>
+                      <div className="text-sm font-mono font-bold text-primary">{txsWithCenter}</div>
+                    </div>
+                    <div className="bg-border/10 rounded px-2 py-1 text-center">
+                      <div className="text-[9px] font-mono text-muted-foreground">VOLUME</div>
+                      <div className="text-xs font-mono font-bold text-primary">
+                        {volWithCenter >= 1000
+                          ? `${(volWithCenter / 1000).toFixed(1)}K`
+                          : volWithCenter.toFixed(3)}{" "}{chainUp}
+                      </div>
+                    </div>
+                  </div>
+                  {usdWithCenter > 0 && (
+                    <div className="text-[10px] font-mono text-center text-muted-foreground">
+                      ≈ ${usdWithCenter.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD
+                    </div>
+                  )}
+                </div>
+              )}
+
               {/* Balance */}
               {selectedNode.balance && selectedNode.balance !== "0" && (
                 <div className="pt-1 border-t border-border/20 text-xs font-mono text-center">
                   <span className="text-muted-foreground">BALANCE  </span>
-                  <span className="text-primary font-bold">{selectedNode.balance} {chain.toUpperCase()}</span>
+                  <span className="text-primary font-bold">{selectedNode.balance} {chainUp}</span>
                 </div>
               )}
 
@@ -456,10 +646,23 @@ export default function TraceGraph() {
                   )}
                 </div>
                 <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(selectedNode.address).catch(() => {});
+                    setAddedCopied(true);
+                    setTimeout(() => setAddedCopied(false), 2500);
+                  }}
+                  className="w-full flex items-center justify-center gap-1.5 text-[11px] font-mono text-cyan-300 hover:text-cyan-200 bg-cyan-950/30 hover:bg-cyan-950/50 border border-cyan-500/30 hover:border-cyan-500/50 rounded px-2 py-1.5 transition-colors"
+                >
+                  {addedCopied
+                    ? <><Check className="w-3 h-3" /> Copied! Paste into Commingle Check</>
+                    : <><BookmarkPlus className="w-3 h-3" /> Add to Commingle Check</>
+                  }
+                </button>
+                <button
                   onClick={() => { setNodeReportText(genNodeReport()); setShowNodeReport(true); }}
                   className="w-full flex items-center justify-center gap-1.5 text-[11px] font-mono text-orange-300 hover:text-orange-200 bg-orange-950/30 hover:bg-orange-950/50 border border-orange-500/30 hover:border-orange-500/50 rounded px-2 py-1.5 transition-colors"
                 >
-                  <FileText className="w-3 h-3" /> Generate Investigative Report
+                  <FileText className="w-3 h-3" /> Node Investigative Report
                 </button>
               </div>
             </div>
@@ -485,84 +688,61 @@ export default function TraceGraph() {
             </div>
           ))}
         </div>
-        <div className="mt-2 pt-2 border-t border-border/30 text-[9px] font-mono text-muted-foreground/50">
-          Click node for details · hover for edges
-        </div>
       </Card>
 
       {/* ── Node Report Modal ── */}
       {showNodeReport && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4"
-          onClick={() => setShowNodeReport(false)}
-        >
-          <div
-            className="relative w-full max-w-3xl bg-[#0a0c10] border border-orange-500/30 rounded-lg shadow-2xl flex flex-col max-h-[85vh]"
-            onClick={(e) => e.stopPropagation()}
-          >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowNodeReport(false)}>
+          <div className="relative w-full max-w-3xl bg-[#0a0c10] border border-orange-500/30 rounded-lg shadow-2xl flex flex-col max-h-[85vh]" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0">
               <div className="flex items-center gap-3">
                 <div className="w-2 h-2 rounded-full bg-orange-500 animate-pulse" />
-                <span className="font-mono text-sm text-orange-300 font-bold uppercase tracking-widest">Investigative Report</span>
-                <span className="text-[11px] font-mono text-muted-foreground">{chain.toUpperCase()} · Trace Graph Node</span>
+                <span className="font-mono text-sm text-orange-300 font-bold uppercase tracking-widest">Node Investigative Report</span>
+                <span className="text-[11px] font-mono text-muted-foreground">{chainUp} · Trace Graph</span>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => {
-                    navigator.clipboard.writeText(nodeReportText).catch(() => {});
-                    setReportCopied(true);
-                    setTimeout(() => setReportCopied(false), 2500);
-                  }}
-                  className={`flex items-center gap-1.5 text-[11px] font-mono px-3 py-1.5 rounded border transition-colors ${
-                    reportCopied
-                      ? "border-green-500/50 text-green-400 bg-green-950/30"
-                      : "border-orange-500/30 text-orange-300 hover:bg-orange-950/30 hover:border-orange-500/60"
-                  }`}
+                  onClick={() => copyText(nodeReportText)}
+                  className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground hover:text-foreground border border-border/40 hover:border-border/70 rounded px-3 py-1.5 transition-colors"
                 >
-                  {reportCopied ? <><Check className="w-3.5 h-3.5" /> COPIED!</> : <><Copy className="w-3.5 h-3.5" /> COPY</>}
+                  {reportCopied ? <><Check className="w-3 h-3 text-green-400" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy</>}
                 </button>
-                <button
-                  onClick={() => setShowNodeReport(false)}
-                  className="text-muted-foreground hover:text-foreground transition-colors p-1"
-                >
+                <button onClick={() => setShowNodeReport(false)} className="text-muted-foreground hover:text-foreground transition-colors ml-1">
                   <X className="w-4 h-4" />
                 </button>
               </div>
             </div>
-            <div className="overflow-y-auto flex-1 p-5">
-              <pre className="font-mono text-[11px] leading-relaxed text-green-300/90 whitespace-pre bg-transparent select-all">
-                {nodeReportText}
-              </pre>
-            </div>
-            <div className="px-5 py-3 border-t border-border/30 shrink-0 text-[10px] font-mono text-muted-foreground/50">
-              Click anywhere outside to close · Select text to copy manually
-            </div>
+            <pre className="flex-1 overflow-auto p-5 text-[11px] font-mono text-foreground/90 leading-relaxed whitespace-pre">{nodeReportText}</pre>
           </div>
         </div>
       )}
 
-      {/* ── Canvas ── */}
-      <div className="flex-1 relative w-full h-full bg-[#060810]">
-        {isLoading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/50 backdrop-blur-sm z-20">
-            <Network className="w-12 h-12 text-primary animate-pulse mb-4" />
-            <div className="text-primary font-mono tracking-widest text-sm animate-pulse">MAPPING NETWORK...</div>
+      {/* ── Graph Report Modal ── */}
+      {showGraphReport && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4" onClick={() => setShowGraphReport(false)}>
+          <div className="relative w-full max-w-4xl bg-[#0a0c10] border border-emerald-500/30 rounded-lg shadow-2xl flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-5 py-4 border-b border-border/40 shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+                <span className="font-mono text-sm text-emerald-300 font-bold uppercase tracking-widest">Graph Investigative Report</span>
+                <span className="text-[11px] font-mono text-muted-foreground">{chainUp} · {DEPTH_LABELS[depth]} · {connections?.nodes.length} nodes</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => copyText(graphReportText)}
+                  className="flex items-center gap-1.5 text-[11px] font-mono text-muted-foreground hover:text-foreground border border-border/40 hover:border-border/70 rounded px-3 py-1.5 transition-colors"
+                >
+                  {reportCopied ? <><Check className="w-3 h-3 text-green-400" /> Copied!</> : <><Copy className="w-3 h-3" /> Copy</>}
+                </button>
+                <button onClick={() => setShowGraphReport(false)} className="text-muted-foreground hover:text-foreground transition-colors ml-1">
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+            </div>
+            <pre className="flex-1 overflow-auto p-5 text-[11px] font-mono text-foreground/90 leading-relaxed whitespace-pre">{graphReportText}</pre>
           </div>
-        )}
-        {error && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm z-20">
-            <AlertCircle className="w-12 h-12 text-destructive mb-4" />
-            <div className="text-destructive font-mono tracking-widest text-sm">FAILED TO MAP CONNECTIONS</div>
-          </div>
-        )}
-        {connections && connections.nodes.length === 0 && !isLoading && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
-            <Network className="w-16 h-16 text-muted-foreground/15 mb-4" />
-            <div className="text-muted-foreground/40 font-mono text-sm">NO CONNECTIONS FOUND</div>
-          </div>
-        )}
-        <canvas ref={canvasRef} className="w-full h-full block" />
-      </div>
+        </div>
+      )}
     </div>
   );
 }

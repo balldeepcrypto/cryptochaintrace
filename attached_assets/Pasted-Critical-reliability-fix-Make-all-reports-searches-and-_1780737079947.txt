@@ -1,0 +1,35 @@
+Critical reliability fix: Make all reports, searches, and multi-hop functions stable and deterministic.
+
+### Problem
+The app currently produces inconsistent results when running the same query multiple times. Examples:
+- Same 6-hop graph query returns different numbers of commingling hubs and exchanges between runs.
+- This creates unreliable / mixed data, which is unacceptable for a forensics tool.
+
+### Goal
+Make the entire application produce **stable, deterministic, and repeatable results** so the same input always returns the same (or extremely consistent) output. No more mixed or false data between runs.
+
+### Required Changes
+
+1. **Graph / Multi-hop Expansion (Trace Graph + Graph Report)**
+   - Make 4–6 hop BFS expansion fully deterministic.
+   - Fix `prioritizePeers()` (or equivalent) so peer selection and expansion order is stable every time.
+   - Use deterministic tie-breakers (known exchanges first → commingling signals → volume → address string).
+   - Ensure the same wallet + depth always returns the same set of hubs, exchanges, and top flows.
+
+2. **Full Package Reports**
+   - Ensure Commingle Check, Intersection/Funnel, and Exchange Flows sections produce consistent results when run on the same wallet set.
+   - Report generation (text + PDF) must be deterministic.
+
+3. **Other Areas**
+   - Wallet transaction fetching and normalization (especially XDC) must be stable.
+   - Any sorting, filtering, or aggregation used in reports or search functions must be deterministic.
+   - Caching (if used) must not cause different results between runs.
+
+4. **High-Risk Nodes Counter (Secondary)**
+   - While making the above changes, also fix the High-Risk Nodes counter in the Graph Summary so it correctly counts nodes with `peelScore ≥ 70`.
+
+### Requirements
+- Same input = same output (within normal network variance).
+- Prioritize accuracy and consistency over minor performance gains.
+- Add clear comments explaining the determinism logic.
+- Test that repeated runs of the same query now produce consistent hub/exchange counts and report content.

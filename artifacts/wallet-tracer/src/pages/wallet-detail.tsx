@@ -2794,11 +2794,13 @@ export default function WalletDetail() {
 
     if (exchMap.size === 0) return "  No exchange targets identified. Load full TX history and re-run.";
 
+    // Stable: US-regulated first → tx count → address tie-breaker
     const sorted = Array.from(exchMap.values()).sort((a, b) => {
       const aUS = US_REGULATED.has(a.exchLabel.split(/\s+/)[0]) ? 0 : 1;
       const bUS = US_REGULATED.has(b.exchLabel.split(/\s+/)[0]) ? 0 : 1;
       if (aUS !== bUS) return aUS - bUS;
-      return b.txs.length - a.txs.length;
+      if (b.txs.length !== a.txs.length) return b.txs.length - a.txs.length;
+      return a.exchAddr.localeCompare(b.exchAddr);
     });
 
     const out: string[] = [];
@@ -2959,11 +2961,15 @@ export default function WalletDetail() {
       // 2. Top exchange subpoena target (US-first)
       if (exchFlows.length > 0) {
         const kfUS  = new Set(["Coinbase","COINBASE","Kraken","KRAKEN","Gemini","GEMINI","Bitstamp","BITSTAMP","Uphold","UPHOLD","Robinhood","ROBINHOOD","Binance.US","BINANCE.US","Bittrex","BITTREX","eToro","ETORO"]);
+        // Stable: US-regulated → volume → address tie-breaker
         const kfTop = [...exchFlows].sort((a, b) => {
           const uA = kfUS.has(a.exchLabel.split(/\s+/)[0]) ? 0 : 1;
           const uB = kfUS.has(b.exchLabel.split(/\s+/)[0]) ? 0 : 1;
           if (uA !== uB) return uA - uB;
-          return b.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0) - a.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const vA = a.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          const vB = b.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
+          if (vB !== vA) return vB - vA;
+          return a.exchAddr.localeCompare(b.exchAddr);
         })[0];
         const tfVol = kfTop.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
         const isUS  = kfUS.has(kfTop.exchLabel.split(/\s+/)[0]);
@@ -2977,7 +2983,8 @@ export default function WalletDetail() {
         const pcKF = new Map<string, Tx[]>();
         for (const [w, txs] of Object.entries(cr?.walletTxs ?? {})) pcKF.set(w, txs);
         if (exchWalletTxMap) for (const [w, txs] of exchWalletTxMap) if (!pcKF.has(w)) pcKF.set(w, txs);
-        const pcArr = Array.from(pcKF.entries()).map(([w, txs]) => ({ wallet: w, score: detectPeelChainPatterns(txs, chain).peelChainScore })).sort((a, b) => b.score - a.score);
+        // Stable: highest peel score first; wallet address tie-breaker
+        const pcArr = Array.from(pcKF.entries()).map(([w, txs]) => ({ wallet: w, score: detectPeelChainPatterns(txs, chain).peelChainScore })).sort((a, b) => b.score - a.score || a.wallet.localeCompare(b.wallet));
         if (pcArr.length > 0 && pcArr[0].score >= 40) {
           const allW = cr ? [address, ...cr.comparisonWallets] : [address];
           const wi   = allW.indexOf(pcArr[0].wallet);
@@ -3296,12 +3303,14 @@ export default function WalletDetail() {
         const flowTxs = (cr?.exchFlows ?? []).filter(f => f.exchAddr === addr).flatMap(f => f.txs);
         if (flowTxs.length > 0) e.peelScore = detectPeelChainPatterns(flowTxs, chain).peelChainScore;
       }
+      // Stable: US-regulated → wallet count → volume → address tie-breaker
       const sorted5 = Array.from(t10Map.values()).sort((a, b) => {
         const aUS = US_REG_S5.has(a.label.split(/\s+/)[0]) ? 0 : 1;
         const bUS = US_REG_S5.has(b.label.split(/\s+/)[0]) ? 0 : 1;
         if (aUS !== bUS) return aUS - bUS;
         if (a.wallets.size !== b.wallets.size) return b.wallets.size - a.wallets.size;
-        return b.vol - a.vol;
+        if (b.vol !== a.vol) return b.vol - a.vol;
+        return a.addr.localeCompare(b.addr);
       });
       const top10 = sorted5.slice(0, 10);
 
@@ -3348,19 +3357,22 @@ export default function WalletDetail() {
       const allWallets = cr ? [address, ...cr.comparisonWallets] : [address];
 
       // Sort exchange flows by volume descending for all subsequent use
+      // Stable: highest volume first; address tie-breaker
       const sortedFlows = [...exchFlows].sort((a, b) => {
         const vA = a.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
         const vB = b.txs.reduce((s, t) => s + (parseFloat(t.value) || 0), 0);
-        return vB - vA;
+        if (vB !== vA) return vB - vA;
+        return a.exchAddr.localeCompare(b.exchAddr);
       }).slice(0, 10);
 
       // Peel scores per wallet (for insights bullet)
       const pcMap6 = new Map<string, Tx[]>();
       for (const [w, txs] of Object.entries(cr?.walletTxs ?? {})) pcMap6.set(w, txs);
       if (exchWalletTxMap) for (const [w, txs] of exchWalletTxMap) if (!pcMap6.has(w)) pcMap6.set(w, txs);
+      // Stable: highest peel score first; wallet address tie-breaker
       const walletPeels = Array.from(pcMap6.entries())
         .map(([w, txs]) => ({ wallet: w, score: detectPeelChainPatterns(txs, chain).peelChainScore }))
-        .sort((a, b) => b.score - a.score);
+        .sort((a, b) => b.score - a.score || a.wallet.localeCompare(b.wallet));
       const topPeel    = walletPeels[0];
       const totalVol6  = sortedFlows.reduce((s, f) => s + f.txs.reduce((ss, t) => ss + (parseFloat(t.value) || 0), 0), 0);
       const uniqueExch6 = new Set(sortedFlows.map(f => f.exchAddr)).size;
@@ -4837,16 +4849,17 @@ export default function WalletDetail() {
       const shared = Array.from(addressMap.values())
         .filter(e => e.appearances.length >= 2 && isPrivateWallet(e.address));
 
+      // Stable: most appearances first; address tie-breaker for all three lists
       const sharedCounterparties = shared
         .filter(s => s.appearances.some(a => a.depth === 1))
-        .sort((a, b) => b.appearances.length - a.appearances.length);
+        .sort((a, b) => b.appearances.length - a.appearances.length || a.address.localeCompare(b.address));
 
       const commonEndpoints = shared
         .filter(s => s.appearances.every(a => a.depth >= 2))
-        .sort((a, b) => b.appearances.length - a.appearances.length);
+        .sort((a, b) => b.appearances.length - a.appearances.length || a.address.localeCompare(b.address));
 
       const patterns = [...shared]
-        .sort((a, b) => b.appearances.length - a.appearances.length)
+        .sort((a, b) => b.appearances.length - a.appearances.length || a.address.localeCompare(b.address))
         .slice(0, 20)
         .map((s, i) => ({
           id: i + 1,
@@ -5016,7 +5029,9 @@ export default function WalletDetail() {
           return 2; // exchange / bridge / genesis
         };
         if (rank(a) !== rank(b)) return rank(a) - rank(b);
-        return b.txCountTarget - a.txCountTarget;
+        // Stable: longer path first; address tie-breaker for equal path lengths
+        if (b.txCountTarget !== a.txCountTarget) return b.txCountTarget - a.txCountTarget;
+        return a.sharedAddress.localeCompare(b.sharedAddress);
       });
 
       const tieredCounts: [number, number, number, number, number, number] = [

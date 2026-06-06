@@ -1,0 +1,30 @@
+Polish and improve the quality of the Graph Investigative Report with the following targeted fixes:
+
+### 1. Improve Key Findings Quality
+- Make the ★ KEY FINDINGS section generate stronger, more specific, and investigative bullet points (aim for 5 bullets instead of 3).
+- Bullets should feel sharper and more actionable. Avoid generic statements.
+- Fix the bug where text gets cut off mid-sentence in the PDF.
+- Include more concrete details when possible (e.g. specific volumes, number of hubs, notable exchange flows, or high peel-risk wallets).
+- Keep the section concise but make every bullet count.
+
+### 2. Stabilize Commingling Hub Detection at 6 Hops
+- The number of detected commingling hubs is fluctuating too much between runs at 6 hops (previously showed 10, now only showing 4).
+- Improve the hub detection logic so results are more stable and consistent at maximum depth.
+- Ensure that strong, high-volume mixing nodes are not being missed or dropped at 6 hops.
+
+### 3. Improve Peel-Chain Scoring Usefulness
+- Currently most hubs are scoring low (18–30/100). Improve the peel scoring logic so it better identifies meaningful layering behavior.
+- Make high peel scores more meaningful — either by adjusting the scoring thresholds or by improving how the signals are weighted.
+- In the report, add a short one-line explanation next to high peel scores (e.g. "High fan-out + repeated small outflows to exchanges").
+
+### 4. General Report Polish
+- Clean up any formatting issues in the PDF export (cut-off text, awkward spacing, etc.).
+- Make the RECOMMENDED SUBPOENA TARGETS section slightly more detailed where helpful (e.g. mention how many of the connected wallets are commingling hubs).
+- Ensure the overall report feels clean, professional, and consistent.
+
+### Requirements
+- Do not remove or break any existing features (Focus Mode, volume scaling, hub strength sorting, peel rings on the graph, etc.).
+- Keep the report readable and not overly long.
+- Focus on improving the quality and reliability of the analytical content rather than adding new sections.
+
+Goal: Make the Graph Investigative Report feel sharper, more consistent, and more trustworthy for investigative use.

@@ -201,7 +201,8 @@ const US_REGULATED_EXCHANGES = new Set([
 ]);
 
 // Peel-chain heuristic score 0–100 based on edge pattern analysis.
-// Detects spreading / layering signatures without requiring timing data.
+// Calibrated for BFS graph samples (2–10 edges per node); detects spreading
+// and layering signatures without requiring timing data.
 function computePeelScore(
   addr: string,
   edges: Array<{ from: string; to: string; totalValue: string; totalValueUsd?: number | null }>,
@@ -218,32 +219,57 @@ function computePeelScore(
 
   let score = 0;
 
-  // 1. Spreading: substantially more outflows than inflows
-  if (outEdges.length >= inEdges.length * 3) score += 25;
-  else if (outEdges.length >= inEdges.length * 1.5) score += 12;
+  // 1. Spreading: more outflows than inflows (lowered thresholds for sparse graphs)
+  if (outEdges.length >= inEdges.length * 2.5) score += 22;
+  else if (outEdges.length >= inEdges.length * 1.2) score += 12;
 
-  // 2. Fan-out: many unique destinations
-  if (uniqueOut >= 8) score += 20;
-  else if (uniqueOut >= 4) score += 10;
+  // 2. Fan-out: unique destinations (lowered from 8/4 to 6/3)
+  if (uniqueOut >= 6) score += 20;
+  else if (uniqueOut >= 3) score += 12;
 
-  // 3. Small outflows: peeling small amounts from large inflows
+  // 3. Small outflows: amounts below 20% of avg inflow (lowered ratio thresholds)
   const smallOuts  = outEdges.filter(e => parseFloat(e.totalValue || "0") < avgInAmt * 0.2).length;
   const smallRatio = outEdges.length > 0 ? smallOuts / outEdges.length : 0;
-  if (smallRatio > 0.6) score += 22;
-  else if (smallRatio > 0.3) score += 11;
+  if (smallRatio > 0.45) score += 22;
+  else if (smallRatio > 0.2)  score += 12;
 
-  // 4. Exchange routing as destination (layering via exchange)
+  // 4. Exchange routing as destination — key layering signal (boosted reward)
   const exchOuts = outEdges.filter(e => knownLabels[e.to] ?? knownLabels[(e.to ?? "").toLowerCase()]).length;
-  if (exchOuts >= 2) score += 18;
-  else if (exchOuts >= 1) score += 9;
+  if (exchOuts >= 2) score += 22;
+  else if (exchOuts >= 1) score += 15;
 
   // 5. Tiny outputs (< 5% of largest inflow) — classic peel/change pattern
   const tinyOuts  = outEdges.filter(e => parseFloat(e.totalValue || "0") < maxInFlow * 0.05).length;
   const tinyRatio = outEdges.length > 0 ? tinyOuts / outEdges.length : 0;
-  if (tinyRatio > 0.4) score += 15;
-  else if (tinyRatio > 0.15) score += 7;
+  if (tinyRatio > 0.25) score += 15;
+  else if (tinyRatio > 0.08) score += 8;
 
   return Math.min(100, score);
+}
+
+// Short explanation string for a peel score — used in report annotations.
+function computePeelReason(
+  addr: string,
+  edges: Array<{ from: string; to: string; totalValue: string; totalValueUsd?: number | null }>,
+  knownLabels: Record<string, string>
+): string {
+  const inEdges  = edges.filter(e => e.to   === addr);
+  const outEdges = edges.filter(e => e.from === addr);
+  if (inEdges.length === 0 || outEdges.length === 0) return "";
+  const inVol    = inEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+  const maxIn    = Math.max(...inEdges.map(e => parseFloat(e.totalValue || "0")));
+  const avgIn    = inVol / inEdges.length;
+  const uniqueOut = new Set(outEdges.map(e => e.to)).size;
+  const smallR   = outEdges.filter(e => parseFloat(e.totalValue || "0") < avgIn * 0.2).length / outEdges.length;
+  const tinyR    = outEdges.filter(e => parseFloat(e.totalValue || "0") < maxIn * 0.05).length / outEdges.length;
+  const exchN    = outEdges.filter(e => knownLabels[e.to] ?? knownLabels[(e.to ?? "").toLowerCase()]).length;
+  const parts: string[] = [];
+  if (outEdges.length >= inEdges.length * 1.2) parts.push(`spreading (${outEdges.length}out/${inEdges.length}in)`);
+  if (uniqueOut >= 3)  parts.push(`fan-out to ${uniqueOut} destinations`);
+  if (smallR  > 0.2)  parts.push(`${Math.round(smallR * 100)}% small outflows`);
+  if (exchN   >= 1)   parts.push(`${exchN} exchange deposit${exchN !== 1 ? "s" : ""}`);
+  if (tinyR   > 0.08) parts.push(`${Math.round(tinyR * 100)}% tiny peels`);
+  return parts.slice(0, 3).join(" · ") || "suspicious pattern";
 }
 
 export default function TraceGraph() {
@@ -681,50 +707,107 @@ export default function TraceGraph() {
       return { n, vol, usd, inVol, outVol, connected, fromHubs, isUS };
     });
 
-    // ── Auto-generate Key Findings
+    // ── Auto-generate Key Findings (aim for 5 concrete, actionable bullets)
     const findings: string[] = [];
 
+    // F1: Strongest commingling hub with strength score + rank
     if (hubStats.length > 0) {
       const top = hubStats[0];
-      const a = `${top.n.address.slice(0, 8)}…${top.n.address.slice(-4)}`;
-      const v = top.hubUsd > 0 ? `$${top.hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${top.hubVol.toFixed(2)} ${chainUp}`;
-      findings.push(`Hub [${a}] receives from ${top.sources.length} wallet${top.sources.length !== 1 ? "s" : ""} with ${v} inflow — highest commingling signal (strength ${top.strength.toLocaleString("en-US", { maximumFractionDigits: 0 })})`);
+      const a   = `${top.n.address.slice(0, 6)}…${top.n.address.slice(-4)}`;
+      const v   = top.hubUsd > 0
+        ? `$${top.hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+        : `${top.hubVol.toFixed(2)} ${chainUp}`;
+      const str = top.strength.toLocaleString("en-US", { maximumFractionDigits: 0 });
+      const peelNote = top.peel >= 55 ? `, peel ${top.peel}/100` : "";
+      findings.push(
+        `Hub [${a}] consolidates ${top.sources.length} source wallets` +
+        ` → ${v} inflow (strength ${str}${peelNote})` +
+        (hubStats.length > 1 ? ` — #1 of ${hubStats.length} hubs` : "")
+      );
     }
 
+    // F2: US-regulated exchange volume (specific names + combined USD)
     const usExch = exchStats.filter(e => e.isUS);
     if (usExch.length > 0) {
-      const names = [...new Set(usExch.map(e => e.n.label))].slice(0, 4).join(", ");
-      const usUsd = usExch.reduce((s, e) => s + e.usd, 0);
-      const usVol = usExch.reduce((s, e) => s + e.vol, 0);
-      const v = usUsd > 0 ? `$${usUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${usVol.toFixed(2)} ${chainUp}`;
-      findings.push(`${usExch.length} US-regulated exchange${usExch.length !== 1 ? "s" : ""} detected (${names}) — ${v} subpoena-actionable volume`);
+      const names  = [...new Set(usExch.map(e => e.n.label))].slice(0, 3).join(", ");
+      const usUsd  = usExch.reduce((s, e) => s + e.usd, 0);
+      const usVol  = usExch.reduce((s, e) => s + e.vol, 0);
+      const v      = usUsd > 0
+        ? `$${usUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`
+        : `${usVol.toFixed(2)} ${chainUp}`;
+      findings.push(
+        `${usExch.length} US-regulated exchange${usExch.length !== 1 ? "s" : ""}` +
+        ` found (${names}) — ${v} subpoena-actionable` +
+        (usExch.length > 3 ? ` across ${usExch.length} institutions` : "")
+      );
     } else if (exchStats.length > 0) {
-      const top = [...exchStats].sort((a, b) => b.vol - a.vol)[0];
-      const v = top.usd > 0 ? `$${top.usd.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${top.vol.toFixed(2)} ${chainUp}`;
-      findings.push(`${exchStats.length} exchange${exchStats.length !== 1 ? "s" : ""} identified — ${top.n.label} is highest-volume at ${v}`);
+      const topEx = [...exchStats].sort((a, b) => b.vol - a.vol)[0];
+      const v     = topEx.usd > 0
+        ? `$${topEx.usd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`
+        : `${topEx.vol.toFixed(2)} ${chainUp}`;
+      findings.push(
+        `${exchStats.length} exchange${exchStats.length !== 1 ? "s" : ""} identified` +
+        ` — highest volume: ${topEx.n.label ?? "Unknown"} at ${v}` +
+        (topEx.fromHubs > 0 ? ` (fed by ${topEx.fromHubs} hub${topEx.fromHubs !== 1 ? "s" : ""})` : "")
+      );
     }
 
+    // F3: Highest peel-score wallet + reason + count flagged
     const highPeelList = [...peelScores.entries()].filter(([, s]) => s >= 55).sort((a, b) => b[1] - a[1]);
     if (highPeelList.length > 0) {
       const [tpAddr, tpScore] = highPeelList[0];
-      const short = `${tpAddr.slice(0, 8)}…${tpAddr.slice(-4)}`;
-      findings.push(`Wallet ${short} scores ${tpScore}/100 on peel-chain analysis — high-confidence layering${highPeelList.length > 1 ? ` (${highPeelList.length} wallets flagged ≥55)` : ""}`);
+      const short  = `${tpAddr.slice(0, 6)}…${tpAddr.slice(-4)}`;
+      const reason = computePeelReason(tpAddr, filteredEdges, GRAPH_KNOWN_LABELS);
+      findings.push(
+        `Wallet [${short}] peel score ${tpScore}/100` +
+        (reason ? ` — ${reason}` : "") +
+        (highPeelList.length > 1 ? `; ${highPeelList.length} wallets total ≥55` : "")
+      );
     }
 
-    const centerToExch = filteredEdges.filter(e => e.from === address && exchNodes.some(n => n.address === e.to));
+    // F4: Direct center → exchange flows (specific exchanges + traceable amount)
+    const centerToExch = filteredEdges.filter(
+      e => e.from === address && exchNodes.some(n => n.address === e.to)
+    );
     if (centerToExch.length > 0) {
-      const names = [...new Set(centerToExch.map(e => GRAPH_KNOWN_LABELS[e.to] ?? GRAPH_KNOWN_LABELS[e.to.toLowerCase()] ?? "Unknown"))].slice(0, 3).join(", ");
-      const v = centerToExch.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
+      const names = [...new Set(
+        centerToExch.map(e => GRAPH_KNOWN_LABELS[e.to] ?? GRAPH_KNOWN_LABELS[(e.to ?? "").toLowerCase()] ?? "Unknown")
+      )].slice(0, 3).join(", ");
+      const usd = centerToExch.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
       const vol = centerToExch.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
-      const vStr = v > 0 ? `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${vol.toFixed(2)} ${chainUp}`;
-      findings.push(`Center wallet has direct exchange flows → ${names} — ${vStr} traceable`);
+      const v   = usd > 0
+        ? `$${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`
+        : `${vol.toFixed(2)} ${chainUp}`;
+      findings.push(
+        `Center sent ${v} directly to exchange${centerToExch.length !== 1 ? "s" : ""}` +
+        ` (${names}) — ${centerToExch.length} on-chain transaction${centerToExch.length !== 1 ? "s" : ""} traceable`
+      );
     }
 
-    if (hubStats.length >= 3) {
-      const avg = (hubStats.reduce((s, h) => s + h.sources.length, 0) / hubStats.length).toFixed(1);
-      findings.push(`${hubStats.length} commingling hubs detected averaging ${avg} source wallets each — complex multi-layer network`);
-    } else if (highRiskNodes.length > 0 && findings.length < 4) {
-      findings.push(`${highRiskNodes.length} high-risk wallet${highRiskNodes.length !== 1 ? "s" : ""} with risk score > 70 identified`);
+    // F5: Multi-hub network complexity OR peel count OR high-risk wallets
+    if (hubStats.length >= 2) {
+      const avg     = (hubStats.reduce((s, h) => s + h.sources.length, 0) / hubStats.length).toFixed(1);
+      const hubUsdT = hubStats.reduce((s, h) => s + h.hubUsd, 0);
+      const hubVolT = hubStats.reduce((s, h) => s + h.hubVol, 0);
+      const volStr  = hubUsdT > 0
+        ? `$${hubUsdT.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD combined`
+        : `${hubVolT.toFixed(2)} ${chainUp} combined`;
+      findings.push(
+        `${hubStats.length} commingling hubs averaging ${avg} source wallets` +
+        ` — ${volStr} in hub inflows (structured layering pattern)`
+      );
+    } else if (highPeelList.length > 2 && findings.length < 5) {
+      const modCount = [...peelScores.values()].filter(s => s >= 35 && s < 55).length;
+      findings.push(
+        `${highPeelList.length} high-confidence peel wallets (≥55) detected` +
+        (modCount > 0 ? ` + ${modCount} moderate (35–54)` : "") +
+        ` — pattern consistent with systematic layering`
+      );
+    } else if (highRiskNodes.length > 0 && findings.length < 5) {
+      findings.push(
+        `${highRiskNodes.length} high-risk wallet${highRiskNodes.length !== 1 ? "s" : ""}` +
+        ` (risk score >70) — recommend cross-reference with OFAC/sanctions list`
+      );
     }
 
     if (findings.length === 0) {
@@ -764,13 +847,17 @@ export default function TraceGraph() {
         const strengthLabel = hubUsd > 0
           ? `${sources.length} sources × $${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} = ${strength.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
           : `${sources.length} sources × ${hubVol.toFixed(2)} ${chainUp}`;
-        const peelTag = peel >= 75 ? `  ⚠ PEEL: ${peel}/100 [HIGH]`
-                      : peel >= 55 ? `  ⚠ PEEL: ${peel}/100 [MODERATE]`
-                      : peel  > 0  ? `  PEEL: ${peel}/100`
+        const peelTag = peel >= 75 ? `  ⚠ PEEL:${peel}/100 [HIGH]`
+                      : peel >= 55 ? `  ⚠ PEEL:${peel}/100 [MOD]`
+                      : peel  > 0  ? `  PEEL:${peel}/100`
                       : "";
+        const peelReason = peel >= 55
+          ? computePeelReason(n.address, filteredEdges, GRAPH_KNOWN_LABELS)
+          : "";
         lines.push(`  ${n.address}`);
         if (n.label && n.label !== "Target") lines.push(`  Label    : ${n.label}`);
         lines.push(`  STRENGTH : ${strengthLabel}${peelTag}`);
+        if (peelReason) lines.push(`  Peel sig : ${peelReason}`);
         lines.push(`  Inflow   : ${hubVol.toFixed(4)} ${chainUp}${hubUsd > 0 ? `  ($${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}`);
         lines.push(`  Receives from ${sources.length} source wallet${sources.length !== 1 ? "s" : ""}:`);
         for (const src of sources.slice(0, 6)) {
@@ -813,18 +900,27 @@ export default function TraceGraph() {
       lines.push(`    Ranked: US-regulated first → volume → connected wallets`);
       lines.push(``);
       subpoenaTargets.forEach(({ n, vol, usd, connected, isUS, fromHubs }, i) => {
-        const usTag = isUS ? "  ★ US-REGULATED" : "";
-        const justify = fromHubs > 0
+        const usTag   = isUS ? "  ★ US-REGULATED" : "";
+        const hubNote = fromHubs > 0
+          ? `, fed by ${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""}`
+          : "";
+        const justify = fromHubs > 0 && isUS
+          ? `High-priority — US-regulated with ${fromHubs} hub${fromHubs !== 1 ? "s" : ""} depositing into it`
+          : fromHubs > 0
           ? `Receives from ${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""} — high-priority`
           : connected > 5
-          ? `High connectivity — ${connected} wallets in graph`
+          ? `High connectivity — ${connected} wallets${hubNote}`
           : vol > totalGraphVolume * 0.1
-          ? `Major volume hub — ${(vol / totalGraphVolume * 100).toFixed(0)}% of graph flow`
-          : `Exchange deposit endpoint`;
+          ? `Major volume node — ${(vol / totalGraphVolume * 100).toFixed(0)}% of graph flow${hubNote}`
+          : `Exchange deposit endpoint${hubNote}`;
+        const volStr  = usd > 0
+          ? `${vol.toFixed(4)} ${chainUp}  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD)`
+          : `${vol.toFixed(4)} ${chainUp}`;
         lines.push(`  #${i + 1}  ${(n.label ?? "").toUpperCase()}${usTag}`);
         lines.push(`       ${n.address}`);
-        lines.push(`       Volume : ${vol.toFixed(4)} ${chainUp}${usd > 0 ? `  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}  |  ${connected} wallet${connected !== 1 ? "s" : ""} connected`);
-        lines.push(`       Note   : ${justify}`);
+        lines.push(`       Volume    : ${volStr}`);
+        lines.push(`       Connected : ${connected} wallet${connected !== 1 ? "s" : ""} in graph${fromHubs > 0 ? `, ${fromHubs} hub${fromHubs !== 1 ? "s" : ""} among sources` : ""}`);
+        lines.push(`       Note      : ${justify}`);
         lines.push(``);
       });
     }
@@ -904,9 +1000,11 @@ export default function TraceGraph() {
     .header-meta { font-size: 9pt; color: #555; text-align: right; font-family: Arial, sans-serif; }
     pre {
       white-space: pre-wrap;
-      word-break: break-all;
+      overflow-wrap: break-word;
+      word-break: break-word;
       font-size: 10pt;
       line-height: 1.55;
+      max-width: 100%;
     }
     .footer {
       margin-top: 24px;

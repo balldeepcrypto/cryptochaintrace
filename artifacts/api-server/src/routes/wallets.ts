@@ -1775,24 +1775,36 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     txCount: number,
   ) => {
     const minEdgeVal = GRAPH_MIN_AMOUNTS[chain] ?? 1.0;
-    const nodes = [center, ...peers].map((addr) => ({
-      address: addr, label: addr === center ? "Target" : getGraphLabel(addr),
-      balance: "0.000000", transactionCount: 0, isContract: false,
-      riskScore: addr === center ? computeRiskScore(txCount, []) : null,
-    }));
     const peerSet = new Set([center, ...peers]);
     const edges = Array.from(edgeMap.entries())
       .filter(([key, info]) => {
         const [f, t] = key.split(":");
-        // Keep edge if either participant is center (always show center connections)
-        // or if the total value meets the minimum threshold
         const isCenter = f === center || t === center;
-        return peerSet.has(f) && peerSet.has(t) && (isCenter || parseFloat(info.totalValue) >= minEdgeVal);
+        const meetsMin = isCenter || parseFloat(info.totalValue) >= minEdgeVal;
+        const bothInPeers = peerSet.has(f) && peerSet.has(t);
+        // Also include inbound edges TO selected peers from outside the cap.
+        // Critical for commingling detection: when one source of a hub was dropped
+        // by the peer cap, this restores the missing in-edge so hub detection works.
+        const inboundToPeer = peerSet.has(t) && !peerSet.has(f) && parseFloat(info.totalValue) >= minEdgeVal;
+        return meetsMin && (bothInPeers || inboundToPeer);
       })
       .map(([key, info]) => {
         const [from, to] = key.split(":");
         return { from, to, totalValue: info.totalValue, totalValueUsd: info.totalValueUsd, transactionCount: info.count, lastSeen: info.lastSeen };
       });
+
+    // Collect extra source addresses (outside peerSet) introduced by inbound edges
+    const extraSources = new Set<string>();
+    for (const e of edges) {
+      if (!peerSet.has(e.from) && e.from !== center && extraSources.size < 30) {
+        extraSources.add(e.from);
+      }
+    }
+    const nodes = [center, ...peers, ...Array.from(extraSources)].map((addr) => ({
+      address: addr, label: addr === center ? "Target" : getGraphLabel(addr),
+      balance: "0.000000", transactionCount: 0, isContract: false,
+      riskScore: addr === center ? computeRiskScore(txCount, []) : null,
+    }));
     return { nodes, edges, centerAddress: center };
   };
 

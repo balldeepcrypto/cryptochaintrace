@@ -681,8 +681,13 @@ export default function TraceGraph() {
     const hubNodes      = enrichedConnections.nodes.filter(n => commingling.has(n.address));
     const exchNodes     = enrichedConnections.nodes.filter(n => n.label && n.label !== "Target" && !commingling.has(n.address));
     const highRiskNodes = enrichedConnections.nodes.filter(n =>
-      ((n.riskScore ?? 0) > 70 || (peelScores.get(n.address) ?? 0) >= 70)
-      && !commingling.has(n.address) && !n.label
+      !n.label && (
+        // High API risk score: exclude hubs (they're counted separately)
+        ((n.riskScore ?? 0) > 70 && !commingling.has(n.address)) ||
+        // High peel score: count any non-exchange node including hubs,
+        // since hubs are the primary holders of high peel scores
+        (peelScores.get(n.address) ?? 0) >= 70
+      )
     );
 
     const filteredEdges = [...enrichedConnections.edges]
@@ -1147,7 +1152,7 @@ export default function TraceGraph() {
         dustFlowsHidden: enrichedConnections.edges.length - filteredEdges.length,
         comminglingHubs: commingling.size,
         exchangeNodes: exchNodes.length,
-        highRiskNodes: enrichedConnections.nodes.filter(n => ((n.riskScore ?? 0) > 70 || (peelScores.get(n.address) ?? 0) >= 70) && !commingling.has(n.address) && !n.label).length,
+        highRiskNodes: enrichedConnections.nodes.filter(n => !n.label && (((n.riskScore ?? 0) > 70 && !commingling.has(n.address)) || (peelScores.get(n.address) ?? 0) >= 70)).length,
         totalVolume: filteredEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0),
         totalVolumeUsd: filteredEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0),
       },

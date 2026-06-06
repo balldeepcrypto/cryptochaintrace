@@ -43,6 +43,164 @@ const GRAPH_MIN_AMOUNTS: Record<string, number> = {
   dag:      1.0,
 };
 
+// Known exchange / entity labels used in the connections graph (server-side labeling)
+const GRAPH_LABEL_MAP: Record<string, string> = {
+  // ── XRP exchanges (comprehensive) ─────────────────────────────────────────
+  rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: "Bitstamp",
+  rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1: "Bitstamp",
+  rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv: "Bitstamp",
+  rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: "Bitfinex",
+  rBndiPPKs9k5rjBb7HsEiqXKVZ9MMhGmhM: "Kraken",
+  rKmBGxocj9Abgy25J51Mk1iqFzW9aVF9Tc: "Kraken",
+  rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: "Kraken",
+  rBx5RkPh2KR3JqBtZWoU25ZxGHaJzYMD84: "Kraken",
+  rnJrjec2vrTJAAQUTMTjj7U6xdXrk9N4mT: "Kraken",
+  rEvuKRoEbZSbm5k5Qe5eTD9BixZXsfkxHf: "Kraken",
+  rUeDDFNp2q7Ymvyv75hFGC8DAcygVyJbNF: "Kraken",
+  rrpNnNLKrartuEqfJGpqyDwPj1BBN1ybNn: "Binance",
+  rBttd61FExHC68vsZ8dqmS3DfjFEceA1A:  "Binance",
+  rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr: "Binance",
+  rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi: "Binance",
+  rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A: "Binance",
+  rPCpZwPKogNodbjRxGDnefVXu9Q9R4PN4Q: "Binance",
+  rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: "Coinbase",
+  rw2ciyaNshpHe7bCHo4bRWq6pqqynnWKQg: "Coinbase",
+  rwnYLUsoBQX3ECa1A5bSKLdbPoHKnqf63J: "Coinbase",
+  r4sRyacXpbh4HbagmgfoQq8Q3j8ZJzbZ1J: "Coinbase",
+  rwpTh9DDa52XkM9nTKp2QrJuCGV5d1mQVP: "Coinbase",
+  r3YsZdkznVzYBv141qhwXHDWoPUXLdksNw: "Coinbase",
+  rLNaPoKeeBjZe2qs6x52yVPZpZ8td4dc6w: "Coinbase",
+  rUjfTQpvBr6wsGGxMw6sRmRQGG76nvp8Ln: "Coinbase",
+  r3wcwBpVCGcKu7TzY1ta2kQiJ5UHECDFZS: "Coinbase",
+  rayCEqaUBryJSWxf3BEc1Y4EMRYLuK3aJ8: "Coinbase",
+  r7BspkyEZqKZ88SovgxZtsGGxoVoPodJf:  "Coinbase",
+  rGFNBYb9548VqJojTDoDDYoJBEpvmVywSV: "Coinbase",
+  rQGXuQCZH27mj7wcikYrKCEbAh5xfenwb8: "Coinbase",
+  r4k4U4Hge3mLfyURfGu3pJFeNTWXduBha2: "Coinbase",
+  rGvmcMqafc5HAdyhaoQCG4tpBZKdYLT3cH: "Coinbase",
+  rHRHwHJHHzQ328c33wCimeXqCgyDoxLXjF: "Coinbase",
+  rU5ACGLKbhPQB92GZhT5UV22NHeVrEGuU6: "Coinbase",
+  rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy: "OKX",
+  rUzWJkXyEtT8ekSSxkBYPqCvHpngcy6Fks: "OKX",
+  rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy: "Huobi/HTX",
+  rHpSX1VNr3tdsDvvSAFKMPXzTZ3KPAJQ2E: "HTX",
+  rDm691szLmEqpUbXmgnj159Ffpp9PntHwj: "HTX",
+  rN7n3473SaZBCG4dFL75EpTSMBKmFVBQBh: "Bitget",
+  rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV: "KuCoin",
+  rGsxGQNdaDyFhZQ5JqDGPkT3VGFFexCaM3: "Gate.io",
+  rGmP2iRHqoYkFXF3HqrZEGZVXiqBGKcZmz: "Gate.io",
+  rMJXDzU1N9ZSDzPF7s1i2GGKyjM2wB3iom: "Robinhood",
+  rBKPS4oLSaV2KVVuHH8EpQqMGgWj5U37h4: "Bittrex",
+  rPJwJUmDMijFtBi3GnW2VRFTCEpFCJCGPA: "Poloniex",
+  rKNwXQh9GMjaU8uTqKLECsqyib47g5dMvo: "Crypto.com",
+  r4DymtkgUAH2wqRxVfdd3Xtswzim6eC6c5: "Crypto.com",
+  rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: "Bybit",
+  rEvwSpejhGTbdAXbxRTpGAzPBQKRZxN5s:  "eToro",
+  rGFuMiw48HdbnrUbkRToR1yMBZkjbqvUhQ: "MEXC",
+  raBQUYdAhnnojJQ6Xi3eXztZ74ot24RDq1: "Gemini",
+  r4FuDeXifHAZork5KcEQKKBqmBWPGiFmJC: "Uphold",
+  rMdG3ju8pgyVh29ELPWaDuA74CpWW6Fxns: "Uphold",
+  rsXT3AQqhHDusFs3nQQuwcA1yXRLZJAXKw: "Uphold",
+  rBEc94rUFfLfTDwwGN7rQGBHc883c2OHx:  "Uphold",
+  rBgnUKAEiFhCRLPoYNPPe3JUWayRjP6Ayg: "Coinspot",
+  rBWpYJhuJWBPakzJ4kYQqHShSkkF3rgeD:  "Cobo Custody",
+  rQrgppDZMMKeq1x9gDuoytWeRLmLfXYV3q: "Union Chain",
+  // ── XLM exchanges ─────────────────────────────────────────────────────────
+  GBEZDAORANS52QCQ3UXGE6ZBMW3KMBSB42GBXBZMQEVJGALDEF2MGDM: "Binance XLM",
+  GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66BZDSBS4: "Coinbase XLM",
+  GCO2IP3MJNUOKS4PUDI4C7LGGMQDJGXG3COYX3WSB4HHNAHKYV5YL3VC: "Kraken XLM",
+  GDEZTHPGZRQG5IVIMKPLMAHUBFVLKUJDQRZJ3G3BGTKH7JHXN39V63M: "Binance XLM 2",
+  GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4: "Poloniex XLM",
+  // ── HBAR exchanges ────────────────────────────────────────────────────────
+  "0.0.29662955": "Binance HBAR",
+  "0.0.34741585": "Coinbase HBAR",
+  "0.0.15015921": "OKX HBAR",
+  // ── ETH / EVM (all lowercase) ─────────────────────────────────────────────
+  "0xd551234ae421e3bcba99a0da6d736074f22192ff": "Binance",
+  "0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be": "Binance",
+  "0x564286362092d8e7936f0549571a803b203aaced": "Binance",
+  "0x0681d8db095565fe8a346fa0277bffde9c0edbbf": "Binance",
+  "0xfe9e8709d3215310075d67e3ed32a380ccf451c8": "Binance",
+  "0xbe0eb53f46cd790cd13851d5eff43d12404d33e8": "Binance (Cold)",
+  "0xa910f92acdaf488fa6ef02174fb86208ad7722ba": "Kraken",
+  "0xe853c56864a2ebe4576a807d26fdc4a0ada51919": "Kraken",
+  "0xda9dfa130df4de4673b89022ee50ff26f6ea73cf": "Kraken",
+  "0x2b5634c42055806a59e9107ed44d43c426e58258": "KuCoin",
+  "0x0d0707963952f2fba59dd06f2b425ace40b492fe": "Gate.io",
+  "0x1c4b70a3968436b9a0a9cf5205c787eb81bb558c": "Bittrex",
+  "0x71660c4005ba85c37ccec55d0c4493e66fe775d3": "Coinbase",
+  "0x503828976d22510aad0201ac7ec88293211d23da": "Coinbase",
+  "0xddfabcdc4d8ffc6d5beaf154f18b778f892a0740": "Coinbase",
+  "0x3cd751e6b0078be393132286c442345e5dc49699": "Coinbase",
+  "0xb5d85cbf7cb3ee0d56b3bb207d5fc4b82f43f511": "Coinbase",
+  "0x4b01721f0244e7c5b5f63c20942850e447f5a5ee": "OKX",
+  "0x6cc5f688a315f3dc28a7781717a9a798a59fda7b": "OKX",
+  "0x5041ed759dd4afc3a72b8192c143f72f4724081f": "Huobi/HTX",
+  "0xab5c66752a9e8167967685f1450532fb96d5d24f": "Huobi/HTX",
+  "0x1062a747393198f70f71ec65a582423dba7e5ab3": "Bybit",
+  // ── BTC exchanges ─────────────────────────────────────────────────────────
+  "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s":        "Binance",
+  "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h": "Binance",
+  "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo":        "Binance (Cold)",
+  "1LQoWist8KkaUXSPKZHNvEyfrEkPHzSsCd":        "Coinbase",
+  "3Cbq7aT1tY8kMxWLbitaG7yT6bPbKChq64":        "Coinbase",
+  "bc1qazcm763858nkj2dj986etajv6wquslv8uxjycy": "Coinbase",
+  "3LYJfcfHcvFYQePXedRGgKKFHfXBdkFvfg":        "Kraken",
+  "3E5cvCDqmW7gBsHYHosDQNDKGrCi9wjGar":        "Kraken",
+  "1KUUJPkyDhamZXgpsyXqNGc3x1QPXtdhgz":        "Bitfinex",
+  "3JZq4atEAjqAjW7bSNiQVqHdSVJAq5UBXH":        "Bittrex",
+  "1LdRcdxfbSnmCYYNdeYpUnztiYzVfBEQeC":        "Poloniex",
+};
+
+/** Look up an exchange label for a graph node (case-insensitive fallback for EVM). */
+function getGraphLabel(addr: string): string | null {
+  return GRAPH_LABEL_MAP[addr] ?? GRAPH_LABEL_MAP[addr.toLowerCase()] ?? null;
+}
+
+/**
+ * Priority-sort peers before applying the cap so that exchange nodes and
+ * commingling-hub candidates are never evicted by insertion order.
+ *
+ * Scoring (descending priority):
+ *   1. Known exchange address     → +10 000
+ *   2. ≥2 unique inbound sources  → +500 per inbound source (commingling)
+ *   3. Total USD volume           → added directly
+ */
+function prioritizePeers(
+  rawPeerSet: Set<string>,
+  edgeMap: Map<string, { totalValue: string; totalValueUsd: number; count: number; lastSeen: string }>,
+  center: string,
+  cap: number,
+): string[] {
+  const peers = Array.from(rawPeerSet).filter(p => p !== center);
+
+  const scored = peers.map(addr => {
+    const isExchange = getGraphLabel(addr) !== null ? 10_000 : 0;
+
+    // Count unique inbound edges (each key is "from:to")
+    let inboundCount = 0;
+    for (const k of edgeMap.keys()) {
+      const sep = k.indexOf(":");
+      if (sep !== -1 && k.slice(sep + 1) === addr) inboundCount++;
+    }
+    const commScore = inboundCount >= 2 ? inboundCount * 500 : 0;
+
+    // Total USD volume touching this peer
+    let volUsd = 0;
+    for (const [k, v] of edgeMap) {
+      const sep = k.indexOf(":");
+      if (sep !== -1) {
+        const f = k.slice(0, sep), t = k.slice(sep + 1);
+        if (f === addr || t === addr) volUsd += v.totalValueUsd;
+      }
+    }
+
+    return { addr, score: isExchange + commScore + volUsd };
+  });
+
+  return scored.sort((a, b) => b.score - a.score).slice(0, cap).map(x => x.addr);
+}
+
 const COIN_ID_MAP: Record<string, string> = {
   xlm: "stellar",
   hbar: "hedera-hashgraph",
@@ -1618,7 +1776,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
   ) => {
     const minEdgeVal = GRAPH_MIN_AMOUNTS[chain] ?? 1.0;
     const nodes = [center, ...peers].map((addr) => ({
-      address: addr, label: addr === center ? "Target" : null,
+      address: addr, label: addr === center ? "Target" : getGraphLabel(addr),
       balance: "0.000000", transactionCount: 0, isContract: false,
       riskScore: addr === center ? computeRiskScore(txCount, []) : null,
     }));
@@ -1751,8 +1909,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         }
       }
 
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, rawTxs.length)));
       return;
     }
 
@@ -1767,8 +1924,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         const val = parseFloat(parsed.value);
         mergeEdge(edgeMap, `${parsed.from}:${parsed.to}`, parsed.value, val * priceUsd, parsed.timestamp);
       }
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, txs.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, txs.length)));
       return;
     }
 
@@ -1791,8 +1947,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         else edgeMap.set(key, { totalValue: val.toFixed(8), totalValueUsd: val * priceUsd, count: 1, lastSeen: ts });
       }
 
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, rawTxs.length)));
       return;
     }
 
@@ -1808,8 +1963,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         const val = parseFloat(parsed.value);
         mergeEdge(edgeMap, `${parsed.from}:${parsed.to}`, parsed.value, val * priceUsd, parsed.timestamp);
       }
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, records.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, records.length)));
       return;
     }
 
@@ -1839,8 +1993,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
               const ts = tx["date"] ? new Date(String(tx["date"])).toISOString() : new Date().toISOString();
               mergeEdge(edgeMap, `${from}:${to}`, val.toFixed(6), val * priceUsd, ts);
             }
-            const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, basePeerCap);
-            res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, rpcAddr.toLowerCase(), csTxs.length)));
+            res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, rpcAddr.toLowerCase(), basePeerCap), edgeMap, rpcAddr.toLowerCase(), csTxs.length)));
             return;
           } catch { /* CoinStats also failed — fall through to empty graph */ }
         }
@@ -1857,8 +2010,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         const ts = new Date(Number(tx["timeStamp"]) * 1000).toISOString();
         mergeEdge(edgeMap, `${from}:${to}`, val.toFixed(6), val * priceUsd, ts);
       }
-      const peers = Array.from(peerSet).filter((p) => p !== rpcAddr.toLowerCase()).slice(0, basePeerCap);
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, rpcAddr.toLowerCase(), txData.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, rpcAddr.toLowerCase(), basePeerCap), edgeMap, rpcAddr.toLowerCase(), txData.length)));
       return;
     }
 
@@ -1887,8 +2039,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
           const to = isOutgoing ? counterparty : address;
           mergeEdge(edgeMap, `${from}:${to}`, absHbar.toFixed(6), absHbar * priceUsd, ts);
         }
-        const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-        res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
+        res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, rawTxs.length)));
       } catch (err) {
         req.log.error({ err, address, chain: "hbar" }, "[HBAR] connections fetch failed");
         res.json(GetWalletConnectionsResponse.parse(buildGraph([], new Map(), address, 0)));
@@ -1914,8 +2065,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         mergeEdge(edgeMap, `${fromAddr}:${toAddr}`, val.toFixed(6), val * priceUsd, ts);
       }
 
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, rawTxs.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, rawTxs.length)));
       return;
     }
 
@@ -1966,8 +2116,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
         }));
       }
 
-      const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, items.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, items.length)));
       return;
     }
 
@@ -1991,8 +2140,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       mergeEdge(edgeMap, `${from}:${to}`, weiToEth(String(value)), weiToUsd(String(value), priceUsd), ts);
     }
 
-    const peers = Array.from(peerSet).filter((p) => p !== address).slice(0, basePeerCap);
-    res.json(GetWalletConnectionsResponse.parse(buildGraph(peers, edgeMap, address, txData.length)));
+    res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, txData.length)));
   } catch (err) {
     req.log.error({ err, address, chain }, `[${chain.toUpperCase()}] connections fetch failed — returning empty graph`);
     res.json(GetWalletConnectionsResponse.parse(buildGraph([], new Map(), address, 0)));

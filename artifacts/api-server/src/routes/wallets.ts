@@ -198,7 +198,11 @@ function prioritizePeers(
     return { addr, score: isExchange + commScore + volUsd };
   });
 
-  return scored.sort((a, b) => b.score - a.score).slice(0, cap).map(x => x.addr);
+  // Stable sort: highest score first; address string as final tie-breaker for determinism
+  return scored
+    .sort((a, b) => b.score - a.score || a.addr.localeCompare(b.addr))
+    .slice(0, cap)
+    .map(x => x.addr);
 }
 
 const COIN_ID_MAP: Record<string, string> = {
@@ -233,11 +237,15 @@ function dropToXrp(drops: string | number): string {
 }
 
 function computeRiskScore(txCount: number, tags: string[]): number | null {
-  if (tags.includes("flagged")) return Math.floor(Math.random() * 30) + 70;
-  if (tags.includes("exchange")) return Math.floor(Math.random() * 20) + 10;
-  if (txCount > 10000) return Math.floor(Math.random() * 20) + 40;
-  if (txCount < 5) return Math.floor(Math.random() * 20) + 5;
-  return Math.floor(Math.random() * 50) + 10;
+  // Deterministic: mix txCount + tags into a stable 0-99 integer so the
+  // same wallet always gets the same score across runs (no Math.random()).
+  const seed = (tags.reduce((h, t) => ((h * 31) ^ t.charCodeAt(0)) | 0, txCount & 0xffff) * 0x9e3779b9) >>> 0;
+  const rand = seed % 100;
+  if (tags.includes("flagged"))  return 70 + (rand % 30);
+  if (tags.includes("exchange")) return 10 + (rand % 20);
+  if (txCount > 10000)           return 40 + (rand % 20);
+  if (txCount < 5)               return  5 + (rand % 20);
+  return 10 + (rand % 50);
 }
 
 function guessTags(isContract: boolean, txCount: number): string[] {
@@ -1867,7 +1875,8 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
             const rev = edgeMap.get(`${p}:${address}`);
             return { p, w: (fwd?.totalValueUsd ?? 0) + (rev?.totalValueUsd ?? 0) };
           })
-          .sort((a, b) => b.w - a.w)
+          // Stable: highest USD volume first; address as final tie-breaker
+          .sort((a, b) => b.w - a.w || a.p.localeCompare(b.p))
           .slice(0, maxExpand);
 
         const batchSize = 5;
@@ -1900,6 +1909,8 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
           }
           const hop2CommNodes = [...inMap2.entries()]
             .filter(([, srcs]) => srcs.size >= 2)
+            // Stable: most inbound sources first; address as tie-breaker
+            .sort((a, b) => b[1].size - a[1].size || a[0].localeCompare(b[0]))
             .map(([addr]) => addr)
             .filter(a => a !== address && !hop1Set.has(a))
             .slice(0, depth <= 3 ? 5 : depth <= 4 ? 8 : 12);
@@ -1925,7 +1936,9 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
           if (depth >= 5) {
             const exchInPeerSet = Array.from(peerSet)
               .filter(p => p !== address && getGraphLabel(p) !== null && !hop1Set.has(p));
-            const hop4Targets = exchInPeerSet.slice(0, depth >= 6 ? 8 : 5);
+            // Stable: sort exchanges by address before slicing so the same
+            // subset is chosen on every run regardless of peerSet insertion order
+            const hop4Targets = exchInPeerSet.sort((a, b) => a.localeCompare(b)).slice(0, depth >= 6 ? 8 : 5);
             if (hop4Targets.length > 0) {
               await Promise.allSettled(hop4Targets.map(async (pAddr) => {
                 try {
@@ -2135,7 +2148,8 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
             const rev = edgeMap.get(`${p}:${address}`);
             return { p, w: (fwd?.totalValueUsd ?? 0) + (rev?.totalValueUsd ?? 0) };
           })
-          .sort((a, b) => b.w - a.w)
+          // Stable: highest USD volume first; address as final tie-breaker
+          .sort((a, b) => b.w - a.w || a.p.localeCompare(b.p))
           .slice(0, maxExpandEvm);
 
         await Promise.allSettled(sortedEvm.map(async ({ p: pAddr }) => {

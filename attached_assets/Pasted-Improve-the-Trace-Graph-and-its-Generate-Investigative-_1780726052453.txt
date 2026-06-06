@@ -1,0 +1,23 @@
+Improve the Trace Graph and its "Generate Investigative Report from Graph" feature with the following updates:
+
+### 1. Export Options for Graph Investigative Report
+- Add two new export buttons next to the existing "Copy" button:
+  - **Export as PDF** — Generate a professionally styled PDF report using the same styling and structure as the existing Full Package reports (headers, section dividers, clean formatting).
+  - **Export as JSON** — Export structured JSON containing the graph summary, commingling hubs, exchange/known entity nodes, all nodes list, and top flows.
+- Keep the existing "Copy to Clipboard" option.
+
+### 2. Improve Report Quality
+- **USD Values**: Pull and display accurate USD values for flows in the report using available price data. Avoid showing $0 or missing values when data exists.
+- **Exchange / Known Entity Labeling**: Improve detection and labeling of actual exchange wallets and known entities in the report using the existing KNOWN_LABELS / getKnownInfo system (do not only show the center wallet).
+- **Cleaner Formatting**: Organize the report into clear, well-spaced sections. Reduce noise from very small or zero-value flows.
+
+### 3. Minimum Amount Filter (Important Fix)
+- Apply the same minimum transaction amount filter used elsewhere in the app (previously ~1 XRP to filter spam/dust) to the Trace Graph multi-hop expansion.
+- Update the Graph Investigative Report so it **ignores or hides** flows below the minimum threshold by default.
+- Make the filter consistent with the rest of the application. Use the existing minimum value if one is already defined globally. Default to 1 XRP if no global setting exists, but structure the code so it can be easily made configurable later.
+- Add a small note in the report header showing the current minimum filter applied (e.g. "Flows below 1 XRP hidden").
+
+### 4. General Requirements
+- Preserve all existing functionality from the previous update (6-hop support, commingling hub prioritization, improved Node Info Panel, "Add to Commingle Check" button, etc.).
+- Maintain acceptable performance at 5–6 hop depths.
+- Keep the current dark theme and professional law enforcement styling.

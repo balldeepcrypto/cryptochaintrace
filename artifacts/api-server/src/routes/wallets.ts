@@ -30,6 +30,19 @@ const PRICE_MAP: Record<string, number> = {
   dag: 0.07,
 };
 
+// Minimum flow value per chain for the connections/graph route — filters dust/spam edges
+const GRAPH_MIN_AMOUNTS: Record<string, number> = {
+  ethereum: 0.001,
+  bitcoin:  0.001,
+  polygon:  1.0,
+  bsc:      0.01,
+  xrp:      1.0,
+  xlm:      1.0,
+  hbar:     1.0,
+  xdc:      1.0,
+  dag:      1.0,
+};
+
 const COIN_ID_MAP: Record<string, string> = {
   xlm: "stellar",
   hbar: "hedera-hashgraph",
@@ -1603,6 +1616,7 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     center: string,
     txCount: number,
   ) => {
+    const minEdgeVal = GRAPH_MIN_AMOUNTS[chain] ?? 1.0;
     const nodes = [center, ...peers].map((addr) => ({
       address: addr, label: addr === center ? "Target" : null,
       balance: "0.000000", transactionCount: 0, isContract: false,
@@ -1610,7 +1624,13 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     }));
     const peerSet = new Set([center, ...peers]);
     const edges = Array.from(edgeMap.entries())
-      .filter(([key]) => { const [f, t] = key.split(":"); return peerSet.has(f) && peerSet.has(t); })
+      .filter(([key, info]) => {
+        const [f, t] = key.split(":");
+        // Keep edge if either participant is center (always show center connections)
+        // or if the total value meets the minimum threshold
+        const isCenter = f === center || t === center;
+        return peerSet.has(f) && peerSet.has(t) && (isCenter || parseFloat(info.totalValue) >= minEdgeVal);
+      })
       .map(([key, info]) => {
         const [from, to] = key.split(":");
         return { from, to, totalValue: info.totalValue, totalValueUsd: info.totalValueUsd, transactionCount: info.count, lastSeen: info.lastSeen };

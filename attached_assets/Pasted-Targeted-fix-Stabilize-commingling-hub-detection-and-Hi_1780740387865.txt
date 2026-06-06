@@ -1,0 +1,31 @@
+Targeted fix: Stabilize commingling hub detection and High-Risk Nodes counting at 6-hop depth for consistent, repeatable results.
+
+### Problem
+Even after previous determinism work, running the exact same 6-hop Graph Report on the same wallet still produces inconsistent results:
+- Commingling hub count fluctuates (e.g. 6 → 8 → 10 → 11)
+- High-Risk Nodes count changes (e.g. 3 → 2)
+This is unacceptable for a forensic tool. The same query must produce stable, repeatable hub counts and High-Risk counts.
+
+### Goal
+Make hub detection and High-Risk Nodes counting **stable and repeatable** so that multiple runs of the same wallet + depth produce identical or near-identical results.
+
+### Specific Requirements
+
+1. **Hub Detection Stability**
+   - Review the logic that identifies and selects commingling hubs (especially at hop 4–6).
+   - Ensure the final set of hubs is fully deterministic.
+   - Add strong, consistent sorting with address-based tie-breakers at every step where hubs are selected or ranked.
+   - Prioritize hubs by strength score first, then use address as the final tie-breaker so ordering is always stable.
+
+2. **High-Risk Nodes Counting**
+   - Make the High-Risk Nodes counter fully deterministic and stable.
+   - Ensure the same nodes qualify as High-Risk on every run (based on peelScore ≥ 70 or riskScore > 70, excluding hubs and known exchanges).
+   - The count should no longer fluctuate between runs.
+
+3. **General Rules for This Fix**
+   - Keep changes surgical and minimal — only touch the hub selection and High-Risk counting logic.
+   - Do not alter peel scoring calculations, volume calculations, or exchange labeling.
+   - Every list or set that affects the final hub count or High-Risk count must be explicitly sorted with a stable tie-breaker (preferably address localeCompare).
+   - After this fix, running the same 6-hop report on `rh64D3AcJkFRgyZe5XYFp4jEVLn43NCqaH` three times should produce **identical hub counts and High-Risk counts**.
+
+Test by running the 6-hop Graph Report on the above wallet multiple times and confirm the hub count and High-Risk count no longer fluctuate.

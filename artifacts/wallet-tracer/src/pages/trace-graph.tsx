@@ -957,9 +957,16 @@ export default function TraceGraph() {
       lines.push(``);
       subpoenaTargets.forEach(({ n, vol, usd, connected, isUS, fromHubs }, i) => {
         const usTag  = isUS ? "  ★ US-REGULATED" : "";
-        const volPct = totalGraphVolume > 0
-          ? `${(vol / totalGraphVolume * 100).toFixed(0)}% of graph flow`
-          : null;
+        // Use accumulated USD ratio (totalValueUsd sums all txs); fall back to
+        // native vol ratio only when no price data is available. Do NOT use
+        // vol/totalGraphVolume — totalValue stores only the first tx, not the sum.
+        const pctNum = totalGraphUsd > 0 && usd > 0
+          ? Math.round(usd / totalGraphUsd * 100)
+          : totalGraphVolume > 0 && vol > 0
+          ? Math.round(vol / totalGraphVolume * 100)
+          : 0;
+        const volPct = pctNum > 0 ? `${pctNum}% of graph flow` : null;
+        const isHighVol = totalGraphUsd > 0 ? usd > totalGraphUsd * 0.15 : vol > totalGraphVolume * 0.15;
         // Build a single-sentence note: vol%, hub context, and action
         let justify: string;
         if (isUS && fromHubs > 0) {
@@ -972,8 +979,8 @@ export default function TraceGraph() {
         } else if (fromHubs > 0) {
           justify = `${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""} deposit here` +
             (volPct ? ` — ${volPct}` : "") + `; obtain full deposit records`;
-        } else if (vol > totalGraphVolume * 0.15) {
-          justify = `High-volume endpoint — ${volPct}` +
+        } else if (isHighVol) {
+          justify = `High-volume endpoint — ${volPct ?? "major flow"}` +
             (connected > 3 ? `; ${connected} wallets connected` : "") +
             `; request deposit/withdrawal history`;
         } else {

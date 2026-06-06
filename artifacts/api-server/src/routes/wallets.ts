@@ -1799,9 +1799,21 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
       .map(([key, info]) => {
         const [from, to] = key.split(":");
         return { from, to, totalValue: info.totalValue, totalValueUsd: info.totalValueUsd, transactionCount: info.count, lastSeen: info.lastSeen };
-      });
+      })
+      // ── Determinism lock ──────────────────────────────────────────────────────
+      // edgeMap is a Map whose key insertion order reflects parallel-fetch arrival
+      // order (non-deterministic). Sorting here makes every downstream step
+      // (extraSources cap, hub detection, top-flow ordering) produce identical
+      // output for the same wallet + depth regardless of network timing.
+      .sort((a, b) =>
+        (b.totalValueUsd - a.totalValueUsd) ||
+        a.from.localeCompare(b.from) ||
+        a.to.localeCompare(b.to)
+      );
 
-    // Collect extra source addresses (outside peerSet) introduced by inbound edges
+    // Collect extra source addresses (outside peerSet) introduced by inbound edges.
+    // Because `edges` is now sorted by value desc, the first 30 extra sources are
+    // always the highest-value ones — deterministic across runs.
     const extraSources = new Set<string>();
     for (const e of edges) {
       if (!peerSet.has(e.from) && e.from !== center && extraSources.size < 30) {

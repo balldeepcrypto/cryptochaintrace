@@ -14,6 +14,13 @@ import { walletCache, txCache, connCache, WALLET_TTL, TX_TTL, CONN_TTL } from ".
 
 const router: IRouter = Router();
 
+// In-flight deduplication registry for the connections endpoint.
+// Maps cache key → a promise that resolves when the BFS completes (or fails).
+// A second request for the same key that arrives while a BFS is in progress
+// awaits this promise and then returns the cached result instead of starting
+// a duplicate computation that could produce a different result.
+const connInflight = new Map<string, Promise<void>>();
+
 const ETHERSCAN_BASE = "https://api.etherscan.io/api";
 const ETHERSCAN_KEY = process.env["ETHERSCAN_API_KEY"] || "YourApiKeyToken";
 const COINSTATS_KEY = process.env["COINSTATS_API_KEY"] || "";
@@ -1776,13 +1783,43 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
   const address = evmChainsConn.includes(chain) ? sanitizedConn.toLowerCase() : sanitizedConn;
   const priceUsd = PRICE_MAP[chain] ?? 1;
 
-  // ── Cache check ────────────────────────────────────────────────────────────
-  const cCacheKey = `c:${chain}:${address}:${depth}`;
+  // ── Cache key (normalised) ─────────────────────────────────────────────────
+  // XDC addresses may arrive as either "xdc…" or "0x…" — collapse to 0x+lower
+  // so both formats share the same cache entry.
+  const cNormAddr = (chain === "xdc" && address.toLowerCase().startsWith("xdc"))
+    ? ("0x" + address.slice(3)).toLowerCase()
+    : address;
+  const cCacheKey = `c:${chain}:${cNormAddr}:${depth}`;
+
+  // ── Cache hit ──────────────────────────────────────────────────────────────
   const cCacheHit = connCache.get(cCacheKey);
   if (cCacheHit) { res.setHeader("X-Cache", "HIT"); res.json(cCacheHit); return; }
+
+  // ── In-flight deduplication ────────────────────────────────────────────────
+  // If another request for the exact same key is already running a BFS, wait
+  // for it to finish and then serve from cache.  Without this guard, two
+  // rapid requests both find a cache miss and run independent BFS calls that
+  // can return different results depending on network timing.
+  const existingFlight = connInflight.get(cCacheKey);
+  if (existingFlight) {
+    await existingFlight.catch(() => { /* ignore BFS errors in the first request */ });
+    const dedupHit = connCache.get(cCacheKey);
+    if (dedupHit) { res.setHeader("X-Cache", "DEDUP"); res.json(dedupHit); return; }
+    // First request failed to produce a cacheable result — fall through and
+    // compute our own BFS so the user still gets a response.
+  }
+
+  // Register this request as the in-flight owner for this key.
+  // res.on('finish') fires after res.json() sends the response, at which point
+  // interceptCache has already stored the result in connCache.
+  let resolveFlight!: () => void;
+  const flightPromise = new Promise<void>(resolve => { resolveFlight = resolve; });
+  connInflight.set(cCacheKey, flightPromise);
+  res.on("finish", () => { connInflight.delete(cCacheKey); resolveFlight(); });
+
   // Only cache responses that contain at least one node — never cache the
   // empty-graph fallback emitted by the catch block, which would stick for
-  // 30 minutes and hide the real data on the next (successful) run.
+  // hours and hide the real data on the next (successful) run.
   interceptCache(res, connCache, cCacheKey, CONN_TTL,
     (b) => Array.isArray((b as { nodes?: unknown[] }).nodes) && (b as { nodes: unknown[] }).nodes.length > 0,
   );

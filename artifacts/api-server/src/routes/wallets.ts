@@ -11,6 +11,8 @@ import {
   GetWalletConnectionsResponse,
 } from "@workspace/api-zod";
 import { walletCache, txCache, connCache, WALLET_TTL, TX_TTL, CONN_TTL } from "../lib/cache";
+import { db, graphCacheTable } from "@workspace/db";
+import { eq } from "drizzle-orm";
 
 const router: IRouter = Router();
 
@@ -20,6 +22,43 @@ const router: IRouter = Router();
 // awaits this promise and then returns the cached result instead of starting
 // a duplicate computation that could produce a different result.
 const connInflight = new Map<string, Promise<void>>();
+
+/**
+ * L2 persistent cache: read a graph result from PostgreSQL.
+ * Returns null on cache miss, expiry, or any DB error (graceful degradation).
+ * The in-memory TTLCache is L1; the DB is L2 and survives server restarts.
+ */
+async function getGraphFromDb(key: string): Promise<unknown | null> {
+  try {
+    const [row] = await db.select().from(graphCacheTable).where(eq(graphCacheTable.cacheKey, key)).limit(1);
+    if (!row) return null;
+    if (new Date() > row.expiresAt) {
+      // Expired — evict async, treat as miss
+      db.delete(graphCacheTable).where(eq(graphCacheTable.cacheKey, key)).catch(() => {});
+      return null;
+    }
+    return row.data;
+  } catch {
+    return null; // DB unavailable — fall through to BFS
+  }
+}
+
+/**
+ * L2 persistent cache: write a graph result to PostgreSQL (upsert).
+ * Fire-and-forget safe — never throws. DB write failure is non-fatal.
+ */
+async function setGraphInDb(key: string, data: unknown, ttlMs: number): Promise<void> {
+  try {
+    const expiresAt = new Date(Date.now() + ttlMs);
+    await db
+      .insert(graphCacheTable)
+      .values({ cacheKey: key, data: data as never, expiresAt })
+      .onConflictDoUpdate({
+        target: graphCacheTable.cacheKey,
+        set: { data: data as never, expiresAt },
+      });
+  } catch { /* non-fatal — in-memory cache is still populated */ }
+}
 
 const ETHERSCAN_BASE = "https://api.etherscan.io/api";
 const ETHERSCAN_KEY = process.env["ETHERSCAN_API_KEY"] || "YourApiKeyToken";
@@ -1791,9 +1830,20 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     : address;
   const cCacheKey = `c:${chain}:${cNormAddr}:${depth}`;
 
-  // ── Cache hit ──────────────────────────────────────────────────────────────
+  // ── L1: in-memory cache hit ────────────────────────────────────────────────
   const cCacheHit = connCache.get(cCacheKey);
   if (cCacheHit) { res.setHeader("X-Cache", "HIT"); res.json(cCacheHit); return; }
+
+  // ── L2: PostgreSQL persistent cache ───────────────────────────────────────
+  // Survives server restarts and hot-reloads that wipe the in-memory cache.
+  // On hit, warm L1 so subsequent requests skip the DB round-trip.
+  const dbHit = await getGraphFromDb(cCacheKey);
+  if (dbHit) {
+    connCache.set(cCacheKey, dbHit, CONN_TTL);
+    res.setHeader("X-Cache", "DB-HIT");
+    res.json(dbHit);
+    return;
+  }
 
   // ── In-flight deduplication ────────────────────────────────────────────────
   // If another request for the exact same key is already running a BFS, wait
@@ -1811,11 +1861,17 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
 
   // Register this request as the in-flight owner for this key.
   // res.on('finish') fires after res.json() sends the response, at which point
-  // interceptCache has already stored the result in connCache.
+  // interceptCache has already stored the result in connCache (L1).
+  // We then persist to DB (L2) as a fire-and-forget write.
   let resolveFlight!: () => void;
   const flightPromise = new Promise<void>(resolve => { resolveFlight = resolve; });
   connInflight.set(cCacheKey, flightPromise);
-  res.on("finish", () => { connInflight.delete(cCacheKey); resolveFlight(); });
+  res.on("finish", () => {
+    const stored = connCache.get(cCacheKey);
+    if (stored) setGraphInDb(cCacheKey, stored, CONN_TTL).catch(() => {});
+    connInflight.delete(cCacheKey);
+    resolveFlight();
+  });
 
   // Only cache responses that contain at least one node — never cache the
   // empty-graph fallback emitted by the catch block, which would stick for

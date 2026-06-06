@@ -1,0 +1,38 @@
+Critical fix needed: Make CryptoChainTrace fully deterministic so the exact same wallet + depth always produces identical graph structure, hub counts, exchange nodes, High-Risk nodes, and total volume — even across separate runs with time gaps.
+
+### Current Problem
+Even after adding in-flight deduplication and cache, running the same 6-hop report on rh64D3AcJkFRgyZe5XYFp4jEVLn43NCqaH at different times (e.g. 60 seconds apart) can produce significantly different results:
+- One run shows 2 commingling hubs and ~771k XRP volume
+- Another run shows 4 commingling hubs and only ~186k XRP volume
+- Different exchanges and different hub lists appear
+
+This level of variance is unacceptable for a forensics / investigative tool.
+
+### Required Changes
+
+1. **Make the entire BFS + graph building process fully deterministic**
+   - Enforce a consistent, sorted traversal order (e.g. always process nodes in alphabetical order by address, or by a stable score).
+   - Remove any reliance on network response timing or parallel fetch ordering.
+   - All edge and node processing must produce the same result regardless of fetch timing.
+
+2. **Stabilize all downstream calculations**
+   - Hub detection, peel scoring, commingling logic, exchange identification, and volume aggregation must be fully deterministic.
+   - Perform all filtering and scoring on sorted, stable datasets (never rely on insertion order or fetch order).
+
+3. **Strengthen cache behavior**
+   - Ensure that once a successful result for a wallet + depth + filters is cached, every future request for the exact same parameters returns that exact cached result (including all metrics and node/edge lists).
+   - Add a cache version or fingerprint so you can detect if results ever diverge and log it.
+
+4. **Add basic reproducibility safeguards**
+   - Consider adding a small debug flag or log that shows whether a request was served from cache or freshly computed.
+   - If two runs for the same inputs ever produce different results, surface that clearly (even if just in logs for now).
+
+### Success Criteria
+After this change, running the same 6-hop report on `rh64D3AcJkFRgyZe5XYFp4jEVLn43NCqaH` multiple times (with gaps of 30–120 seconds between runs) must return **identical** values for:
+- Commingling Hubs count and list
+- Exchange Nodes count and list
+- High-Risk Nodes count
+- Total Volume
+- Overall graph structure (same significant flows)
+
+Do not change the 4-hour TTL or the empty-graph guard. Focus only on making results reproducible and deterministic.

@@ -194,6 +194,58 @@ const DEPTH_LABELS: Record<DepthStr, string> = {
   "6": "6 Hops (Maximum)",
 };
 
+// US-regulated exchanges — subpoena priority tier 1
+const US_REGULATED_EXCHANGES = new Set([
+  "Coinbase", "Kraken", "Gemini", "Bitstamp", "Robinhood",
+  "Uphold", "eToro", "Bittrex", "Poloniex", "Bitget",
+]);
+
+// Peel-chain heuristic score 0–100 based on edge pattern analysis.
+// Detects spreading / layering signatures without requiring timing data.
+function computePeelScore(
+  addr: string,
+  edges: Array<{ from: string; to: string; totalValue: string; totalValueUsd?: number | null }>,
+  knownLabels: Record<string, string>
+): number {
+  const inEdges  = edges.filter(e => e.to   === addr);
+  const outEdges = edges.filter(e => e.from === addr);
+  if (inEdges.length === 0 || outEdges.length === 0) return 0;
+
+  const inVol     = inEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+  const maxInFlow = Math.max(...inEdges.map(e => parseFloat(e.totalValue || "0")));
+  const avgInAmt  = inVol / inEdges.length;
+  const uniqueOut = new Set(outEdges.map(e => e.to)).size;
+
+  let score = 0;
+
+  // 1. Spreading: substantially more outflows than inflows
+  if (outEdges.length >= inEdges.length * 3) score += 25;
+  else if (outEdges.length >= inEdges.length * 1.5) score += 12;
+
+  // 2. Fan-out: many unique destinations
+  if (uniqueOut >= 8) score += 20;
+  else if (uniqueOut >= 4) score += 10;
+
+  // 3. Small outflows: peeling small amounts from large inflows
+  const smallOuts  = outEdges.filter(e => parseFloat(e.totalValue || "0") < avgInAmt * 0.2).length;
+  const smallRatio = outEdges.length > 0 ? smallOuts / outEdges.length : 0;
+  if (smallRatio > 0.6) score += 22;
+  else if (smallRatio > 0.3) score += 11;
+
+  // 4. Exchange routing as destination (layering via exchange)
+  const exchOuts = outEdges.filter(e => knownLabels[e.to] ?? knownLabels[(e.to ?? "").toLowerCase()]).length;
+  if (exchOuts >= 2) score += 18;
+  else if (exchOuts >= 1) score += 9;
+
+  // 5. Tiny outputs (< 5% of largest inflow) — classic peel/change pattern
+  const tinyOuts  = outEdges.filter(e => parseFloat(e.totalValue || "0") < maxInFlow * 0.05).length;
+  const tinyRatio = outEdges.length > 0 ? tinyOuts / outEdges.length : 0;
+  if (tinyRatio > 0.4) score += 15;
+  else if (tinyRatio > 0.15) score += 7;
+
+  return Math.min(100, score);
+}
+
 export default function TraceGraph() {
   const params = useParams();
   const address = params.address || "";
@@ -249,6 +301,17 @@ export default function TraceGraph() {
       const v = e.totalValueUsd ?? 0;
       m.set(e.from, (m.get(e.from) ?? 0) + v);
       m.set(e.to,   (m.get(e.to)   ?? 0) + v);
+    }
+    return m;
+  }, [enrichedConnections]);
+
+  // Peel-chain score for every node — drives the orange ring indicator and report
+  const peelScores = useMemo(() => {
+    if (!enrichedConnections) return new Map<string, number>();
+    const m = new Map<string, number>();
+    for (const n of enrichedConnections.nodes) {
+      const s = computePeelScore(n.address, enrichedConnections.edges, GRAPH_KNOWN_LABELS);
+      if (s > 0) m.set(n.address, s);
     }
     return m;
   }, [enrichedConnections]);
@@ -440,6 +503,20 @@ export default function TraceGraph() {
       ctx.lineWidth = isHov ? 2.5 : 1.5;
       ctx.stroke();
 
+      // Peel-chain risk ring: orange dashed ring for score ≥ 55
+      if (!isDimmed) {
+        const peel = peelScores.get(node.address) ?? 0;
+        if (peel >= 55) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, r + 5, 0, 2 * Math.PI);
+          ctx.strokeStyle = peel >= 75 ? "#f97316" : "#fb923c88";
+          ctx.lineWidth = peel >= 75 ? 2 : 1.5;
+          ctx.setLineDash([3, 2]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+
       // Labels: always show for key nodes; hide dimmed standard nodes in focus mode
       const isCenter = node.address === enrichedConnections.centerAddress;
       const showLabel = !isDimmed || isComm || node.label || isCenter;
@@ -455,7 +532,7 @@ export default function TraceGraph() {
       }
       ctx.globalAlpha = 1;
     }
-  }, [enrichedConnections, selectedAddr, focusMode, nodeVolumeUsd]);
+  }, [enrichedConnections, selectedAddr, focusMode, nodeVolumeUsd, peelScores]);
 
   useEffect(() => { drawGraph(hoveredAddr); }, [enrichedConnections, hoveredAddr, selectedAddr, drawGraph]);
 
@@ -567,12 +644,11 @@ export default function TraceGraph() {
   function genGraphReport(): string {
     if (!enrichedConnections) return "";
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
-    const commingling = commRef.current;
+    const commingling  = commRef.current;
     const hubNodes      = enrichedConnections.nodes.filter(n => commingling.has(n.address));
     const exchNodes     = enrichedConnections.nodes.filter(n => n.label && n.label !== "Target" && !commingling.has(n.address));
     const highRiskNodes = enrichedConnections.nodes.filter(n => (n.riskScore ?? 0) > 70 && !commingling.has(n.address) && !n.label);
 
-    // Filter out dust/spam flows below chain minimum
     const filteredEdges = [...enrichedConnections.edges]
       .filter(e => parseFloat(e.totalValue || "0") >= graphMinAmount)
       .sort((a, b) => parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0"));
@@ -580,6 +656,81 @@ export default function TraceGraph() {
     const totalGraphVolume = filteredEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
     const totalGraphUsd    = filteredEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
     const hasUsd = totalGraphUsd > 0;
+
+    // ── Pre-compute hub stats (used in Key Findings + hub section)
+    const hubStats = hubNodes.map(n => {
+      const inEdges = filteredEdges.filter(e => e.to === n.address);
+      const sources = [...new Set(inEdges.map(e => e.from))];
+      const hubVol  = inEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+      const hubUsd  = inEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
+      const strength = sources.length * (hubUsd > 0 ? hubUsd : hubVol * 10);
+      const peel = peelScores.get(n.address) ?? 0;
+      return { n, inEdges, sources, hubVol, hubUsd, strength, peel };
+    }).sort((a, b) => b.strength - a.strength);
+
+    // ── Pre-compute exchange stats
+    const exchStats = exchNodes.map(n => {
+      const nodeEdges = filteredEdges.filter(e => e.from === n.address || e.to === n.address);
+      const vol  = nodeEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+      const usd  = nodeEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
+      const inVol  = filteredEdges.filter(e => e.to   === n.address).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+      const outVol = filteredEdges.filter(e => e.from === n.address).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+      const connected = new Set(nodeEdges.flatMap(e => [e.from, e.to]).filter(a => a !== n.address)).size;
+      const fromHubs  = nodeEdges.filter(e => commingling.has(e.from)).length;
+      const isUS = US_REGULATED_EXCHANGES.has(n.label ?? "");
+      return { n, vol, usd, inVol, outVol, connected, fromHubs, isUS };
+    });
+
+    // ── Auto-generate Key Findings
+    const findings: string[] = [];
+
+    if (hubStats.length > 0) {
+      const top = hubStats[0];
+      const a = `${top.n.address.slice(0, 8)}…${top.n.address.slice(-4)}`;
+      const v = top.hubUsd > 0 ? `$${top.hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${top.hubVol.toFixed(2)} ${chainUp}`;
+      findings.push(`Hub [${a}] receives from ${top.sources.length} wallet${top.sources.length !== 1 ? "s" : ""} with ${v} inflow — highest commingling signal (strength ${top.strength.toLocaleString("en-US", { maximumFractionDigits: 0 })})`);
+    }
+
+    const usExch = exchStats.filter(e => e.isUS);
+    if (usExch.length > 0) {
+      const names = [...new Set(usExch.map(e => e.n.label))].slice(0, 4).join(", ");
+      const usUsd = usExch.reduce((s, e) => s + e.usd, 0);
+      const usVol = usExch.reduce((s, e) => s + e.vol, 0);
+      const v = usUsd > 0 ? `$${usUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${usVol.toFixed(2)} ${chainUp}`;
+      findings.push(`${usExch.length} US-regulated exchange${usExch.length !== 1 ? "s" : ""} detected (${names}) — ${v} subpoena-actionable volume`);
+    } else if (exchStats.length > 0) {
+      const top = [...exchStats].sort((a, b) => b.vol - a.vol)[0];
+      const v = top.usd > 0 ? `$${top.usd.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${top.vol.toFixed(2)} ${chainUp}`;
+      findings.push(`${exchStats.length} exchange${exchStats.length !== 1 ? "s" : ""} identified — ${top.n.label} is highest-volume at ${v}`);
+    }
+
+    const highPeelList = [...peelScores.entries()].filter(([, s]) => s >= 55).sort((a, b) => b[1] - a[1]);
+    if (highPeelList.length > 0) {
+      const [tpAddr, tpScore] = highPeelList[0];
+      const short = `${tpAddr.slice(0, 8)}…${tpAddr.slice(-4)}`;
+      findings.push(`Wallet ${short} scores ${tpScore}/100 on peel-chain analysis — high-confidence layering${highPeelList.length > 1 ? ` (${highPeelList.length} wallets flagged ≥55)` : ""}`);
+    }
+
+    const centerToExch = filteredEdges.filter(e => e.from === address && exchNodes.some(n => n.address === e.to));
+    if (centerToExch.length > 0) {
+      const names = [...new Set(centerToExch.map(e => GRAPH_KNOWN_LABELS[e.to] ?? GRAPH_KNOWN_LABELS[e.to.toLowerCase()] ?? "Unknown"))].slice(0, 3).join(", ");
+      const v = centerToExch.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
+      const vol = centerToExch.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+      const vStr = v > 0 ? `$${v.toLocaleString("en-US", { maximumFractionDigits: 0 })}` : `${vol.toFixed(2)} ${chainUp}`;
+      findings.push(`Center wallet has direct exchange flows → ${names} — ${vStr} traceable`);
+    }
+
+    if (hubStats.length >= 3) {
+      const avg = (hubStats.reduce((s, h) => s + h.sources.length, 0) / hubStats.length).toFixed(1);
+      findings.push(`${hubStats.length} commingling hubs detected averaging ${avg} source wallets each — complex multi-layer network`);
+    } else if (highRiskNodes.length > 0 && findings.length < 4) {
+      findings.push(`${highRiskNodes.length} high-risk wallet${highRiskNodes.length !== 1 ? "s" : ""} with risk score > 70 identified`);
+    }
+
+    if (findings.length === 0) {
+      findings.push(`No major commingling or layering patterns detected at this depth`);
+      findings.push(`Consider increasing hop depth (4–6) for deeper network analysis`);
+    }
 
     const lines: string[] = [
       `╔══════════════════════════════════════════════════════════════╗`,
@@ -599,36 +750,34 @@ export default function TraceGraph() {
       `  High-Risk Nodes   : ${highRiskNodes.length}`,
       `  Total Volume      : ${totalGraphVolume.toFixed(4)} ${chainUp}${hasUsd ? `  ≈ $${totalGraphUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD` : ""}`,
       ``,
+      `─── ★ KEY FINDINGS ${"─".repeat(44)}`,
+      ``,
+      ...findings.map(f => `  ▸ ${f}`),
+      ``,
     ];
 
-    if (hubNodes.length > 0) {
-      // Build hub stats with strength score, then sort strongest first
-      const hubStats = hubNodes.map(n => {
-        const inEdges = filteredEdges.filter(e => e.to === n.address);
-        const sources = [...new Set(inEdges.map(e => e.from))];
-        const hubVol  = inEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
-        const hubUsd  = inEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
-        const strength = sources.length * (hubUsd > 0 ? hubUsd : hubVol * 10);
-        return { n, inEdges, sources, hubVol, hubUsd, strength };
-      }).sort((a, b) => b.strength - a.strength);
-
-      lines.push(`─── ⚠ COMMINGLING HUBS (${hubNodes.length}) — sorted by strength ${"─".repeat(Math.max(0, 22 - String(hubNodes.length).length))}`);
+    // ── COMMINGLING HUBS
+    if (hubStats.length > 0) {
+      lines.push(`─── ⚠ COMMINGLING HUBS (${hubStats.length}) — sorted by strength ${"─".repeat(Math.max(0, 22 - String(hubStats.length).length))}`);
       lines.push(``);
-      for (const { n, inEdges, sources, hubVol, hubUsd, strength } of hubStats) {
+      for (const { n, inEdges, sources, hubVol, hubUsd, strength, peel } of hubStats) {
         const strengthLabel = hubUsd > 0
           ? `${sources.length} sources × $${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} = ${strength.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
           : `${sources.length} sources × ${hubVol.toFixed(2)} ${chainUp}`;
+        const peelTag = peel >= 75 ? `  ⚠ PEEL: ${peel}/100 [HIGH]`
+                      : peel >= 55 ? `  ⚠ PEEL: ${peel}/100 [MODERATE]`
+                      : peel  > 0  ? `  PEEL: ${peel}/100`
+                      : "";
         lines.push(`  ${n.address}`);
         if (n.label && n.label !== "Target") lines.push(`  Label    : ${n.label}`);
-        lines.push(`  STRENGTH : ${strengthLabel}`);
+        lines.push(`  STRENGTH : ${strengthLabel}${peelTag}`);
         lines.push(`  Inflow   : ${hubVol.toFixed(4)} ${chainUp}${hubUsd > 0 ? `  ($${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}`);
         lines.push(`  Receives from ${sources.length} source wallet${sources.length !== 1 ? "s" : ""}:`);
         for (const src of sources.slice(0, 6)) {
           const vol = inEdges.filter(e => e.from === src).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
           const usd = inEdges.filter(e => e.from === src).reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
-          const srcKnown = GRAPH_KNOWN_LABELS[src] ?? GRAPH_KNOWN_LABELS[src.toLowerCase()];
-          const srcLbl = srcKnown ? `  [${srcKnown}]` : "";
-          lines.push(`    · ${src}${srcLbl}`);
+          const srcLbl = GRAPH_KNOWN_LABELS[src] ?? GRAPH_KNOWN_LABELS[src.toLowerCase()];
+          lines.push(`    · ${src}${srcLbl ? `  [${srcLbl}]` : ""}`);
           lines.push(`      ${vol.toFixed(4)} ${chainUp}${usd > 0 ? `  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}`);
         }
         if (sources.length > 6) lines.push(`    · ... and ${sources.length - 6} more source(s)`);
@@ -636,36 +785,66 @@ export default function TraceGraph() {
       }
     }
 
-    if (exchNodes.length > 0) {
-      lines.push(`─── EXCHANGE / KNOWN ENTITIES (${exchNodes.length}) ${"─".repeat(Math.max(0, 33 - String(exchNodes.length).length))}`);
+    // ── EXCHANGE / KNOWN ENTITIES
+    if (exchStats.length > 0) {
+      lines.push(`─── EXCHANGE / KNOWN ENTITIES (${exchStats.length}) ${"─".repeat(Math.max(0, 33 - String(exchStats.length).length))}`);
       lines.push(``);
-      for (const n of exchNodes) {
-        const nodeEdges = filteredEdges.filter(e => e.from === n.address || e.to === n.address);
-        const vol = nodeEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
-        const usd = nodeEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
-        const inVol  = filteredEdges.filter(e => e.to === n.address).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
-        const outVol = filteredEdges.filter(e => e.from === n.address).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+      for (const { n, vol, usd, inVol, outVol } of exchStats) {
         lines.push(`  ${(n.label ?? "").toUpperCase()}`);
         lines.push(`  ${n.address}`);
         lines.push(`  Total Volume : ${vol.toFixed(4)} ${chainUp}${usd > 0 ? `  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}`);
-        if (inVol > 0)  lines.push(`  Received     : ${inVol.toFixed(4)} ${chainUp}`);
+        if (inVol  > 0) lines.push(`  Received     : ${inVol.toFixed(4)} ${chainUp}`);
         if (outVol > 0) lines.push(`  Sent         : ${outVol.toFixed(4)} ${chainUp}`);
         lines.push(``);
       }
     }
 
+    // ── RECOMMENDED SUBPOENA TARGETS
+    const subpoenaTargets = [...exchStats]
+      .sort((a, b) => {
+        if (a.isUS !== b.isUS) return a.isUS ? -1 : 1;
+        if (b.usd !== a.usd) return b.usd - a.usd;
+        return b.connected - a.connected;
+      })
+      .slice(0, 10);
+
+    if (subpoenaTargets.length > 0) {
+      lines.push(`─── ★ RECOMMENDED SUBPOENA TARGETS (${subpoenaTargets.length}) ${"─".repeat(Math.max(0, 24 - String(subpoenaTargets.length).length))}`);
+      lines.push(`    Ranked: US-regulated first → volume → connected wallets`);
+      lines.push(``);
+      subpoenaTargets.forEach(({ n, vol, usd, connected, isUS, fromHubs }, i) => {
+        const usTag = isUS ? "  ★ US-REGULATED" : "";
+        const justify = fromHubs > 0
+          ? `Receives from ${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""} — high-priority`
+          : connected > 5
+          ? `High connectivity — ${connected} wallets in graph`
+          : vol > totalGraphVolume * 0.1
+          ? `Major volume hub — ${(vol / totalGraphVolume * 100).toFixed(0)}% of graph flow`
+          : `Exchange deposit endpoint`;
+        lines.push(`  #${i + 1}  ${(n.label ?? "").toUpperCase()}${usTag}`);
+        lines.push(`       ${n.address}`);
+        lines.push(`       Volume : ${vol.toFixed(4)} ${chainUp}${usd > 0 ? `  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}  |  ${connected} wallet${connected !== 1 ? "s" : ""} connected`);
+        lines.push(`       Note   : ${justify}`);
+        lines.push(``);
+      });
+    }
+
+    // ── ALL NODES
     lines.push(`─── ALL NODES ${"─".repeat(50)}`);
     lines.push(``);
     for (const n of enrichedConnections.nodes) {
+      const peel = peelScores.get(n.address) ?? 0;
+      const peelTag = peel >= 75 ? " [PEEL:HIGH]" : peel >= 55 ? " [PEEL:MOD]" : "";
       const tag = n.address === address ? "[CENTER]"
                 : commingling.has(n.address) ? "[HUB]"
                 : n.label && n.label !== "Target" ? `[${n.label}]`
                 : (n.riskScore ?? 0) > 70 ? "[HIGH-RISK]"
                 : "";
-      lines.push(`  ${n.address}  ${tag}`);
+      lines.push(`  ${n.address}  ${tag}${peelTag}`);
     }
     lines.push(``);
 
+    // ── TOP FLOWS
     if (filteredEdges.length > 0) {
       lines.push(`─── TOP FLOWS BY VOLUME (≥ ${graphMinAmount} ${chainUp}) ${"─".repeat(20)}`);
       lines.push(``);

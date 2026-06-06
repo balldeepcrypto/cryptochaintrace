@@ -185,7 +185,7 @@ export type GetWalletConnectionsParams = {
   chain?: GetWalletConnectionsChain;
   /**
    * @minimum 1
-   * @maximum 3
+   * @maximum 6
    */
   depth?: number;
 };

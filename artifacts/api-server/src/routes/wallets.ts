@@ -274,10 +274,17 @@ function sanitizeAddress(raw: string): string | null {
  * Intercept res.json to write a successful (2xx) response body to `cache`
  * under `key` with TTL `ttlMs`. Must be called before any res.json in the handler.
  */
-function interceptCache(res: ExpressResponse, cache: typeof walletCache, key: string, ttlMs: number): void {
+function interceptCache(
+  res: ExpressResponse,
+  cache: typeof walletCache,
+  key: string,
+  ttlMs: number,
+  shouldCache?: (body: unknown) => boolean,
+): void {
   const orig = res.json.bind(res) as (body: unknown) => ExpressResponse;
   (res as unknown as { json: (body: unknown) => ExpressResponse }).json = (body: unknown) => {
-    if (res.statusCode < 400 && body !== undefined) cache.set(key, body, ttlMs);
+    const eligible = res.statusCode < 400 && body !== undefined && (!shouldCache || shouldCache(body));
+    if (eligible) cache.set(key, body, ttlMs);
     return orig(body);
   };
 }
@@ -1773,7 +1780,12 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
   const cCacheKey = `c:${chain}:${address}:${depth}`;
   const cCacheHit = connCache.get(cCacheKey);
   if (cCacheHit) { res.setHeader("X-Cache", "HIT"); res.json(cCacheHit); return; }
-  interceptCache(res, connCache, cCacheKey, CONN_TTL);
+  // Only cache responses that contain at least one node — never cache the
+  // empty-graph fallback emitted by the catch block, which would stick for
+  // 30 minutes and hide the real data on the next (successful) run.
+  interceptCache(res, connCache, cCacheKey, CONN_TTL,
+    (b) => Array.isArray((b as { nodes?: unknown[] }).nodes) && (b as { nodes: unknown[] }).nodes.length > 0,
+  );
   // ──────────────────────────────────────────────────────────────────────────
 
   const buildGraph = (

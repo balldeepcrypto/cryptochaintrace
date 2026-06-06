@@ -214,6 +214,7 @@ export default function TraceGraph() {
   const [graphReportText, setGraphReportText] = useState("");
   const [reportCopied,    setReportCopied]    = useState(false);
   const [addedCopied,     setAddedCopied]     = useState(false);
+  const [focusMode,       setFocusMode]       = useState(false);
 
   const { data: connections, isLoading, error } = useGetWalletConnections(address, {
     chain, depth: parseInt(depth),
@@ -239,6 +240,18 @@ export default function TraceGraph() {
 
   // Chain-specific minimum amount for report filtering
   const graphMinAmount = GRAPH_MIN_AMOUNTS[chain] ?? 1.0;
+
+  // Per-node total USD throughput (in + out) — drives node size and focus mode
+  const nodeVolumeUsd = useMemo(() => {
+    if (!enrichedConnections) return new Map<string, number>();
+    const m = new Map<string, number>();
+    for (const e of enrichedConnections.edges) {
+      const v = e.totalValueUsd ?? 0;
+      m.set(e.from, (m.get(e.from) ?? 0) + v);
+      m.set(e.to,   (m.get(e.to)   ?? 0) + v);
+    }
+    return m;
+  }, [enrichedConnections]);
 
   const drawGraph = useCallback((hovered: string | null) => {
     const canvas = canvasRef.current;
@@ -271,6 +284,23 @@ export default function TraceGraph() {
       [...inMap.entries()].filter(([, f]) => f.size > 1).map(([t]) => t)
     );
     commRef.current = commingling;
+
+    // Volume stats for scaling
+    const allVols = Array.from(nodeVolumeUsd.values());
+    const maxNodeVol = allVols.length > 0 ? Math.max(...allVols, 1) : 1;
+    const maxEdgeVol = enrichedConnections.edges.length > 0
+      ? Math.max(...enrichedConnections.edges.map(e => e.totalValueUsd ?? 0), 1) : 1;
+
+    // Focus mode: build set of "important" nodes to highlight; dim everything else
+    const focusSet: Set<string> | null = focusMode ? new Set([
+      enrichedConnections.centerAddress,
+      ...enrichedConnections.nodes.filter(n => n.label && n.label !== "Target").map(n => n.address),
+      ...Array.from(commingling),
+      // Top 15% by throughput
+      ...Array.from(nodeVolumeUsd.entries())
+        .filter(([, v]) => v >= maxNodeVol * 0.15)
+        .map(([a]) => a),
+    ]) : null;
 
     // Layout: radial rings by depth (BFS from center via edges)
     const pos = new Map<string, { x: number; y: number }>();
@@ -318,25 +348,33 @@ export default function TraceGraph() {
     }
     positionsRef.current = pos;
 
-    // Draw edges
+    // Draw edges — width and opacity scale with USD volume
     for (const e of enrichedConnections.edges) {
       const s = pos.get(e.from), t = pos.get(e.to);
       if (!s || !t) continue;
-      const isHotEdge    = hovered === e.from || hovered === e.to;
-      const isCommEdge   = commingling.has(e.to) || commingling.has(e.from);
-      const isExchEdge   = enrichedConnections.nodes.find(n => n.address === e.to)?.label != null;
+      const isHotEdge  = hovered === e.from || hovered === e.to;
+      const isCommEdge = commingling.has(e.to) || commingling.has(e.from);
+      const isExchEdge = enrichedConnections.nodes.find(n => n.address === e.to)?.label != null
+                      || enrichedConnections.nodes.find(n => n.address === e.from)?.label != null;
+      const isDimmed   = focusSet !== null && !focusSet.has(e.from) && !focusSet.has(e.to);
+      // Volume-scaled line width: 0.5–5px based on log scale
+      const edgeVol = e.totalValueUsd ?? 0;
+      const volWidth = Math.max(0.5, Math.min(4.5, Math.log1p(edgeVol / maxEdgeVol * 60) * 1.2));
+
+      ctx.globalAlpha = isDimmed ? 0.04 : 1;
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
       ctx.lineTo(t.x, t.y);
       ctx.strokeStyle = isHotEdge
-        ? "rgba(99,179,237,0.75)"
+        ? "rgba(99,179,237,0.85)"
         : isCommEdge
-        ? "rgba(234,179,8,0.25)"
+        ? `rgba(234,179,8,${isDimmed ? 0.1 : 0.35})`
         : isExchEdge
-        ? "rgba(239,68,68,0.2)"
-        : "rgba(99,179,237,0.08)";
-      ctx.lineWidth = isHotEdge ? 2.5 : isCommEdge || isExchEdge ? 1.5 : 1;
+        ? `rgba(239,68,68,${isDimmed ? 0.05 : 0.28})`
+        : `rgba(99,179,237,${isDimmed ? 0.03 : 0.12})`;
+      ctx.lineWidth = isHotEdge ? Math.max(2.5, volWidth * 1.5) : volWidth;
       ctx.stroke();
+      ctx.globalAlpha = 1;
       if (isHotEdge) {
         const px = s.x + (t.x - s.x) * 0.6, py = s.y + (t.y - s.y) * 0.6;
         const ang = Math.atan2(t.y - s.y, t.x - s.x);
@@ -345,7 +383,7 @@ export default function TraceGraph() {
         ctx.lineTo(px + Math.cos(ang + Math.PI - 2.3) * 7, py + Math.sin(ang + Math.PI - 2.3) * 7);
         ctx.lineTo(px + Math.cos(ang + Math.PI + 2.3) * 7, py + Math.sin(ang + Math.PI + 2.3) * 7);
         ctx.closePath();
-        ctx.fillStyle = "rgba(99,179,237,0.75)";
+        ctx.fillStyle = "rgba(99,179,237,0.85)";
         ctx.fill();
       }
     }
@@ -363,13 +401,20 @@ export default function TraceGraph() {
     for (const node of sorted) {
       const p = pos.get(node.address);
       if (!p) continue;
-      const isComm = commingling.has(node.address);
-      const isHov  = node.address === hovered;
-      const isSel  = node.address === selectedAddr;
+      const isComm   = commingling.has(node.address);
+      const isHov    = node.address === hovered;
+      const isSel    = node.address === selectedAddr;
+      const isDimmed = focusSet !== null && !focusSet.has(node.address);
       const st = nodeStyle(node.address, enrichedConnections.centerAddress, node.riskScore, node.isContract, node.label, isComm);
-      const r  = st.radius + (isHov ? 3 : 0);
 
-      if (isHov || isSel || isComm || node.label) {
+      // Volume-based radius bonus: 0–5px extra based on log scale
+      const nodeVol  = nodeVolumeUsd.get(node.address) ?? 0;
+      const volBonus = Math.min(5, Math.log1p(nodeVol / maxNodeVol * 40) * 1.5);
+      const r = st.radius + (isHov ? 3 : 0) + (isDimmed ? 0 : volBonus);
+
+      ctx.globalAlpha = isDimmed ? 0.18 : 1;
+
+      if (!isDimmed && (isHov || isSel || isComm || node.label)) {
         const grad = ctx.createRadialGradient(p.x, p.y, r * 0.4, p.x, p.y, r + (isHov || isSel ? 20 : 12));
         grad.addColorStop(0, st.glow);
         grad.addColorStop(1, "transparent");
@@ -394,15 +439,23 @@ export default function TraceGraph() {
       ctx.strokeStyle = isHov ? "#ffffffa0" : st.ring;
       ctx.lineWidth = isHov ? 2.5 : 1.5;
       ctx.stroke();
-      ctx.font = `${node.address === enrichedConnections.centerAddress || isComm ? "bold " : ""}10px monospace`;
-      ctx.textAlign = "center";
-      ctx.fillStyle = isHov ? "#fff" : st.textColor;
-      const lbl = node.label
-        ? (node.label.length > 16 ? node.label.slice(0, 14) + "…" : node.label)
-        : `${node.address.slice(0, 4)}…${node.address.slice(-4)}`;
-      ctx.fillText(lbl, p.x, p.y + r + 14);
+
+      // Labels: always show for key nodes; hide dimmed standard nodes in focus mode
+      const isCenter = node.address === enrichedConnections.centerAddress;
+      const showLabel = !isDimmed || isComm || node.label || isCenter;
+      if (showLabel) {
+        ctx.globalAlpha = isDimmed ? 0.35 : 1;
+        ctx.font = `${isCenter || isComm ? "bold " : ""}10px monospace`;
+        ctx.textAlign = "center";
+        ctx.fillStyle = isHov ? "#fff" : st.textColor;
+        const lbl = node.label
+          ? (node.label.length > 16 ? node.label.slice(0, 14) + "…" : node.label)
+          : `${node.address.slice(0, 4)}…${node.address.slice(-4)}`;
+        ctx.fillText(lbl, p.x, p.y + r + 14);
+      }
+      ctx.globalAlpha = 1;
     }
-  }, [enrichedConnections, selectedAddr]);
+  }, [enrichedConnections, selectedAddr, focusMode, nodeVolumeUsd]);
 
   useEffect(() => { drawGraph(hoveredAddr); }, [enrichedConnections, hoveredAddr, selectedAddr, drawGraph]);
 
@@ -450,6 +503,14 @@ export default function TraceGraph() {
   const txsWithCenter  = edgesWithCenter.reduce((s, e) => s + (e.transactionCount ?? 0), 0);
   const volWithCenter  = edgesWithCenter.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
   const usdWithCenter  = edgesWithCenter.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
+
+  // Hub strength stats for selected commingling node
+  const hubInEdges   = isCommingling && enrichedConnections
+    ? enrichedConnections.edges.filter(e => e.to === selectedAddr)
+    : [];
+  const hubSources   = isCommingling ? [...new Set(hubInEdges.map(e => e.from))].length : 0;
+  const hubInflowVol = hubInEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+  const hubInflowUsd = hubInEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
 
   function genNodeReport(): string {
     if (!selectedNode || !enrichedConnections) return "";
@@ -541,16 +602,26 @@ export default function TraceGraph() {
     ];
 
     if (hubNodes.length > 0) {
-      lines.push(`─── ⚠ COMMINGLING HUBS (${hubNodes.length}) ${"─".repeat(Math.max(0, 40 - String(hubNodes.length).length))}`);
-      lines.push(``);
-      for (const n of hubNodes) {
+      // Build hub stats with strength score, then sort strongest first
+      const hubStats = hubNodes.map(n => {
         const inEdges = filteredEdges.filter(e => e.to === n.address);
         const sources = [...new Set(inEdges.map(e => e.from))];
         const hubVol  = inEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
         const hubUsd  = inEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
+        const strength = sources.length * (hubUsd > 0 ? hubUsd : hubVol * 10);
+        return { n, inEdges, sources, hubVol, hubUsd, strength };
+      }).sort((a, b) => b.strength - a.strength);
+
+      lines.push(`─── ⚠ COMMINGLING HUBS (${hubNodes.length}) — sorted by strength ${"─".repeat(Math.max(0, 22 - String(hubNodes.length).length))}`);
+      lines.push(``);
+      for (const { n, inEdges, sources, hubVol, hubUsd, strength } of hubStats) {
+        const strengthLabel = hubUsd > 0
+          ? `${sources.length} sources × $${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} = ${strength.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+          : `${sources.length} sources × ${hubVol.toFixed(2)} ${chainUp}`;
         lines.push(`  ${n.address}`);
-        if (n.label && n.label !== "Target") lines.push(`  Label  : ${n.label}`);
-        lines.push(`  Inflow : ${hubVol.toFixed(4)} ${chainUp}${hubUsd > 0 ? `  ($${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}`);
+        if (n.label && n.label !== "Target") lines.push(`  Label    : ${n.label}`);
+        lines.push(`  STRENGTH : ${strengthLabel}`);
+        lines.push(`  Inflow   : ${hubVol.toFixed(4)} ${chainUp}${hubUsd > 0 ? `  ($${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })})` : ""}`);
         lines.push(`  Receives from ${sources.length} source wallet${sources.length !== 1 ? "s" : ""}:`);
         for (const src of sources.slice(0, 6)) {
           const vol = inEdges.filter(e => e.from === src).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
@@ -838,13 +909,26 @@ export default function TraceGraph() {
               </div>
             )}
             {enrichedConnections && (
-              <button
-                onClick={() => { setGraphReportText(genGraphReport()); setShowGraphReport(true); }}
-                className="w-full flex items-center justify-center gap-1.5 text-[11px] font-mono text-emerald-300 hover:text-emerald-200 bg-emerald-950/30 hover:bg-emerald-950/50 border border-emerald-500/30 hover:border-emerald-500/50 rounded px-2 py-2 transition-colors"
-              >
-                <FileText className="w-3.5 h-3.5" />
-                Generate Investigative Report from Graph
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setGraphReportText(genGraphReport()); setShowGraphReport(true); }}
+                  className="flex-1 flex items-center justify-center gap-1.5 text-[11px] font-mono text-emerald-300 hover:text-emerald-200 bg-emerald-950/30 hover:bg-emerald-950/50 border border-emerald-500/30 hover:border-emerald-500/50 rounded px-2 py-2 transition-colors"
+                >
+                  <FileText className="w-3.5 h-3.5" />
+                  Report
+                </button>
+                <button
+                  onClick={() => setFocusMode(f => !f)}
+                  className={`flex items-center justify-center gap-1.5 text-[11px] font-mono rounded px-3 py-2 transition-colors border ${
+                    focusMode
+                      ? "text-amber-200 bg-amber-900/50 border-amber-500/60 hover:bg-amber-900/70"
+                      : "text-muted-foreground hover:text-foreground bg-card/40 border-border/30 hover:border-border/60"
+                  }`}
+                  title={focusMode ? "Focus mode ON — showing key nodes only" : "Focus mode OFF — showing full graph"}
+                >
+                  {focusMode ? "◎ FOCUS" : "○ FOCUS"}
+                </button>
+              </div>
             )}
             <p className="text-[10px] font-mono text-muted-foreground/50 pt-0 border-t border-border/30">
               Click any node for details · hover for edges
@@ -893,8 +977,21 @@ export default function TraceGraph() {
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0 space-y-1">
                   {isCommingling && (
-                    <div className="text-[10px] font-mono font-bold text-yellow-400 flex items-center gap-1">
-                      ⚠ COMMINGLING HUB
+                    <div className="space-y-0.5">
+                      <div className="text-[10px] font-mono font-bold text-yellow-400 flex items-center gap-1">
+                        ⚠ COMMINGLING HUB
+                      </div>
+                      <div className="text-[9px] font-mono text-yellow-500/80">
+                        ⚡ {hubSources} source{hubSources !== 1 ? "s" : ""}
+                        {hubInflowUsd > 0
+                          ? ` · $${hubInflowUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} inflow`
+                          : hubInflowVol > 0
+                          ? ` · ${hubInflowVol.toFixed(3)} ${chainUp} inflow`
+                          : ""}
+                        {hubSources > 0 && hubInflowUsd > 0
+                          ? ` · strength ${(hubSources * hubInflowUsd).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
+                          : ""}
+                      </div>
                     </div>
                   )}
                   {selectedNode.label && selectedNode.label !== "Target" && (

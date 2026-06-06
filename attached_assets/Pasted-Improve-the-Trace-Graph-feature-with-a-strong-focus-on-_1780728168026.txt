@@ -1,0 +1,39 @@
+Improve the Trace Graph feature with a strong focus on better exchange detection and more reliable commingling/funneling/connection analysis. The goal is to make the Trace Graph produce results that are much closer in quality and reliability to the Full Package reports.
+
+### Current Problems to Fix
+- Exchange detection is very weak. Only KuCoin occasionally appears. Major exchanges that show up strongly in Full Package reports (Robinhood, Bitstamp, Kraken, Coinbase, Binance, etc.) are missing or not being labeled during graph expansion.
+- Commingling hub counts fluctuate strangely across hop depths (e.g. 3 hubs at 3 hops → 0 hubs at 4 hops → 3 hubs at 5 hops). This makes the results inconsistent and unreliable.
+- The graph is not effectively surfacing true funneling and mixing behavior between wallets.
+
+### Required Improvements
+
+1. **Stronger Exchange Detection**
+   - Significantly improve how the graph detects and labels known exchange wallets during multi-hop expansion.
+   - Expand and prioritize the `GRAPH_KNOWN_LABELS` system so that major exchanges are reliably identified and highlighted on the canvas and in the Graph Investigative Report.
+   - Exchanges should appear more consistently across different hop depths (especially 4–6 hops).
+   - When an exchange node is found, clearly label it (e.g. [Robinhood], [Bitstamp], [Kraken]) in both the visual graph and the report.
+
+2. **More Reliable Commingling & Funneling Detection**
+   - Improve the logic that identifies "commingling hubs" so the count is more stable and meaningful across hop depths.
+   - A commingling hub should represent a wallet that receives meaningful volume from **multiple distinct source wallets** within the current graph.
+   - Prioritize nodes that show clear funneling or mixing behavior (multiple inbound flows from different wallets).
+   - Make hub detection more consistent so the number of hubs doesn’t randomly drop to zero when increasing depth.
+
+3. **Better Overall Connection & Funneling Analysis**
+   - Improve how the graph surfaces important connections and shared pathways between wallets.
+   - In the Graph Investigative Report, make the "Commingling Hubs" and "Top Flows" sections more useful for understanding money movement and potential mixing.
+   - Highlight wallets that act as convergence or distribution points.
+
+4. **General Requirements**
+   - Keep the existing minimum amount filter (1 XRP for XRP chain) and depth selector (1–6 hops).
+   - Maintain good performance at higher hop depths (5–6 hops).
+   - Preserve the current export options (Copy, PDF, JSON) and the Node Info Panel features.
+   - Keep the professional dark theme and law enforcement-friendly styling.
+
+### Success Criteria
+After this update, when running the Trace Graph from `rh64D3AcJkFRgyZe5XYFp4jEVLn43NCqaH` at 5–6 hops:
+- Multiple known exchanges should appear (not just KuCoin).
+- Commingling hub counts should be more stable and logical across depths.
+- The report should give a clearer picture of connections and potential funneling/mixing, closer to what the Full Package reports show.
+
+Focus on making the Trace Graph a reliable investigative tool for understanding wallet connections and fund flows.

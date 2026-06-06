@@ -36,33 +36,66 @@ const GRAPH_MIN_AMOUNTS: Record<string, number> = {
 
 // Compact exchange/known entity labels for graph enrichment
 const GRAPH_KNOWN_LABELS: Record<string, string> = {
-  // ── XRP exchanges ──────────────────────────────────────────────────────────
+  // ── XRP exchanges (comprehensive) ─────────────────────────────────────────
   rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: "Bitstamp",
   rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1: "Bitstamp",
+  rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv: "Bitstamp",
   rG6FZ31hDHN1K5Dkbma3PSB5uVCuVVRzfn: "Bitfinex",
   rBndiPPKs9k5rjBb7HsEiqXKVZ9MMhGmhM: "Kraken",
   rKmBGxocj9Abgy25J51Mk1iqFzW9aVF9Tc: "Kraken",
   rLHzPsX6oXkzU2qL12kHCH8G8cnZv1rBJh: "Kraken",
   rBx5RkPh2KR3JqBtZWoU25ZxGHaJzYMD84: "Kraken",
+  rnJrjec2vrTJAAQUTMTjj7U6xdXrk9N4mT: "Kraken",
+  rEvuKRoEbZSbm5k5Qe5eTD9BixZXsfkxHf: "Kraken",
+  rUeDDFNp2q7Ymvyv75hFGC8DAcygVyJbNF: "Kraken",
   rrpNnNLKrartuEqfJGpqyDwPj1BBN1ybNn: "Binance",
   rBttd61FExHC68vsZ8dqmS3DfjFEceA1A:  "Binance",
   rDAE53VfMvftPB4ogpWGWvzkQxfht6JPxr: "Binance",
+  rfQ9EcLkU6WnNmkS3EwUkFeXeN47Rk8Cvi: "Binance",
+  rBtttd61FExHC68vsZ8dqmS3DfjFEceA1A: "Binance",
+  rPCpZwPKogNodbjRxGDnefVXu9Q9R4PN4Q: "Binance",
   rHXuEaRYnnJom5RS9K5pMrfFSmXwcjALBF: "Coinbase",
   rw2ciyaNshpHe7bCHo4bRWq6pqqynnWKQg: "Coinbase",
   rwnYLUsoBQX3ECa1A5bSKLdbPoHKnqf63J: "Coinbase",
+  r4sRyacXpbh4HbagmgfoQq8Q3j8ZJzbZ1J: "Coinbase",
+  rwpTh9DDa52XkM9nTKp2QrJuCGV5d1mQVP: "Coinbase",
+  r3YsZdkznVzYBv141qhwXHDWoPUXLdksNw: "Coinbase",
+  rLNaPoKeeBjZe2qs6x52yVPZpZ8td4dc6w: "Coinbase",
+  rUjfTQpvBr6wsGGxMw6sRmRQGG76nvp8Ln: "Coinbase",
+  r3wcwBpVCGcKu7TzY1ta2kQiJ5UHECDFZS: "Coinbase",
+  rayCEqaUBryJSWxf3BEc1Y4EMRYLuK3aJ8: "Coinbase",
+  r7BspkyEZqKZ88SovgxZtsGGxoVoPodJf:  "Coinbase",
+  rGFNBYb9548VqJojTDoDDYoJBEpvmVywSV: "Coinbase",
+  rQGXuQCZH27mj7wcikYrKCEbAh5xfenwb8: "Coinbase",
+  r4k4U4Hge3mLfyURfGu3pJFeNTWXduBha2: "Coinbase",
+  rGvmcMqafc5HAdyhaoQCG4tpBZKdYLT3cH: "Coinbase",
+  rHRHwHJHHzQ328c33wCimeXqCgyDoxLXjF: "Coinbase",
+  rU5ACGLKbhPQB92GZhT5UV22NHeVrEGuU6: "Coinbase",
   rJb5KsHsDHF1YS5B5DU6QCkH5NsPaKQTcy: "OKX",
   rUzWJkXyEtT8ekSSxkBYPqCvHpngcy6Fks: "OKX",
   rPVMhWBsfF9iMXYj3aAzJVkPDTFNSyWdKy: "Huobi/HTX",
   rHpSX1VNr3tdsDvvSAFKMPXzTZ3KPAJQ2E: "HTX",
+  rDm691szLmEqpUbXmgnj159Ffpp9PntHwj: "HTX",
   rN7n3473SaZBCG4dFL75EpTSMBKmFVBQBh: "Bitget",
   rNxp4h8apvRis6mJf9Sh8C6iRxfrDWN7AV: "KuCoin",
   rGsxGQNdaDyFhZQ5JqDGPkT3VGFFexCaM3: "Gate.io",
+  rGmP2iRHqoYkFXF3HqrZEGZVXiqBGKcZmz: "Gate.io",
   rMJXDzU1N9ZSDzPF7s1i2GGKyjM2wB3iom: "Robinhood",
   rBKPS4oLSaV2KVVuHH8EpQqMGgWj5U37h4: "Bittrex",
   rPJwJUmDMijFtBi3GnW2VRFTCEpFCJCGPA: "Poloniex",
   rKNwXQh9GMjaU8uTqKLECsqyib47g5dMvo: "Crypto.com",
+  r4DymtkgUAH2wqRxVfdd3Xtswzim6eC6c5: "Crypto.com",
   rHcFoo6a9qT5NHiVn1THwuhbekk8ovtWiL: "Bybit",
   rEvwSpejhGTbdAXbxRTpGAzPBQKRZxN5s:  "eToro",
+  rGFuMiw48HdbnrUbkRToR1yMBZkjbqvUhQ: "MEXC",
+  raBQUYdAhnnojJQ6Xi3eXztZ74ot24RDq1: "Gemini",
+  r4FuDeXifHAZork5KcEQKKBqmBWPGiFmJC: "Uphold",
+  rMdG3ju8pgyVh29ELPWaDuA74CpWW6Fxns: "Uphold",
+  rsXT3AQqhHDusFs3nQQuwcA1yXRLZJAXKw: "Uphold",
+  rBEc94rUFfLfTDwwGN7rQGBHc883c2OHx:  "Uphold",
+  rBgnUKAEiFhCRLPoYNPPe3JUWayRjP6Ayg: "Coinspot",
+  rBWpYJhuJWBPakzJ4kYQqHShSkkF3rgeD:  "Cobo Custody",
+  rQrgppDZMMKeq1x9gDuoytWeRLmLfXYV3q: "Union Chain",
   // ── XLM exchanges ──────────────────────────────────────────────────────────
   GBEZDAORANS52QCQ3UXGE6ZBMW3KMBSB42GBXBZMQEVJGALDEF2MGDM: "Binance XLM",
   GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66BZDSBS4: "Coinbase XLM",
@@ -219,10 +252,18 @@ export default function TraceGraph() {
 
     ctx.clearRect(0, 0, W, H);
 
-    // Detect commingling nodes (2+ distinct parents, excluding center)
+    // Detect commingling nodes — wallets that receive from 2+ distinct senders.
+    // Known exchange nodes are excluded: exchanges always aggregate from many sources
+    // by design and their presence would otherwise inflate (and destabilise) the hub count.
+    const knownExchangeAddrs = new Set(
+      enrichedConnections.nodes
+        .filter(n => n.label && n.label !== "Target")
+        .map(n => n.address)
+    );
     const inMap = new Map<string, Set<string>>();
     for (const e of enrichedConnections.edges) {
       if (e.to === enrichedConnections.centerAddress) continue;
+      if (knownExchangeAddrs.has(e.to)) continue; // exchange nodes handled separately
       if (!inMap.has(e.to)) inMap.set(e.to, new Set());
       inMap.get(e.to)!.add(e.from);
     }

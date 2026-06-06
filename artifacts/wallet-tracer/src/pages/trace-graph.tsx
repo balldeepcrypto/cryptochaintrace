@@ -692,7 +692,8 @@ export default function TraceGraph() {
 
     const filteredEdges = [...enrichedConnections.edges]
       .filter(e => parseFloat(e.totalValue || "0") >= graphMinAmount)
-      .sort((a, b) => parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0"));
+      // Stable: highest native value first; from+to addresses as tie-breaker
+      .sort((a, b) => parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0") || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
 
     const totalGraphVolume = filteredEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
     const totalGraphUsd    = filteredEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
@@ -707,7 +708,8 @@ export default function TraceGraph() {
       const strength = sources.length * (hubUsd > 0 ? hubUsd : hubVol * 10);
       const peel = peelScores.get(n.address) ?? 0;
       return { n, inEdges, sources, hubVol, hubUsd, strength, peel };
-    }).sort((a, b) => b.strength - a.strength);
+    // Stable: highest commingling strength first; address tie-breaker
+    }).sort((a, b) => b.strength - a.strength || a.n.address.localeCompare(b.n.address));
 
     // ── Pre-compute exchange stats
     const exchStats = exchNodes.map(n => {
@@ -780,7 +782,8 @@ export default function TraceGraph() {
     }
 
     // ── F3: Layering / peel-chain signals (always fires)
-    const allPeelSorted = [...peelScores.entries()].sort((a, b) => b[1] - a[1]);
+    // Stable: highest peel score first; address tie-breaker
+    const allPeelSorted = [...peelScores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     const highPeelList  = allPeelSorted.filter(([, s]) => s >= 55);
     if (allPeelSorted.length > 0) {
       const [tpAddr, tpScore] = allPeelSorted[0];
@@ -860,7 +863,8 @@ export default function TraceGraph() {
             .reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
           return { addr: n.address, vol };
         })
-        .sort((a, b) => b.vol - a.vol)
+        // Stable: highest volume first; address tie-breaker
+        .sort((a, b) => b.vol - a.vol || a.addr.localeCompare(b.addr))
         .slice(0, 3);
       const top3Pct = totalGraphVolume > 0
         ? ((topByVol.reduce((s, x) => s + x.vol, 0) / (totalGraphVolume || 1)) * 100).toFixed(0)
@@ -952,10 +956,12 @@ export default function TraceGraph() {
 
     // ── RECOMMENDED SUBPOENA TARGETS
     const subpoenaTargets = [...exchStats]
+      // Stable: US-regulated → USD volume → connected wallets → address tie-breaker
       .sort((a, b) => {
         if (a.isUS !== b.isUS) return a.isUS ? -1 : 1;
         if (b.usd !== a.usd) return b.usd - a.usd;
-        return b.connected - a.connected;
+        if (b.connected !== a.connected) return b.connected - a.connected;
+        return a.n.address.localeCompare(b.n.address);
       })
       .slice(0, 10);
 
@@ -1132,7 +1138,8 @@ export default function TraceGraph() {
     const commingling = commRef.current;
     const filteredEdges = [...enrichedConnections.edges]
       .filter(e => parseFloat(e.totalValue || "0") >= graphMinAmount)
-      .sort((a, b) => parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0"));
+      // Stable: highest native value first; from+to addresses as tie-breaker
+      .sort((a, b) => parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0") || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
     const exchNodes = enrichedConnections.nodes.filter(n => n.label && n.label !== "Target" && !commingling.has(n.address));
 
     const data = {

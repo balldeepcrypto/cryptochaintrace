@@ -1,0 +1,36 @@
+Critical fix: Make graph expansion stable and deterministic across runs.
+
+### Problem
+Running the exact same 6-hop Graph Investigative Report on the same wallet produces inconsistent results between runs:
+- One run finds only 2 commingling hubs and 4 exchanges.
+- The next run finds 6 hubs and 8 exchanges.
+This non-determinism makes the tool unreliable for investigative use.
+
+### Root Cause (Likely)
+The graph building logic (especially at 4–6 hops) has non-deterministic behavior, most likely from:
+- Unstable peer prioritization / sorting order
+- Parallel fetching order affecting which nodes get expanded
+- Inconsistent handling of ties when selecting which peers to expand next
+- Possible caching or race conditions in the BFS / prioritizePeers logic
+
+### Required Fix
+Make the entire multi-hop graph expansion **stable and deterministic** so the same input always produces the same (or extremely consistent) output:
+
+1. Ensure `prioritizePeers()` (or equivalent logic) produces a **stable, sorted order** every time — use deterministic tie-breakers (e.g., address lexicographical order as final tie-breaker).
+2. Make the BFS / expansion process at all depths (especially 4–6 hops) fully deterministic.
+3. When selecting which peers to expand, always prioritize in this strict order:
+   - Known exchange addresses (highest priority)
+   - Nodes with 2+ inbound sources (commingling candidates)
+   - Highest total USD volume
+   - Address string as final tie-breaker for perfect determinism
+4. Fix the **High-Risk Nodes** counter at the same time so it correctly counts nodes with `peelScore ≥ 70` (it has been stuck at 0).
+
+### Scope
+This stability fix should apply to:
+- Trace Graph / Graph Investigative Report (all depths, especially 4–6 hops)
+- Any other part of the app that performs multi-hop wallet expansion or graph building
+
+### Requirements
+- The same query must produce consistent hub counts, exchange counts, and top flows across multiple runs.
+- Do not reduce detection quality — aim to keep (or improve) the richer expansion we saw in stronger runs.
+- Keep the fix clean and well-commented.

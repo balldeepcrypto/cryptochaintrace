@@ -1441,6 +1441,52 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+
+      // ── TEMPORARY DEBUG — remove after diagnosing XLM amount=0 issue ─────────
+      const XLM_DEBUG_ADDR = "GDOMH3KSHBLPA3NLWDFWTODS7AK3XAZ2NNNK2WLY3M7S7ER7J67PQV7K";
+      if (address === XLM_DEBUG_ADDR) {
+        const sample = records.slice(0, 3);
+        sample.forEach((rec, i) => {
+          // Strip the large embedded transaction object so the log stays readable
+          const { transaction: _tx, ...flat } = rec as Record<string, unknown> & { transaction?: unknown };
+          const txEmbed = rec["transaction"] as Record<string, unknown> | undefined;
+          req.log.warn({
+            xlm_debug_raw: {
+              index: i,
+              type: rec["type"],
+              keys: Object.keys(flat),
+              amount: rec["amount"],
+              source_amount: rec["source_amount"],
+              starting_balance: rec["starting_balance"],
+              from: rec["from"],
+              to: rec["to"],
+              source_account: rec["source_account"],
+              account: rec["account"],
+              funder: rec["funder"],
+              asset_type: rec["asset_type"],
+              asset_code: rec["asset_code"],
+              transaction_fee_charged: txEmbed?.["fee_charged"],
+              transaction_memo: txEmbed?.["memo"],
+              transaction_memo_type: txEmbed?.["memo_type"],
+            },
+          }, "[XLM DEBUG] raw record");
+
+          const parsed = parseStellarOp(rec, address, priceUsd);
+          req.log.warn({
+            xlm_debug_parsed: {
+              index: i,
+              value: parsed?.value,
+              direction: parsed?.direction,
+              from: parsed?.from,
+              to: parsed?.to,
+              tokenSymbol: parsed?.tokenSymbol,
+              was_null: parsed === null,
+            },
+          }, "[XLM DEBUG] parseStellarOp result");
+        });
+      }
+      // ── END TEMPORARY DEBUG ──────────────────────────────────────────────────
+
       /** Parse Horizon operation records into Tx objects, skipping non-value op types. */
       function parseStellarRecords(recs: Array<Record<string, unknown>>) {
         return recs

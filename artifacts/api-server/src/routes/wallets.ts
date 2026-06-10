@@ -1441,6 +1441,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+
       /** Parse Horizon operation records into Tx objects, skipping non-value op types. */
       function parseStellarRecords(recs: Array<Record<string, unknown>>) {
         return recs

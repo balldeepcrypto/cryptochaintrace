@@ -897,7 +897,7 @@ interface Tx {
 // ─── XLM asset allowlist + per-asset minimum amounts ─────────────────────────
 // Only these 8 assets are shown for XLM wallets; all others are silently dropped.
 const XLM_ALLOWED_ASSETS: Record<string, number> = {
-  XLM:   0.0000001, // 1 stroop — show any real payment, including dust; zero-value ops still excluded
+  XLM:   1,         // ≥1 XLM — filters 1-stroop spam airdrops that display as "+0.0000"
   USDC:  1,
   VELO:  1000,
   SHX:   1000,

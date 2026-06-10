@@ -1762,18 +1762,21 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           mirrorUrl = `/api/v1/transactions?account.id=${address}&order=desc&limit=${limit}`;
         }
 
-        // On the first page, some accounts have all their transactions in older time windows.
-        // Follow links.next up to 10 times until we find actual transactions or exhaust pages.
+        // The Hedera Mirror Node returns empty pages when there is no activity in a time window
+        // (~60 days per empty step). We must follow links.next through gaps to find real txs.
+        // This applies both on the first page AND on Load More — mid-history gaps are common
+        // on wallets with irregular activity (e.g. inactive for months between transfers).
+        // 50 steps × 60 days/step = ~8 years of coverage, enough for any mainnet wallet.
         let rawTxs: Record<string, unknown>[] = [];
         let mirrorNext: string | null | undefined = null;
         let followAttempts = 0;
-        const maxFollowAttempts = cursorParam ? 0 : 10;
+        const maxFollowAttempts = 50;
         while (followAttempts <= maxFollowAttempts) {
           const txData = await hbarFetch(mirrorUrl);
           rawTxs = (txData["transactions"] as Record<string, unknown>[]) ?? [];
           mirrorNext = (txData["links"] as Record<string, unknown>)?.["next"] as string | null | undefined;
           if (rawTxs.length > 0 || !mirrorNext) break;
-          // Empty page but Mirror Node says there are more — follow the cursor
+          // Empty page but Mirror Node says there are more — follow the cursor through the gap
           mirrorUrl = mirrorNext;
           followAttempts++;
         }

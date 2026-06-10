@@ -844,7 +844,8 @@ function parseStellarOp(
   } else if (type === "account_merge") {
     from = String(rec["account"] ?? address);
     to = String(rec["into"] ?? "") || null;
-    rawAmount = "0"; // merged balance unknown without extra fetch
+    // Horizon embeds the merged native balance as "amount" or "source_amount" on some versions.
+    rawAmount = String(rec["amount"] ?? rec["source_amount"] ?? "0");
   } else if (type === "create_claimable_balance") {
     // Someone creates a claimable balance earmarked for specific claimants
     from = String(rec["sponsor"] ?? rec["source_account"] ?? "");
@@ -855,11 +856,11 @@ function parseStellarOp(
     rawAmount = String(rec["amount"] ?? "0");
     tokenSymbol = stellarAssetSymbol(rec["asset"]);
   } else if (type === "claim_claimable_balance") {
-    // This address is claiming a previously-created claimable balance (receiving)
+    // Horizon includes amount + asset fields directly on this operation record.
     from = String(rec["source_account"] ?? "");
     to = String(rec["claimant"] ?? address);
-    rawAmount = "0"; // amount requires a separate lookup of the balance_id
-    tokenSymbol = "XLM";
+    rawAmount = String(rec["amount"] ?? "0");
+    tokenSymbol = stellarAssetSymbol(rec["asset_type"] === "native" ? "native" : rec["asset_code"]);
   } else {
     // payment, path_payment_strict_receive, path_payment_strict_send
     from = String(rec["from"] ?? rec["source_account"] ?? "");

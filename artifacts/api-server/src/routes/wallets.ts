@@ -2117,18 +2117,40 @@ router.get("/wallets/:address/connections", async (req, res): Promise<void> => {
     }
 
     if (chain === "xlm") {
-      const data = await stellarFetch(`/accounts/${address}/operations?limit=${hop1TxLimit}&order=desc&join=transactions`);
-      const records = ((data["_empty"] ? [] : (data["_embedded"] as Record<string, unknown> | undefined)?.["records"]) as Array<Record<string, unknown>>) ?? [];
+      // Multi-page BFS fetch: Horizon returns max 200 ops/page.
+      // Scale pages with depth so shallow queries stay fast while deep traces
+      // see enough history to surface all real counterparty connections.
+      //   depth 1-3 → 1 page  (200 ops, ~8 s worst-case)
+      //   depth 4-5 → 2 pages (400 ops, ~16 s worst-case)
+      //   depth 6   → 3 pages (600 ops, ~24 s worst-case)
+      const XLM_BFS_MAX_PAGES = depth <= 3 ? 1 : depth <= 5 ? 2 : 3;
+      const allRecords: Array<Record<string, unknown>> = [];
+      let bfsCursor: string | null = null;
+
+      for (let pg = 0; pg < XLM_BFS_MAX_PAGES; pg++) {
+        const cursorSuffix = bfsCursor ? `&cursor=${encodeURIComponent(bfsCursor)}` : "";
+        let pageData: Record<string, unknown>;
+        try {
+          pageData = await stellarFetch(`/accounts/${address}/operations?limit=200&order=desc&join=transactions${cursorSuffix}`);
+        } catch { break; }
+        if (pageData["_empty"]) break;
+        const recs = ((pageData["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+        allRecords.push(...recs);
+        if (recs.length < 200) break; // reached last page
+        bfsCursor = String(recs[recs.length - 1]?.["paging_token"] ?? "");
+        if (!bfsCursor) break;
+      }
+
       const peerSet = new Set<string>();
       const edgeMap = new Map<string, EdgeMapEntry>();
-      for (const rec of records) {
+      for (const rec of allRecords) {
         const parsed = parseStellarOp(rec, address, priceUsd);
         if (!parsed || !parsed.from || !parsed.to) continue;
         peerSet.add(parsed.from); peerSet.add(parsed.to);
         const val = parseFloat(parsed.value);
         mergeEdge(edgeMap, `${parsed.from}:${parsed.to}`, parsed.value, val * priceUsd, parsed.timestamp);
       }
-      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, records.length)));
+      res.json(GetWalletConnectionsResponse.parse(buildGraph(prioritizePeers(peerSet, edgeMap, address, basePeerCap), edgeMap, address, allRecords.length)));
       return;
     }
 

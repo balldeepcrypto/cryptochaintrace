@@ -827,6 +827,7 @@ function parseStellarOp(
   fee: string; feeUsd: number; timestamp: string; blockNumber: number;
   status: "success" | "failed"; direction: "in" | "out" | "self";
   tokenSymbol: string; tokenName: null; memo: string | null;
+  destinationTag: null;
 } | null {
   const type = String(rec["type"] ?? "payment");
   if (!STELLAR_VALUE_OPS.has(type)) return null; // skip non-value ops
@@ -876,18 +877,25 @@ function parseStellarOp(
   const isSelf = from === address && (to === null || to === address);
   const direction: "in" | "out" | "self" = isSelf ? "self" : isOut ? "out" : "in";
 
-  // Extract memo from the transaction embedded by join=transactions
+  // Extract memo and fee from the transaction embedded by join=transactions.
+  // fee_charged comes from Horizon in stroops (1 stroop = 1e-7 XLM) — divide by 1e7.
   const txEmbed = rec["transaction"] as Record<string, unknown> | undefined;
   const memoType = String(txEmbed?.["memo_type"] ?? "none");
   const memo = (memoType !== "none" && txEmbed?.["memo"]) ? String(txEmbed["memo"]) : null;
+  const feeXlm = txEmbed?.["fee_charged"]
+    ? parseFloat(String(txEmbed["fee_charged"])) / 1e7
+    : 0.00001; // 100 stroops — Stellar base fee
+  const fee = feeXlm.toFixed(7);
+  const feeUsd = parseFloat((feeXlm * priceUsd).toFixed(6));
 
   return {
     hash: String(rec["transaction_hash"] ?? ""),
     from, to, value, valueUsd,
-    fee: "0.000001", feeUsd: parseFloat((0.000001 * priceUsd).toFixed(6)),
+    fee, feeUsd,
     timestamp: String(rec["created_at"] ?? new Date().toISOString()),
     blockNumber: 0, status: "success" as const,
     direction, tokenSymbol, tokenName: null, memo,
+    destinationTag: null,
   };
 }
 

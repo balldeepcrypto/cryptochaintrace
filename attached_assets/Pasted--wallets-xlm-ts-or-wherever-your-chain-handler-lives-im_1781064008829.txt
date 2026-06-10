@@ -1,0 +1,75 @@
+// wallets/xlm.ts  (or wherever your chain handler lives)
+import * as StellarSdk from '@stellar/stellar-sdk';
+
+const HORIZON = 'https://horizon.stellar.org';
+const server = new StellarSdk.Horizon.Server(HORIZON);
+
+export async function getXLMTransactions(address: string, limit = 200) {
+  const ops: any[] = [];
+  let page = await server
+    .operations()
+    .forAccount(address)
+    .order('desc')
+    .limit(Math.min(limit, 200))
+    .call();
+
+  while (page.records.length > 0 && ops.length < 25000) {
+    ops.push(...page.records);
+    if (!page.records.length || ops.length >= 25000) break;
+    page = await page.next();
+  }
+
+  return ops.map((op: any) => {
+    let value = '0';
+    let direction: 'in' | 'out' = 'in';
+    let counterparty = '';
+    let asset = 'XLM';
+
+    switch (op.type) {
+      case 'payment':
+      case 'path_payment_strict_receive':
+      case 'path_payment_strict_send':
+        value = (parseFloat(op.amount) / 10_000_000).toFixed(7);
+        if (op.from === address) {
+          direction = 'out';
+          counterparty = op.to;
+        } else {
+          direction = 'in';
+          counterparty = op.from;
+        }
+        if (op.asset_type !== 'native') asset = `${op.asset_code}:${op.asset_issuer}`;
+        break;
+
+      case 'create_account':
+        value = (parseFloat(op.starting_balance) / 10_000_000).toFixed(7);
+        if (op.funder === address) {
+          direction = 'out';
+          counterparty = op.account;
+        } else {
+          direction = 'in';
+          counterparty = op.funder;
+        }
+        break;
+
+      // add other types you care about (manage_data, etc.) as needed
+      default:
+        value = '0';
+    }
+
+    return {
+      hash: op.transaction_hash,
+      from: op.from || op.funder || '',
+      to: op.to || op.account || '',
+      value,
+      valueUsd: 0,                    // add price lookup later if wanted
+      fee: (parseFloat(op.transaction?.fee_charged || 0) / 10_000_000).toFixed(7),
+      timestamp: op.created_at,
+      blockNumber: op.ledger_attr || 0,
+      status: 'success',
+      direction,
+      tokenSymbol: asset,
+      tokenName: asset === 'XLM' ? 'Stellar Lumens' : asset,
+      memo: op.transaction?.memo || null,
+    };
+  });
+}

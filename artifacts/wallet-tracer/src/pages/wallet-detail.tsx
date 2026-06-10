@@ -6021,9 +6021,16 @@ export default function WalletDetail() {
               </thead>
               <tbody className="divide-y divide-border/30">
                 {txLoading ? (
-                  Array.from({ length: 5 }).map((_, i) => (
-                    <tr key={i}><td colSpan={8} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
-                  ))
+                  chain === "xlm"
+                    ? <tr><td colSpan={8} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">
+                        <div className="flex items-center justify-center gap-2">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          SEARCHING PAST SPAM PAGES…
+                        </div>
+                      </td></tr>
+                    : Array.from({ length: 5 }).map((_, i) => (
+                        <tr key={i}><td colSpan={8} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
+                      ))
                 ) : groupedRows.length === 0 ? (
                   <tr><td colSpan={8} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">
                     {allTxs.length > 0
@@ -6167,9 +6174,16 @@ export default function WalletDetail() {
               </thead>
               <tbody className="divide-y divide-border/30">
                 {txLoading ? (
-                  Array.from({ length: 8 }).map((_, i) => (
-                    <tr key={i}><td colSpan={6} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
-                  ))
+                  chain === "xlm"
+                    ? <tr><td colSpan={6} className="px-5 py-10 text-center text-muted-foreground font-mono text-sm">
+                        <div className="flex items-center justify-center gap-2">
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          SEARCHING PAST SPAM PAGES…
+                        </div>
+                      </td></tr>
+                    : Array.from({ length: 8 }).map((_, i) => (
+                        <tr key={i}><td colSpan={6} className="px-5 py-3"><div className="h-5 bg-muted/40 rounded animate-pulse" /></td></tr>
+                      ))
                 ) : filteredTxs.length === 0 ? (
                   <tr><td colSpan={6} className="px-5 py-12 text-center text-muted-foreground font-mono text-sm">
                     {allTxs.length > 0

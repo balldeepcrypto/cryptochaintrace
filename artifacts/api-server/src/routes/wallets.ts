@@ -1443,13 +1443,32 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
 
       /** Parse Horizon operation records into Tx objects, skipping non-value op types. */
+      // Server-side XLM allowlist + minimum amounts — mirrors XLM_ALLOWED_ASSETS in the frontend.
+      // Dropping sub-minimum and unknown-token ops here lets the auto-follow below detect
+      // "all spam page" and keep walking the cursor transparently, on every request
+      // (including cursor-based Load More), so the client always receives real transactions.
+      const XLM_SERVER_MIN: Record<string, number> = {
+        XLM:  1.0,
+        USDC: 1.0,
+        VELO: 1000,
+        SHX:  1000,
+        AQUA: 1000,
+        AFR:  1000,
+        LSP:  10000,
+        SSLX: 10000,
+      };
+
       function parseStellarRecords(recs: Array<Record<string, unknown>>) {
         return recs
           .map((rec) => parseStellarOp(rec, address, priceUsd))
-          .filter((t): t is NonNullable<typeof t> => t !== null);
-        // parseStellarOp already sets from/to and direction relative to the searched address,
-        // so the old address-membership pre-filter and post-filter are redundant and were
-        // dropping legitimate ops (e.g. path payments where source_account ≠ from field).
+          .filter((t): t is NonNullable<typeof t> => t !== null)
+          .filter((t) => {
+            // Drop unknown tokens and anything below the per-asset minimum
+            const sym = t.tokenSymbol ?? "XLM";
+            const min = XLM_SERVER_MIN[sym];
+            if (min === undefined) return false;
+            return parseFloat(t.value) >= min;
+          });
       }
 
       let transactions = parseStellarRecords(records);
@@ -1457,13 +1476,13 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       let nextCursor = hasMore && records.length > 0
         ? String(records[records.length - 1]["paging_token"] ?? "") : null;
 
-      // Auto-follow empty first pages: mirrors HBAR's pattern.
-      // If page 1 returns 0 usable transactions (e.g. all ops are change_trust/manage_offer)
-      // but there are more pages, keep following the cursor until we find actual transactions
-      // or exhaust up to 10 continuation pages. This covers wallets whose real payment history
-      // lives in older ledger ranges beyond the most-recent non-value ops.
-      if (!cursorParam && transactions.length === 0 && hasMore && nextCursor) {
-        for (let af = 0; af < 10 && transactions.length === 0 && hasMore && nextCursor; af++) {
+      // Auto-follow spam-only pages on every request (including cursor-based ones).
+      // If an entire Horizon page contains only sub-minimum ops (1-stroop airdrops, junk tokens),
+      // keep walking the cursor until a qualifying transaction is found or history is exhausted.
+      // Cap at 125 pages = 25,000 ops (200/page) — the performance budget the user specified.
+      const XLM_MAX_SPAM_PAGES = 125;
+      if (transactions.length === 0 && hasMore && nextCursor) {
+        for (let af = 0; af < XLM_MAX_SPAM_PAGES && transactions.length === 0 && hasMore && nextCursor; af++) {
           const afPath = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions&cursor=${encodeURIComponent(nextCursor)}`;
           let afData: Record<string, unknown>;
           try { afData = await stellarFetch(afPath); } catch { break; }

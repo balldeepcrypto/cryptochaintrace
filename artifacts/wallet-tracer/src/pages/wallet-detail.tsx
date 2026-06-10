@@ -901,8 +901,8 @@ const XLM_ALLOWED_ASSETS: Record<string, number> = {
   USDC:  1,
   VELO:  1000,
   SHX:   1000,
-  AQUA:  10000,
-  AFR:   10000,
+  AQUA:  1000,
+  AFR:   1000,
   LSP:   10000,
   SSLX:  10000,
 };
@@ -920,7 +920,7 @@ const MIN_AMOUNT_DAG = 2;
 
 /**
  * Global spam / dust filter applied uniformly across ALL reports and ALL chains.
- * XLM: uses the per-asset allowlist (xlmPassesFilter) — loading threshold (0.0000001 XLM).
+ * XLM: uses the per-asset allowlist (xlmPassesFilter) — XLM≥1, AQUA/AFR/VELO/SHX≥1000, LSP/SSLX≥10000.
  * BTC / ETH: minimum 0.001 native (small coins — even tiny BTC transfers are meaningful).
  * DAG: minimum 2.0 (1 DAG micro-payments from reward wallets are filtered out).
  * Everything else (XRP, HBAR, XDC, Polygon, BSC, …): minimum 1.0 native token.
@@ -945,7 +945,7 @@ function passesSpamFilter(
  * at the fetchTxs return boundary. Never touches ledger display, Trail Trace,
  * or START TRAIL TRACE.
  *
- * XLM whitelist: XLM≥1 · USDC≥1 · VELO/SHX≥1000 · AQUA/AFR/LSP/SSLX≥10000
+ * XLM whitelist: XLM≥1 · USDC≥1 · VELO/SHX/AQUA/AFR≥1000 · LSP/SSLX≥10000
  * All other XLM tokens (VTRX, airdrop dust, etc.) → rejected.
  * DAG: ≥2  ·  BTC/ETH: ≥0.001  ·  all other chains: ≥1.0
  */
@@ -961,8 +961,8 @@ function passesAnalysisFilter(
     const asset = (tx.tokenSymbol ?? "XLM").toUpperCase();
     if (asset === "XLM"  && amt < 1.0)    return false;
     if (asset === "USDC" && amt < 1.0)    return false;
-    if (["VELO", "SHX"].includes(asset)               && amt < 1000)  return false;
-    if (["AQUA", "AFR", "LSP", "SSLX"].includes(asset) && amt < 10000) return false;
+    if (["VELO", "SHX", "AQUA", "AFR"].includes(asset)  && amt < 1000)  return false;
+    if (["LSP", "SSLX"].includes(asset)                  && amt < 10000) return false;
     // Any unlisted XLM token (VTRX, airdrops, etc.) is rejected outright
     if (!["XLM", "USDC", "VELO", "SHX", "AQUA", "AFR", "LSP", "SSLX"].includes(asset)) return false;
     return true;

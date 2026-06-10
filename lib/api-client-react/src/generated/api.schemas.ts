@@ -83,6 +83,9 @@ export interface TransactionList {
   archiveWarning?: string | null;
   /** Direct stellar.expert URL for the address when an archive gap is detected */
   archiveLink?: string | null;
+  /** Indicates which data source served this response. "horizon" = public Horizon nodes (default). "validationcloud" = ValidationCloud full-archive Horizon fallback. Null when not on an XLM request or no fallback was needed.
+   */
+  archiveSource?: string | null;
 }
 
 export interface WalletNode {

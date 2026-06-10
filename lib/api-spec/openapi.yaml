@@ -340,6 +340,14 @@ components:
           type: string
           nullable: true
           description: Direct stellar.expert URL for the address when an archive gap is detected
+        archiveSource:
+          type: string
+          nullable: true
+          description: >
+            Indicates which data source served this response.
+            "horizon" = public Horizon nodes (default).
+            "validationcloud" = ValidationCloud full-archive Horizon fallback.
+            Null when not on an XLM request or no fallback was needed.
       required:
         - transactions
         - total

@@ -144,6 +144,12 @@ export const GetWalletTransactionsResponse = zod.object({
     .describe(
       "Direct stellar.expert URL for the address when an archive gap is detected",
     ),
+  archiveSource: zod
+    .string()
+    .nullish()
+    .describe(
+      'Indicates which data source served this response. \"horizon\" = public Horizon nodes (default). \"validationcloud\" = ValidationCloud full-archive Horizon fallback. Null when not on an XLM request or no fallback was needed.\n',
+    ),
 });
 
 /**

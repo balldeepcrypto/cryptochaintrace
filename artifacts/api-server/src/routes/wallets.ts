@@ -1406,14 +1406,16 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       // automatically becomes the primary source when Horizon has a gap.
       // API format is identical to standard Horizon — no parser changes needed.
       // Registration: https://app.validationcloud.io (free tier available)
-      const STELLAR_ARCHIVE_API_KEY = process.env["STELLAR_ARCHIVE_API_KEY"] ?? null;
-      const STELLAR_ARCHIVE_BASE = "https://mainnet.stellar.validationcloud.io/v1";
+      // ValidationCloud provides the key as a full endpoint URL:
+      //   https://mainnet.stellar.validationcloud.io/v1/<API_KEY>
+      // Use it directly as the base — no extra auth header needed.
+      const STELLAR_ARCHIVE_BASE = (process.env["STELLAR_ARCHIVE_API_KEY"] ?? "").replace(/\/$/, "") || null;
 
       async function archiveFetch(path: string): Promise<Record<string, unknown> | null> {
-        if (!STELLAR_ARCHIVE_API_KEY) return null;
+        if (!STELLAR_ARCHIVE_BASE) return null;
         try {
           const resp = await fetchWithTimeout(`${STELLAR_ARCHIVE_BASE}${path}`, {
-            headers: { accept: "application/json", "x-api-key": STELLAR_ARCHIVE_API_KEY },
+            headers: { accept: "application/json" },
           }, 12000);
           if (!resp.ok) return null;
           return await resp.json() as Record<string, unknown>;
@@ -1560,7 +1562,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       // Uses the same Horizon-compatible API format — no parser changes.
       let archiveSource: string | null = transactions.length > 0 ? "horizon" : null;
 
-      const shouldTryVc = STELLAR_ARCHIVE_API_KEY !== null && (
+      const shouldTryVc = STELLAR_ARCHIVE_BASE !== null && (
         (!cursorParam && transactions.length === 0 && !hasMore) ||
         isVcCursor
       );
@@ -1571,15 +1573,16 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         const vcCursorSuffix = vcCursorToken ? `&cursor=${encodeURIComponent(vcCursorToken)}` : "";
         const vcPath = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${vcCursorSuffix}`;
         const vcData = await archiveFetch(vcPath);
-
         if (vcData && !vcData["_empty"]) {
           const vcRecs = ((vcData["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
           const vcTxs = parseStellarRecords(vcRecs);
+          // Mark archiveSource as validationcloud whenever VC was successfully queried,
+          // even if 0 qualifying txs were found (confirms VC ran and has the same gap).
+          archiveSource = "validationcloud";
           if (vcTxs.length > 0) {
             // Merge, deduplicate by hash (Horizon+VC may overlap on wallet boundaries)
             const seen = new Set(transactions.map((t) => t.hash));
             transactions = [...transactions, ...vcTxs.filter((t) => !seen.has(t.hash))];
-            archiveSource = "validationcloud";
           }
           // VC is authoritative for pagination whenever we queried it — overwrite hasMore/nextCursor
           if (isVcCursor || archiveSource === "validationcloud") {

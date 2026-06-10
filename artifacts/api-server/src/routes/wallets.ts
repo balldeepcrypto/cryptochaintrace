@@ -1442,7 +1442,13 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       // Stellar Horizon /operations endpoint — one record per operation, real amounts
       // (The /transactions envelope endpoint always has value=0; only /operations has actual amounts)
       const stellarLimit = Math.min(limit, 200);
-      const cursorSuffix = cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : "";
+
+      // vc:-prefixed cursors mean "Load More from ValidationCloud" — strip the prefix before
+      // passing to Horizon (paging_token is a plain number on both nodes).
+      const isVcCursor = (cursorParam ?? "").startsWith("vc:");
+      const horizonCursorParam = isVcCursor && cursorParam ? cursorParam.slice(3) : cursorParam;
+
+      const cursorSuffix = horizonCursorParam ? `&cursor=${encodeURIComponent(horizonCursorParam)}` : "";
       const opsPath = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorSuffix}`;
 
       // Fire the stellar.expert summary fetch in parallel with the Horizon fetch (page 1 only).
@@ -1547,6 +1553,46 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         }
       }
 
+      // ── ValidationCloud full-archive fallback ──
+      // Fires when STELLAR_ARCHIVE_API_KEY is set AND:
+      //   (a) page 1: Horizon fully exhausted its history (0 qualifying txs, !hasMore), OR
+      //   (b) Load More: incoming cursor is vc:-prefixed (continuation of a VC session)
+      // Uses the same Horizon-compatible API format — no parser changes.
+      let archiveSource: string | null = transactions.length > 0 ? "horizon" : null;
+
+      const shouldTryVc = STELLAR_ARCHIVE_API_KEY !== null && (
+        (!cursorParam && transactions.length === 0 && !hasMore) ||
+        isVcCursor
+      );
+
+      if (shouldTryVc) {
+        // For vc:-cursor Load More, strip the prefix; for page 1, no cursor.
+        const vcCursorToken = isVcCursor && cursorParam ? cursorParam.slice(3) : null;
+        const vcCursorSuffix = vcCursorToken ? `&cursor=${encodeURIComponent(vcCursorToken)}` : "";
+        const vcPath = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${vcCursorSuffix}`;
+        const vcData = await archiveFetch(vcPath);
+
+        if (vcData && !vcData["_empty"]) {
+          const vcRecs = ((vcData["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
+          const vcTxs = parseStellarRecords(vcRecs);
+          if (vcTxs.length > 0) {
+            // Merge, deduplicate by hash (Horizon+VC may overlap on wallet boundaries)
+            const seen = new Set(transactions.map((t) => t.hash));
+            transactions = [...transactions, ...vcTxs.filter((t) => !seen.has(t.hash))];
+            archiveSource = "validationcloud";
+          }
+          // VC is authoritative for pagination whenever we queried it — overwrite hasMore/nextCursor
+          if (isVcCursor || archiveSource === "validationcloud") {
+            const vcHasMore = vcRecs.length > 0;
+            const lastVcToken = vcRecs.length > 0
+              ? String(vcRecs[vcRecs.length - 1]["paging_token"] ?? "") : null;
+            hasMore = vcHasMore && lastVcToken !== null;
+            // Prefix with vc: so subsequent Load More requests route back to ValidationCloud
+            nextCursor = hasMore ? `vc:${lastVcToken}` : null;
+          }
+        }
+      }
+
       // Don't cache empty results (all records were non-value ops like manage_offer/change_trust)
       if (transactions.length === 0 && !hasMore && txCacheKey) txCache.invalidate(txCacheKey);
 
@@ -1599,6 +1645,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         page, limit: stellarLimit, nextCursor, hasMore,
         archiveWarning,
         archiveLink,
+        archiveSource,
       }));
       return;
     }

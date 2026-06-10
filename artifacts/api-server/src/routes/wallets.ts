@@ -1472,8 +1472,13 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
       }
 
       let transactions = parseStellarRecords(records);
-      let hasMore = records.length === stellarLimit;
-      let nextCursor = hasMore && records.length > 0
+      // Horizon with include_failed=false can return fewer records than the limit even when
+      // more pages exist — because it pages by ledger position, then filters failed ops.
+      // Use records.length > 0 (not === limit) and probe for true end by getting 0 on the
+      // next cursor fetch. This avoids cutting off pagination mid-history on wallets that
+      // have many failed transactions interspersed with their successful ops.
+      let hasMore = records.length > 0;
+      let nextCursor = records.length > 0
         ? String(records[records.length - 1]["paging_token"] ?? "") : null;
 
       // Auto-follow spam-only pages on every request (including cursor-based ones).
@@ -1489,8 +1494,9 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           if (afData["_empty"]) break;
           const afRecs = ((afData["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
           const afTxs = parseStellarRecords(afRecs);
-          hasMore = afRecs.length === stellarLimit;
-          nextCursor = hasMore && afRecs.length > 0
+          // Empty response = true end of Horizon history for this account
+          hasMore = afRecs.length > 0;
+          nextCursor = afRecs.length > 0
             ? String(afRecs[afRecs.length - 1]["paging_token"] ?? "") : null;
           if (afTxs.length > 0) { transactions = afTxs; break; }
           if (!hasMore || !nextCursor) break;

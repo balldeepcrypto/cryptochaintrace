@@ -78,6 +78,11 @@ export interface TransactionList {
   message?: string | null;
   /** Optional URL to a block explorer showing full history for this address */
   historyLink?: string | null;
+  /** Present when the Horizon archive appears to have a gap — e.g. the account is older than 6 months but Horizon only returns recent spam ops, or stellar.expert reports more payments than Horizon surfaced. Contains a human-readable explanation.
+   */
+  archiveWarning?: string | null;
+  /** Direct stellar.expert URL for the address when an archive gap is detected */
+  archiveLink?: string | null;
 }
 
 export interface WalletNode {

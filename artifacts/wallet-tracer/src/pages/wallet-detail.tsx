@@ -4128,6 +4128,10 @@ export default function WalletDetail() {
   // Message + explorer link returned by the server when Horizon has no history for this XLM address
   const xlmMessage     = transactionsData?.message     ?? null;
   const xlmHistoryLink = transactionsData?.historyLink ?? null;
+  // Archive gap warning — shown as a non-intrusive banner above the ledger even when some
+  // transactions were found, to alert the user that older history exists on stellar.expert.
+  const xlmArchiveWarning = (chain === "xlm" ? transactionsData?.archiveWarning : null) ?? null;
+  const xlmArchiveLink    = (chain === "xlm" ? transactionsData?.archiveLink    : null) ?? null;
 
   // ── Sync initial React Query page into local state (once per wallet/chain) ──
   // txInitializedRef blocks subsequent RQ background-refetches from overwriting
@@ -6002,6 +6006,29 @@ export default function WalletDetail() {
             </div>
           )}
         </CardHeader>
+
+        {/* ── Archive gap warning banner (XLM only) ── */}
+        {xlmArchiveWarning && !txLoading && (
+          <div className="mx-4 mb-3 flex items-start gap-2.5 rounded border border-yellow-500/30 bg-yellow-950/20 px-3.5 py-2.5 text-xs font-mono">
+            <AlertTriangle className="w-3.5 h-3.5 text-yellow-400/80 mt-0.5 shrink-0" />
+            <span className="text-yellow-200/70 leading-relaxed">
+              {xlmArchiveWarning}
+              {xlmArchiveLink && (
+                <>
+                  {" "}
+                  <a
+                    href={xlmArchiveLink}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="text-yellow-400/90 hover:text-yellow-300 underline underline-offset-2 transition-colors whitespace-nowrap"
+                  >
+                    View full history on stellar.expert ↗
+                  </a>
+                </>
+              )}
+            </span>
+          </div>
+        )}
 
         <div className="overflow-x-auto">
           {groupByCounterparty ? (

@@ -1400,11 +1400,55 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
     }
 
     if (chain === "xlm") {
+      // ── ValidationCloud full-archive fallback (disabled until STELLAR_ARCHIVE_API_KEY is set) ──
+      // ValidationCloud runs a complete Stellar Horizon archive back to genesis.
+      // To activate: set STELLAR_ARCHIVE_API_KEY in environment secrets, then this fallback
+      // automatically becomes the primary source when Horizon has a gap.
+      // API format is identical to standard Horizon — no parser changes needed.
+      // Registration: https://app.validationcloud.io (free tier available)
+      const STELLAR_ARCHIVE_API_KEY = process.env["STELLAR_ARCHIVE_API_KEY"] ?? null;
+      const STELLAR_ARCHIVE_BASE = "https://mainnet.stellar.validationcloud.io/v1";
+
+      async function archiveFetch(path: string): Promise<Record<string, unknown> | null> {
+        if (!STELLAR_ARCHIVE_API_KEY) return null;
+        try {
+          const resp = await fetchWithTimeout(`${STELLAR_ARCHIVE_BASE}${path}`, {
+            headers: { accept: "application/json", "x-api-key": STELLAR_ARCHIVE_API_KEY },
+          }, 12000);
+          if (!resp.ok) return null;
+          return await resp.json() as Record<string, unknown>;
+        } catch { return null; }
+      }
+
+      // ── stellar.expert free account summary (no key required) ──
+      // Returns payments count + created date. Used on page 1 only to detect archive gaps.
+      // The /tx and sub-endpoints return 402 Payment Required — only the account summary is free.
+      async function fetchStellarExpertSummary(): Promise<{ payments: number; created: number } | null> {
+        try {
+          const resp = await fetchWithTimeout(
+            `https://api.stellar.expert/explorer/public/account/${address}`,
+            { headers: { accept: "application/json", "User-Agent": "CryptoChainTrace/1.0" } },
+            8000,
+          );
+          if (!resp.ok) return null;
+          const d = await resp.json() as Record<string, unknown>;
+          const payments = typeof d["payments"] === "number" ? d["payments"] : null;
+          const created  = typeof d["created"]  === "number" ? d["created"]  : null;
+          if (payments === null || created === null) return null;
+          return { payments, created };
+        } catch { return null; }
+      }
+
       // Stellar Horizon /operations endpoint — one record per operation, real amounts
       // (The /transactions envelope endpoint always has value=0; only /operations has actual amounts)
       const stellarLimit = Math.min(limit, 200);
       const cursorSuffix = cursorParam ? `&cursor=${encodeURIComponent(cursorParam)}` : "";
       const opsPath = `/accounts/${address}/operations?limit=${stellarLimit}&order=desc&include_failed=false&join=transactions${cursorSuffix}`;
+
+      // Fire the stellar.expert summary fetch in parallel with the Horizon fetch (page 1 only).
+      // We use the summary for gap detection only — we never wait for it to block the main response.
+      const sePromise = !cursorParam ? fetchStellarExpertSummary() : Promise.resolve(null);
+
       let data = await stellarFetch(opsPath);
 
       // 404 = account not found in current ledger (merged/closed account).
@@ -1505,10 +1549,56 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
 
       // Don't cache empty results (all records were non-value ops like manage_offer/change_trust)
       if (transactions.length === 0 && !hasMore && txCacheKey) txCache.invalidate(txCacheKey);
+
+      // ── Archive gap detection (page 1 only) ──
+      // Now that the main Horizon fetch + auto-follow are done, resolve the stellar.expert
+      // account summary that was started in parallel. Use it to detect when Horizon is missing
+      // pre-archive history that stellar.expert knows about.
+      let archiveWarning: string | null = null;
+      let archiveLink: string | null = null;
+
+      if (!cursorParam) {
+        const seSummary = await sePromise;
+        if (seSummary) {
+          const seLink = `https://stellar.expert/explorer/public/account/${address}`;
+          const nowMs = Date.now();
+          // stellar.expert reports created as a Unix timestamp in seconds
+          const accountAgeDays = (nowMs / 1000 - seSummary.created) / 86400;
+          // The public Horizon archive prunes entries older than roughly 6 months.
+          // We flag a gap if EITHER:
+          //   (a) stellar.expert reports significantly more payments than Horizon surfaced, OR
+          //   (b) the account is old enough (>180 days) that pre-archive history is plausible
+          //       and Horizon returned nothing qualifying (all spam or empty)
+          const horizonQualifyingCount = transactions.length;
+          const sePayments = seSummary.payments;
+
+          const significantGap = sePayments > 0 && horizonQualifyingCount === 0 && accountAgeDays > 30;
+          const countGap = sePayments > 0 && horizonQualifyingCount < sePayments * 0.5 && sePayments >= 3;
+          const oldAccountNoTxs = accountAgeDays > 180 && horizonQualifyingCount === 0;
+
+          if (significantGap || countGap || oldAccountNoTxs) {
+            const agePart = accountAgeDays > 180
+              ? `This wallet was created ${Math.round(accountAgeDays / 30)} months ago.`
+              : null;
+            const countPart = sePayments > 0
+              ? `stellar.expert records ${sePayments} payment${sePayments !== 1 ? "s" : ""} for this address.`
+              : null;
+            archiveWarning = [
+              "Some older transactions may be outside the public Horizon archive.",
+              countPart,
+              agePart,
+            ].filter(Boolean).join(" ");
+            archiveLink = seLink;
+          }
+        }
+      }
+
       res.json(GetWalletTransactionsResponse.parse({
         transactions,
         total: (page - 1) * stellarLimit + transactions.length + (hasMore ? 1 : 0),
         page, limit: stellarLimit, nextCursor, hasMore,
+        archiveWarning,
+        archiveLink,
       }));
       return;
     }

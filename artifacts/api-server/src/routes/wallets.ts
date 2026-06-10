@@ -1440,21 +1440,14 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         return;
       }
       const records = ((data["_embedded"] as Record<string, unknown> | undefined)?.["records"] as Array<Record<string, unknown>>) ?? [];
-      /** Filter raw Horizon records to those involving address, parse ops, post-filter from/to. */
+      /** Parse Horizon operation records into Tx objects, skipping non-value op types. */
       function parseStellarRecords(recs: Array<Record<string, unknown>>) {
         return recs
-          .filter((rec) =>
-            String(rec["source_account"] ?? "") === address ||
-            String(rec["from"]           ?? "") === address ||
-            String(rec["to"]             ?? "") === address ||
-            String(rec["account"]        ?? "") === address ||
-            String(rec["funder"]         ?? "") === address ||
-            String(rec["claimant"]       ?? "") === address ||
-            String(rec["sponsor"]        ?? "") === address
-          )
           .map((rec) => parseStellarOp(rec, address, priceUsd))
-          .filter((t): t is NonNullable<typeof t> => t !== null)
-          .filter((t) => t.from === address || t.to === address);
+          .filter((t): t is NonNullable<typeof t> => t !== null);
+        // parseStellarOp already sets from/to and direction relative to the searched address,
+        // so the old address-membership pre-filter and post-filter are redundant and were
+        // dropping legitimate ops (e.g. path payments where source_account ≠ from field).
       }
 
       let transactions = parseStellarRecords(records);

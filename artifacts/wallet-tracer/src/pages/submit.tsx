@@ -395,6 +395,28 @@ export default function SubmitCase() {
         </form>
 
       </div>
+
+      {/* Staff login link — discreet footer link for analysts */}
+      <div style={{ textAlign: "center", marginTop: 48, paddingBottom: 32 }}>
+        <a
+          href="/login"
+          style={{
+            color: "#334155",
+            fontSize: "0.72rem",
+            letterSpacing: "0.1em",
+            textTransform: "uppercase",
+            textDecoration: "none",
+            fontFamily: "ui-monospace, monospace",
+            borderBottom: "1px solid #1e293b",
+            paddingBottom: 2,
+          }}
+          onMouseEnter={(e) => { (e.target as HTMLAnchorElement).style.color = "#22d3ee"; }}
+          onMouseLeave={(e) => { (e.target as HTMLAnchorElement).style.color = "#334155"; }}
+        >
+          Staff / Analyst Login →
+        </a>
+      </div>
+
       <style>{`@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }`}</style>
     </div>
   );

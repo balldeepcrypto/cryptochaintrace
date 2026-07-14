@@ -1,9 +1,10 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { supabase, supabaseUrl, supabaseAnonKey, supabaseConfigured } from "@/lib/supabase";
-import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Mail, Lock } from "lucide-react";
+import { writeMasterAuth } from "@/lib/auth-context";
+import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Mail, Lock, KeyRound } from "lucide-react";
 
-type Mode = "password" | "magic";
+type Mode = "password" | "magic" | "master";
 
 type ProbeStatus = "checking" | "ok" | "paused" | "error" | "cors";
 interface ProbeResult {
@@ -26,16 +27,15 @@ async function probeSupabase(url: string, key: string): Promise<ProbeResult> {
       return { status: "ok", detail: `HTTP ${res.status} — ${text.slice(0, 120)}` };
     }
     if (res.status === 503 || text.toLowerCase().includes("paused")) {
-      return { status: "paused", detail: `HTTP ${res.status} — project may be paused. Body: ${text.slice(0, 200)}` };
+      return { status: "paused", detail: `HTTP ${res.status} — project may be paused.` };
     }
     return { status: "error", detail: `HTTP ${res.status} — ${text.slice(0, 200)}` };
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
-    // TypeError "Load failed" / "Failed to fetch" = CORS block or network down
     if (msg.toLowerCase().includes("load failed") || msg.toLowerCase().includes("failed to fetch") || msg.toLowerCase().includes("network")) {
       return {
         status: "cors",
-        detail: `Fetch threw "${msg}" — this is usually a CORS block or the Supabase project is paused/deleted. Check Project Settings → Paused or API → CORS in the Supabase dashboard.`,
+        detail: `Supabase unreachable — project may be paused. Use Master Key login below.`,
       };
     }
     return { status: "error", detail: `Fetch threw: ${msg}` };
@@ -44,38 +44,64 @@ async function probeSupabase(url: string, key: string): Promise<ProbeResult> {
 
 export default function Login() {
   const [, navigate] = useLocation();
-  const [mode, setMode] = useState<Mode>("password");
+  const [mode, setMode] = useState<Mode>("master");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [masterKey, setMasterKey] = useState("");
   const [showPw, setShowPw] = useState(false);
+  const [showMasterPw, setShowMasterPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [magicSent, setMagicSent] = useState(false);
   const [probe, setProbe] = useState<ProbeResult | null>(null);
 
-  // Run health probe on mount
   useEffect(() => {
     if (!supabaseConfigured) return;
     setProbe(null);
     probeSupabase(supabaseUrl, supabaseAnonKey).then((result) => {
-      console.log("[supabase probe]", result);
       setProbe(result);
+      // Auto-suggest master key if Supabase is unreachable
+      if (result.status === "cors" || result.status === "paused") {
+        setMode("master");
+      }
     });
   }, []);
+
+  async function handleMasterLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/dashboard", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password: masterKey }),
+      });
+      const data = await res.json() as { ok?: boolean };
+      if (data.ok) {
+        writeMasterAuth();
+        window.location.replace("/dashboard");
+      } else {
+        setError("Incorrect master password. Check the DASHBOARD_PASSWORD secret in your Replit project settings.");
+        setLoading(false);
+      }
+    } catch (err) {
+      setError(`Could not reach the API server: ${err instanceof Error ? err.message : String(err)}`);
+      setLoading(false);
+    }
+  }
 
   async function handleSignIn(e: React.FormEvent) {
     e.preventDefault();
     if (!supabaseConfigured) {
-      setError("Supabase is not configured — VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY must be set in Vercel environment variables, then redeploy.");
+      setError("Supabase is not configured. Use Master Key login instead.");
       return;
     }
     setLoading(true);
     setError("");
     try {
       const { data, error: err } = await supabase.auth.signInWithPassword({ email, password });
-      console.log("[login] signInWithPassword result — data:", data, "error:", err);
       if (err) {
-        console.error("[login] signInWithPassword error:", err);
         const detail = [
           err.message,
           err.status ? `status ${err.status}` : null,
@@ -83,19 +109,12 @@ export default function Login() {
         ].filter(Boolean).join(" · ");
         setError(detail);
         setLoading(false);
-      } else {
+      } else if (data.session) {
         navigate("/dashboard", { replace: true });
       }
     } catch (thrown: unknown) {
       const msg = thrown instanceof Error ? thrown.message : String(thrown);
-      const name = thrown instanceof Error ? thrown.name : "Unknown";
-      console.error("[login] signInWithPassword THREW:", thrown);
-      setError(
-        `${name}: "${msg}" — the request never reached Supabase. ` +
-        `URL in use: ${supabaseUrl || "(empty)"}. ` +
-        `This is typically a CORS block or the Supabase project is paused. ` +
-        `Check the probe result above and the Supabase dashboard.`
-      );
+      setError(`Login failed: "${msg}" — Supabase may be paused. Try Master Key login instead.`);
       setLoading(false);
     }
   }
@@ -103,26 +122,18 @@ export default function Login() {
   async function handleMagicLink(e: React.FormEvent) {
     e.preventDefault();
     if (!supabaseConfigured) {
-      setError("Supabase is not configured — set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY in Vercel env vars and redeploy.");
+      setError("Supabase is not configured. Use Master Key login instead.");
       return;
     }
     setLoading(true);
     setError("");
     try {
-      const { data, error: err } = await supabase.auth.signInWithOtp({
+      const { error: err } = await supabase.auth.signInWithOtp({
         email,
-        options: {
-          emailRedirectTo: `${window.location.origin}/dashboard`,
-        },
+        options: { emailRedirectTo: `${window.location.origin}/dashboard` },
       });
-      console.log("[login] signInWithOtp result — data:", data, "error:", err);
       if (err) {
-        console.error("[login] signInWithOtp error:", err);
-        const detail = [
-          err.message,
-          err.status ? `status ${err.status}` : null,
-          (err as { code?: string }).code ? `code: ${(err as { code?: string }).code}` : null,
-        ].filter(Boolean).join(" · ");
+        const detail = [err.message, err.status ? `status ${err.status}` : null].filter(Boolean).join(" · ");
         setError(detail);
         setLoading(false);
       } else {
@@ -131,13 +142,7 @@ export default function Login() {
       }
     } catch (thrown: unknown) {
       const msg = thrown instanceof Error ? thrown.message : String(thrown);
-      const name = thrown instanceof Error ? thrown.name : "Unknown";
-      console.error("[login] signInWithOtp THREW:", thrown);
-      setError(
-        `${name}: "${msg}" — the request never reached Supabase. ` +
-        `URL in use: ${supabaseUrl || "(empty)"}. ` +
-        `Check probe result above and Supabase dashboard.`
-      );
+      setError(`Magic link failed: "${msg}" — Supabase may be paused. Try Master Key login instead.`);
       setLoading(false);
     }
   }
@@ -156,31 +161,23 @@ export default function Login() {
     transition: "border-color 0.15s",
   };
 
-  const urlPreview = supabaseUrl
-    ? supabaseUrl.replace("https://", "").slice(0, 40)
-    : "(not set)";
-  const keyPreview = supabaseAnonKey ? supabaseAnonKey.substring(0, 20) + "…" : "(not set)";
-
   const probeColor: Record<ProbeStatus, string> = {
-    checking: "#94a3b8",
-    ok: "#22d3ee",
-    paused: "#f59e0b",
-    error: "#f87171",
-    cors: "#f87171",
+    checking: "#94a3b8", ok: "#22d3ee", paused: "#f59e0b", error: "#f87171", cors: "#f59e0b",
   };
   const probeLabel: Record<ProbeStatus, string> = {
-    checking: "● CHECKING…",
-    ok: "● REACHABLE",
-    paused: "⚠ PROJECT PAUSED",
-    error: "✗ ERROR",
-    cors: "✗ CORS / NETWORK BLOCK",
+    checking: "● CHECKING…", ok: "● SUPABASE REACHABLE", paused: "⚠ PROJECT PAUSED — use Master Key",
+    error: "✗ ERROR", cors: "⚠ SUPABASE UNREACHABLE — use Master Key",
+  };
+
+  const modeLabels: Record<Mode, string> = {
+    master: "MASTER KEY",
+    password: "PASSWORD",
+    magic: "MAGIC LINK",
   };
 
   return (
     <div style={{ minHeight: "100vh", background: "#080d1a", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", fontFamily: "ui-monospace, SFMono-Regular, 'Cascadia Code', monospace", padding: 24, position: "relative", overflow: "hidden" }}>
-      {/* Grid bg */}
       <div style={{ position: "absolute", inset: 0, opacity: 0.025, backgroundImage: "linear-gradient(#22d3ee 1px, transparent 1px), linear-gradient(90deg, #22d3ee 1px, transparent 1px)", backgroundSize: "48px 48px", pointerEvents: "none" }} />
-      {/* Top glow */}
       <div style={{ position: "absolute", top: "-80px", left: "50%", transform: "translateX(-50%)", width: 700, height: 400, borderRadius: "50%", background: "radial-gradient(ellipse, rgba(34,211,238,0.07) 0%, transparent 65%)", pointerEvents: "none" }} />
 
       <div style={{ width: "100%", maxWidth: 460, position: "relative", zIndex: 1 }}>
@@ -199,99 +196,70 @@ export default function Login() {
           </div>
         </div>
 
-        {/* ── Diagnostics panel ── */}
-        <div style={{ marginBottom: 14, padding: "10px 14px", borderRadius: 8, border: `1px solid ${supabaseConfigured ? "rgba(34,211,238,0.15)" : "rgba(239,68,68,0.3)"}`, background: supabaseConfigured ? "rgba(34,211,238,0.03)" : "rgba(239,68,68,0.05)", fontSize: "0.65rem", lineHeight: 1.85, color: "#475569" }}>
-          {/* Config row */}
-          <div>
-            <span style={{ color: supabaseConfigured ? "#22d3ee" : "#f87171", fontWeight: 600 }}>
-              {supabaseConfigured ? "● SUPABASE CONFIGURED" : "⚠ NOT CONFIGURED"}
-            </span>
+        {/* Supabase status (compact) */}
+        {supabaseConfigured && probe !== null && (
+          <div style={{ marginBottom: 14, padding: "8px 12px", borderRadius: 8, border: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)", fontSize: "0.65rem", color: probeColor[probe.status] }}>
+            {probeLabel[probe.status]}
+            {probe.status === "ok" && <span style={{ color: "#334155", marginLeft: 6 }}>Supabase auth available</span>}
           </div>
-          <div>URL: <span style={{ color: "#94a3b8" }}>{urlPreview}</span></div>
-          <div>KEY: <span style={{ color: "#94a3b8" }}>{keyPreview}</span></div>
-
-          {/* Probe row */}
-          {supabaseConfigured && (
-            <div style={{ marginTop: 4, paddingTop: 4, borderTop: "1px solid rgba(255,255,255,0.04)" }}>
-              {probe === null ? (
-                <span style={{ color: "#475569" }}>● PROBING /auth/v1/health…</span>
-              ) : (
-                <>
-                  <span style={{ color: probeColor[probe.status], fontWeight: 600 }}>
-                    {probeLabel[probe.status]}
-                  </span>
-                  <span style={{ color: "#334155", marginLeft: 6 }}>{probe.detail}</span>
-                </>
-              )}
-            </div>
-          )}
-
-          {!supabaseConfigured && (
-            <div style={{ color: "#f87171", marginTop: 4 }}>
-              Add VITE_SUPABASE_URL + VITE_SUPABASE_ANON_KEY to Vercel env vars and redeploy.
-            </div>
-          )}
-        </div>
+        )}
 
         {/* Card */}
         <div style={{ background: "rgba(13,20,38,0.95)", border: "1px solid #1e293b", borderRadius: 14, padding: "32px 36px", backdropFilter: "blur(16px)", boxShadow: "0 24px 48px rgba(0,0,0,0.6)" }}>
+
           {/* Mode toggle */}
           <div style={{ display: "flex", marginBottom: 28, background: "rgba(255,255,255,0.02)", border: "1px solid #1e293b", borderRadius: 8, padding: 3 }}>
-            {(["password", "magic"] as Mode[]).map((m) => (
-              <button key={m} type="button" onClick={() => { setMode(m); setError(""); setMagicSent(false); }}
-                style={{ flex: 1, padding: "8px 0", borderRadius: 6, border: "none", cursor: "pointer", fontFamily: "inherit", fontSize: "0.72rem", letterSpacing: "0.1em", fontWeight: mode === m ? 600 : 400, background: mode === m ? "rgba(34,211,238,0.1)" : "transparent", color: mode === m ? "#22d3ee" : "#475569", transition: "all 0.15s" }}>
-                {m === "password" ? "PASSWORD" : "MAGIC LINK"}
+            {(["master", "password", "magic"] as Mode[]).map((m) => (
+              <button key={m} type="button"
+                onClick={() => { setMode(m); setError(""); setMagicSent(false); }}
+                style={{
+                  flex: 1, padding: "8px 0", borderRadius: 6, border: "none", cursor: "pointer",
+                  fontFamily: "inherit", fontSize: "0.65rem", letterSpacing: "0.08em",
+                  fontWeight: mode === m ? 600 : 400,
+                  background: mode === m
+                    ? m === "master" ? "rgba(251,191,36,0.12)" : "rgba(34,211,238,0.1)"
+                    : "transparent",
+                  color: mode === m
+                    ? m === "master" ? "#fbbf24" : "#22d3ee"
+                    : "#475569",
+                  transition: "all 0.15s",
+                }}>
+                {modeLabels[m]}
               </button>
             ))}
           </div>
 
-          {magicSent ? (
-            <div style={{ textAlign: "center", padding: "16px 0 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
-              <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
-                <CheckCircle2 style={{ width: 20, height: 20, color: "#22d3ee" }} />
+          {/* ── MASTER KEY mode ── */}
+          {mode === "master" && (
+            <form onSubmit={handleMasterLogin}>
+              <div style={{ marginBottom: 6, padding: "10px 12px", borderRadius: 8, background: "rgba(251,191,36,0.06)", border: "1px solid rgba(251,191,36,0.2)", fontSize: "0.7rem", color: "#92400e", lineHeight: 1.7 }}>
+                <span style={{ color: "#fbbf24", fontWeight: 600 }}>Owner access — no Supabase needed.</span><br />
+                Enter the <span style={{ color: "#fcd34d" }}>DASHBOARD_PASSWORD</span> secret from your Replit project settings.
               </div>
-              <div>
-                <div style={{ color: "#e2e8f0", fontSize: "0.9rem", fontWeight: 600, marginBottom: 6 }}>Check your inbox</div>
-                <div style={{ color: "#475569", fontSize: "0.8rem", lineHeight: 1.6 }}>A sign-in link was sent to<br /><span style={{ color: "#94a3b8" }}>{email}</span></div>
-              </div>
-              <button type="button" onClick={() => { setMagicSent(false); setEmail(""); }}
-                style={{ marginTop: 4, background: "none", border: "1px solid #1e293b", borderRadius: 6, color: "#475569", fontSize: "0.72rem", padding: "7px 16px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>
-                USE DIFFERENT EMAIL
-              </button>
-            </div>
-          ) : (
-            <form onSubmit={mode === "password" ? handleSignIn : handleMagicLink}>
-              {/* Email */}
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ display: "block", color: "#475569", fontSize: "0.68rem", letterSpacing: "0.12em", marginBottom: 7, textTransform: "uppercase" }}>Email Address</label>
+
+              <div style={{ marginBottom: 24, marginTop: 18 }}>
+                <label style={{ display: "block", color: "#475569", fontSize: "0.68rem", letterSpacing: "0.12em", marginBottom: 7, textTransform: "uppercase" }}>Master Password</label>
                 <div style={{ position: "relative" }}>
-                  <Mail style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", width: 14, height: 14, color: "#334155", pointerEvents: "none" }} />
-                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="analyst@agency.gov" required autoFocus autoComplete="email" style={inputStyle}
-                    onFocus={(e) => (e.target.style.borderColor = "rgba(34,211,238,0.35)")}
-                    onBlur={(e) => (e.target.style.borderColor = "#1e293b")} />
+                  <KeyRound style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", width: 14, height: 14, color: "#92400e", pointerEvents: "none" }} />
+                  <input
+                    type={showMasterPw ? "text" : "password"}
+                    value={masterKey}
+                    onChange={(e) => setMasterKey(e.target.value)}
+                    placeholder="Enter DASHBOARD_PASSWORD"
+                    required
+                    autoFocus
+                    autoComplete="current-password"
+                    style={{ ...inputStyle, paddingRight: 42, borderColor: "rgba(251,191,36,0.25)" }}
+                    onFocus={(e) => (e.target.style.borderColor = "rgba(251,191,36,0.5)")}
+                    onBlur={(e) => (e.target.style.borderColor = "rgba(251,191,36,0.25)")}
+                  />
+                  <button type="button" onClick={() => setShowMasterPw((v) => !v)}
+                    style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#334155", padding: 0, display: "flex", alignItems: "center" }}>
+                    {showMasterPw ? <EyeOff style={{ width: 15, height: 15 }} /> : <Eye style={{ width: 15, height: 15 }} />}
+                  </button>
                 </div>
               </div>
 
-              {/* Password */}
-              {mode === "password" && (
-                <div style={{ marginBottom: 24 }}>
-                  <label style={{ display: "block", color: "#475569", fontSize: "0.68rem", letterSpacing: "0.12em", marginBottom: 7, textTransform: "uppercase" }}>Password</label>
-                  <div style={{ position: "relative" }}>
-                    <Lock style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", width: 14, height: 14, color: "#334155", pointerEvents: "none" }} />
-                    <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••••" required autoComplete="current-password" style={{ ...inputStyle, paddingRight: 42 }}
-                      onFocus={(e) => (e.target.style.borderColor = "rgba(34,211,238,0.35)")}
-                      onBlur={(e) => (e.target.style.borderColor = "#1e293b")} />
-                    <button type="button" onClick={() => setShowPw((v) => !v)}
-                      style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#334155", padding: 0, display: "flex", alignItems: "center" }}>
-                      {showPw ? <EyeOff style={{ width: 15, height: 15 }} /> : <Eye style={{ width: 15, height: 15 }} />}
-                    </button>
-                  </div>
-                </div>
-              )}
-
-              {mode === "magic" && <div style={{ marginBottom: 24 }} />}
-
-              {/* Error */}
               {error && (
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 14px", borderRadius: 8, marginBottom: 16, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)", color: "#f87171", fontSize: "0.76rem", lineHeight: 1.6, wordBreak: "break-word" }}>
                   <AlertCircle style={{ width: 14, height: 14, flexShrink: 0, marginTop: 2 }} />
@@ -299,14 +267,78 @@ export default function Login() {
                 </div>
               )}
 
-              {/* Submit */}
               <button type="submit" disabled={loading}
-                style={{ width: "100%", padding: "12px", background: loading ? "rgba(34,211,238,0.5)" : "linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)", color: "#040d1a", border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.82rem", cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit", letterSpacing: "0.1em", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                {loading ? (
-                  <><Loader2 style={{ width: 15, height: 15, animation: "spin 1s linear infinite" }} />{mode === "password" ? "SIGNING IN…" : "SENDING LINK…"}</>
-                ) : mode === "password" ? "SIGN IN" : "SEND MAGIC LINK"}
+                style={{ width: "100%", padding: "12px", background: loading ? "rgba(251,191,36,0.4)" : "linear-gradient(135deg, #fbbf24 0%, #d97706 100%)", color: "#0f172a", border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.82rem", cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit", letterSpacing: "0.1em", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                {loading
+                  ? <><Loader2 style={{ width: 15, height: 15, animation: "spin 1s linear infinite" }} /> UNLOCKING…</>
+                  : "UNLOCK DASHBOARD"}
               </button>
             </form>
+          )}
+
+          {/* ── SUPABASE modes ── */}
+          {mode !== "master" && (
+            <>
+              {magicSent ? (
+                <div style={{ textAlign: "center", padding: "16px 0 8px", display: "flex", flexDirection: "column", alignItems: "center", gap: 14 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(34,211,238,0.08)", border: "1px solid rgba(34,211,238,0.2)", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                    <CheckCircle2 style={{ width: 20, height: 20, color: "#22d3ee" }} />
+                  </div>
+                  <div>
+                    <div style={{ color: "#e2e8f0", fontSize: "0.9rem", fontWeight: 600, marginBottom: 6 }}>Check your inbox</div>
+                    <div style={{ color: "#475569", fontSize: "0.8rem", lineHeight: 1.6 }}>A sign-in link was sent to<br /><span style={{ color: "#94a3b8" }}>{email}</span></div>
+                  </div>
+                  <button type="button" onClick={() => { setMagicSent(false); setEmail(""); }}
+                    style={{ marginTop: 4, background: "none", border: "1px solid #1e293b", borderRadius: 6, color: "#475569", fontSize: "0.72rem", padding: "7px 16px", cursor: "pointer", fontFamily: "inherit", letterSpacing: "0.08em" }}>
+                    USE DIFFERENT EMAIL
+                  </button>
+                </div>
+              ) : (
+                <form onSubmit={mode === "password" ? handleSignIn : handleMagicLink}>
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: "block", color: "#475569", fontSize: "0.68rem", letterSpacing: "0.12em", marginBottom: 7, textTransform: "uppercase" }}>Email Address</label>
+                    <div style={{ position: "relative" }}>
+                      <Mail style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", width: 14, height: 14, color: "#334155", pointerEvents: "none" }} />
+                      <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="analyst@agency.gov" required autoFocus autoComplete="email" style={inputStyle}
+                        onFocus={(e) => (e.target.style.borderColor = "rgba(34,211,238,0.35)")}
+                        onBlur={(e) => (e.target.style.borderColor = "#1e293b")} />
+                    </div>
+                  </div>
+
+                  {mode === "password" && (
+                    <div style={{ marginBottom: 24 }}>
+                      <label style={{ display: "block", color: "#475569", fontSize: "0.68rem", letterSpacing: "0.12em", marginBottom: 7, textTransform: "uppercase" }}>Password</label>
+                      <div style={{ position: "relative" }}>
+                        <Lock style={{ position: "absolute", left: 13, top: "50%", transform: "translateY(-50%)", width: 14, height: 14, color: "#334155", pointerEvents: "none" }} />
+                        <input type={showPw ? "text" : "password"} value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••••••" required autoComplete="current-password" style={{ ...inputStyle, paddingRight: 42 }}
+                          onFocus={(e) => (e.target.style.borderColor = "rgba(34,211,238,0.35)")}
+                          onBlur={(e) => (e.target.style.borderColor = "#1e293b")} />
+                        <button type="button" onClick={() => setShowPw((v) => !v)}
+                          style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", color: "#334155", padding: 0, display: "flex", alignItems: "center" }}>
+                          {showPw ? <EyeOff style={{ width: 15, height: 15 }} /> : <Eye style={{ width: 15, height: 15 }} />}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {mode === "magic" && <div style={{ marginBottom: 24 }} />}
+
+                  {error && (
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, padding: "10px 14px", borderRadius: 8, marginBottom: 16, background: "rgba(239,68,68,0.07)", border: "1px solid rgba(239,68,68,0.2)", color: "#f87171", fontSize: "0.76rem", lineHeight: 1.6, wordBreak: "break-word" }}>
+                      <AlertCircle style={{ width: 14, height: 14, flexShrink: 0, marginTop: 2 }} />
+                      <span>{error}</span>
+                    </div>
+                  )}
+
+                  <button type="submit" disabled={loading}
+                    style={{ width: "100%", padding: "12px", background: loading ? "rgba(34,211,238,0.5)" : "linear-gradient(135deg, #22d3ee 0%, #0891b2 100%)", color: "#040d1a", border: "none", borderRadius: 8, fontWeight: 700, fontSize: "0.82rem", cursor: loading ? "not-allowed" : "pointer", fontFamily: "inherit", letterSpacing: "0.1em", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                    {loading ? (
+                      <><Loader2 style={{ width: 15, height: 15, animation: "spin 1s linear infinite" }} />{mode === "password" ? "SIGNING IN…" : "SENDING LINK…"}</>
+                    ) : mode === "password" ? "SIGN IN" : "SEND MAGIC LINK"}
+                  </button>
+                </form>
+              )}
+            </>
           )}
         </div>
 

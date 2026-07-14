@@ -2,6 +2,9 @@ import { createContext, useContext, useEffect, useRef, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
 import { supabase } from "./supabase";
 
+const MASTER_AUTH_KEY = "chaintrace-master-auth";
+const MASTER_AUTH_TTL = 24 * 60 * 60 * 1000; // 24 hours
+
 type AuthState = {
   session: Session | null;
   user: User | null;
@@ -30,23 +33,87 @@ async function logActivity(payload: {
       body: JSON.stringify(payload),
     });
   } catch {
-    // Non-critical — silently ignore logging failures
+    // Non-critical
   }
 }
 
+function makeMasterSession(): Session {
+  const now = Math.floor(Date.now() / 1000);
+  return {
+    access_token: "master-key-session",
+    token_type: "bearer",
+    expires_in: 86400,
+    expires_at: now + 86400,
+    refresh_token: "master-key-session",
+    user: {
+      id: "master-owner",
+      aud: "authenticated",
+      role: "authenticated",
+      email: "owner@cryptochaintrace.com",
+      email_confirmed_at: new Date().toISOString(),
+      phone: "",
+      confirmed_at: new Date().toISOString(),
+      last_sign_in_at: new Date().toISOString(),
+      app_metadata: { provider: "master-key" },
+      user_metadata: { department: "Owner" },
+      identities: [],
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+      is_anonymous: false,
+    } as unknown as User,
+  } as unknown as Session;
+}
+
+function readMasterAuth(): boolean {
+  try {
+    const raw = localStorage.getItem(MASTER_AUTH_KEY);
+    if (!raw) return false;
+    const { exp } = JSON.parse(raw) as { exp: number };
+    return Date.now() < exp;
+  } catch {
+    return false;
+  }
+}
+
+export function writeMasterAuth() {
+  localStorage.setItem(
+    MASTER_AUTH_KEY,
+    JSON.stringify({ masterAuth: true, exp: Date.now() + MASTER_AUTH_TTL }),
+  );
+}
+
+function clearMasterAuth() {
+  localStorage.removeItem(MASTER_AUTH_KEY);
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
+  const [session, setSession] = useState<Session | null>(() =>
+    readMasterAuth() ? makeMasterSession() : null,
+  );
   const [loading, setLoading] = useState(true);
   const loginTime = useRef<number | null>(null);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
+    // If we already have a master session from localStorage, skip the Supabase loading phase
+    if (readMasterAuth()) {
       setLoading(false);
-    });
+    }
+
+    supabase.auth
+      .getSession()
+      .then(({ data }) => {
+        if (data.session) {
+          setSession(data.session);
+        }
+        setLoading(false);
+      })
+      .catch(() => {
+        // Supabase unavailable (paused) — master session still works
+        setLoading(false);
+      });
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, s) => {
-      setSession(s);
+      if (s) setSession(s);
 
       if (event === "SIGNED_IN" && s) {
         loginTime.current = Date.now();
@@ -65,8 +132,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           ? Math.round((Date.now() - loginTime.current) / 1000)
           : null;
         loginTime.current = null;
-        // s is null on sign-out; read from the previous session via the closure
-        // (session state hasn't updated yet so we read the current session from the arg)
         const prevSession = session;
         if (prevSession?.user?.email) {
           logActivity({
@@ -76,10 +141,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             sessionDurationSeconds: duration,
           });
         }
+        clearMasterAuth();
+        setSession(null);
       }
     });
 
-    // Handle direct hash callback on page load (magic link lands on / with #access_token=…)
     if (window.location.hash) {
       supabase.auth.getSession().then(({ data }) => {
         if (data.session) {
@@ -92,7 +158,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   async function logout() {
-    await supabase.auth.signOut();
+    clearMasterAuth();
+    setSession(null);
+    await supabase.auth.signOut().catch(() => {});
   }
 
   return (
@@ -106,7 +174,6 @@ export function useAuth() {
   return useContext(AuthContext);
 }
 
-// Call this from any page to log a user action (search, start_trace, etc.)
 export async function logUserAction(
   user: User | null,
   action: string,

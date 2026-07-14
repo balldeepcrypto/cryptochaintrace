@@ -4,13 +4,14 @@ import { supabase } from "./supabase";
 
 const MASTER_AUTH_KEY = "chaintrace-master-auth";
 const MASTER_AUTH_TTL = 24 * 60 * 60 * 1000; // 24 hours
-const AUTH_TIMEOUT_MS = 5_000; // force loading=false after 5s if Supabase hangs
+const AUTH_TIMEOUT_MS = 5_000;
 
 type AuthState = {
   session: Session | null;
   user: User | null;
   loading: boolean;
   logout: () => Promise<void>;
+  loginWithMaster: () => void; // set master session directly in React state
 };
 
 const AuthContext = createContext<AuthState>({
@@ -18,6 +19,7 @@ const AuthContext = createContext<AuthState>({
   user: null,
   loading: true,
   logout: async () => {},
+  loginWithMaster: () => {},
 });
 
 async function logActivity(payload: {
@@ -65,60 +67,73 @@ function makeMasterSession(): Session {
   } as unknown as Session;
 }
 
-export function readMasterAuth(): boolean {
+function readMasterAuth(): boolean {
   try {
-    const raw = localStorage.getItem(MASTER_AUTH_KEY);
-    if (!raw) return false;
-    const { exp } = JSON.parse(raw) as { exp: number };
-    return Date.now() < exp;
+    // Check sessionStorage first (survives within the tab), then localStorage
+    for (const store of [sessionStorage, localStorage]) {
+      const raw = store.getItem(MASTER_AUTH_KEY);
+      if (!raw) continue;
+      const { exp } = JSON.parse(raw) as { exp: number };
+      if (Date.now() < exp) return true;
+    }
+    return false;
   } catch {
     return false;
   }
 }
 
 export function writeMasterAuth() {
-  localStorage.setItem(
-    MASTER_AUTH_KEY,
-    JSON.stringify({ masterAuth: true, exp: Date.now() + MASTER_AUTH_TTL }),
-  );
+  const value = JSON.stringify({ masterAuth: true, exp: Date.now() + MASTER_AUTH_TTL });
+  try { sessionStorage.setItem(MASTER_AUTH_KEY, value); } catch { /* ok */ }
+  try { localStorage.setItem(MASTER_AUTH_KEY, value); } catch { /* ok */ }
 }
 
 function clearMasterAuth() {
-  localStorage.removeItem(MASTER_AUTH_KEY);
+  try { sessionStorage.removeItem(MASTER_AUTH_KEY); } catch { /* ok */ }
+  try { localStorage.removeItem(MASTER_AUTH_KEY); } catch { /* ok */ }
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const isMaster = readMasterAuth();
+  const hasMasterOnMount = readMasterAuth();
 
   const [session, setSession] = useState<Session | null>(
-    isMaster ? makeMasterSession() : null,
+    hasMasterOnMount ? makeMasterSession() : null,
   );
-  // Start as false immediately if master auth is present — no Supabase round-trip needed
-  const [loading, setLoading] = useState(!isMaster);
+  const [loading, setLoading] = useState(hasMasterOnMount ? false : true);
   const loginTime = useRef<number | null>(null);
 
-  useEffect(() => {
-    const hasMaster = readMasterAuth();
-    console.log("[auth] AuthProvider mount — isMaster:", hasMaster, "loading:", !hasMaster ? "false (skipped)" : "true");
+  console.log("[auth] render — session:", !!session, "loading:", loading, "isMaster:", hasMasterOnMount);
 
-    // If master auth is valid, we already have a session and loading=false. Skip Supabase.
-    if (hasMaster) {
-      console.log("[auth] Master session active — bypassing Supabase getSession");
+  // Expose a function login pages can call to set the master session directly
+  // in React state without a page reload, avoiding any localStorage timing issues.
+  function loginWithMaster() {
+    console.log("[auth] loginWithMaster() called — setting master session");
+    writeMasterAuth();
+    setSession(makeMasterSession());
+    setLoading(false);
+  }
+
+  useEffect(() => {
+    console.log("[auth] useEffect — hasMasterOnMount:", hasMasterOnMount);
+
+    if (hasMasterOnMount) {
+      // Already have a session set from useState initializer — skip Supabase entirely
+      console.log("[auth] Master session active on mount — skipping Supabase");
       return;
     }
 
-    // Safety timeout: force loading=false after AUTH_TIMEOUT_MS even if Supabase hangs
+    // Hard timeout: force loading=false if Supabase never responds
     const timeoutId = setTimeout(() => {
-      console.warn(`[auth] Timeout after ${AUTH_TIMEOUT_MS}ms — forcing loading=false. Supabase may be unreachable.`);
+      console.warn(`[auth] ${AUTH_TIMEOUT_MS}ms timeout — forcing loading=false`);
       setLoading(false);
     }, AUTH_TIMEOUT_MS);
 
-    console.log("[auth] Calling supabase.auth.getSession()…");
+    console.log("[auth] Calling getSession…");
     supabase.auth
       .getSession()
       .then(({ data, error }) => {
         clearTimeout(timeoutId);
-        console.log("[auth] getSession resolved — session:", !!data.session, "error:", error?.message ?? null);
+        console.log("[auth] getSession done — session:", !!data.session, "err:", error?.message ?? null);
         if (data.session) setSession(data.session);
         setLoading(false);
       })
@@ -129,11 +144,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, s) => {
-      console.log("[auth] onAuthStateChange event:", event, "session:", !!s);
+      console.log("[auth] onAuthStateChange:", event, "session:", !!s, "isMaster now:", readMasterAuth());
 
-      // Never let Supabase auth events override an active master session
+      // Never let Supabase events override an active master session
       if (readMasterAuth()) {
-        console.log("[auth] Master session active — ignoring Supabase event:", event);
+        console.log("[auth] ignoring Supabase event — master session is active");
         return;
       }
 
@@ -168,7 +183,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     });
 
-    // Handle magic-link hash on page load
     if (window.location.hash) {
       supabase.auth.getSession().then(({ data }) => {
         if (data.session) window.location.replace("/dashboard");
@@ -179,17 +193,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       clearTimeout(timeoutId);
       listener.subscription.unsubscribe();
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function logout() {
-    console.log("[auth] logout called — clearing master auth");
+    console.log("[auth] logout");
     clearMasterAuth();
     setSession(null);
     await supabase.auth.signOut().catch(() => {});
   }
 
   return (
-    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, logout }}>
+    <AuthContext.Provider value={{ session, user: session?.user ?? null, loading, logout, loginWithMaster }}>
       {children}
     </AuthContext.Provider>
   );

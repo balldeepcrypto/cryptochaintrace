@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { supabase, supabaseUrl, supabaseAnonKey, supabaseConfigured } from "@/lib/supabase";
-import { writeMasterAuth } from "@/lib/auth-context";
+import { useAuth } from "@/lib/auth-context";
 import { Eye, EyeOff, Loader2, AlertCircle, CheckCircle2, Mail, Lock, KeyRound } from "lucide-react";
 
 type Mode = "password" | "magic" | "master";
@@ -44,6 +44,7 @@ async function probeSupabase(url: string, key: string): Promise<ProbeResult> {
 
 export default function Login() {
   const [, navigate] = useLocation();
+  const { loginWithMaster } = useAuth();
   const [mode, setMode] = useState<Mode>("master");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -77,12 +78,17 @@ export default function Login() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ password: masterKey }),
       });
-      const data = await res.json() as { ok?: boolean };
+      const data = await res.json() as { ok?: boolean; error?: string };
       if (data.ok) {
-        writeMasterAuth();
-        window.location.replace("/dashboard");
+        // Set session directly in React state — no hard reload, no localStorage race
+        loginWithMaster();
+        navigate("/dashboard", { replace: true });
       } else {
-        setError("Incorrect master password. Check the DASHBOARD_PASSWORD secret in your Replit project settings.");
+        setError(
+          data.error === "not_configured"
+            ? "DASHBOARD_PASSWORD is not set on the server. Add it in Replit Secrets."
+            : "Incorrect master password. Check the DASHBOARD_PASSWORD secret in Replit Secrets."
+        );
         setLoading(false);
       }
     } catch (err) {

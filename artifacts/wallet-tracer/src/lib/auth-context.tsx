@@ -4,6 +4,7 @@ import { supabase } from "./supabase";
 
 const MASTER_AUTH_KEY = "chaintrace-master-auth";
 const MASTER_AUTH_TTL = 24 * 60 * 60 * 1000; // 24 hours
+const AUTH_TIMEOUT_MS = 5_000; // force loading=false after 5s if Supabase hangs
 
 type AuthState = {
   session: Session | null;
@@ -64,7 +65,7 @@ function makeMasterSession(): Session {
   } as unknown as Session;
 }
 
-function readMasterAuth(): boolean {
+export function readMasterAuth(): boolean {
   try {
     const raw = localStorage.getItem(MASTER_AUTH_KEY);
     if (!raw) return false;
@@ -87,44 +88,66 @@ function clearMasterAuth() {
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<Session | null>(() =>
-    readMasterAuth() ? makeMasterSession() : null,
+  const isMaster = readMasterAuth();
+
+  const [session, setSession] = useState<Session | null>(
+    isMaster ? makeMasterSession() : null,
   );
-  const [loading, setLoading] = useState(true);
+  // Start as false immediately if master auth is present — no Supabase round-trip needed
+  const [loading, setLoading] = useState(!isMaster);
   const loginTime = useRef<number | null>(null);
 
   useEffect(() => {
-    // If we already have a master session from localStorage, skip the Supabase loading phase
-    if (readMasterAuth()) {
-      setLoading(false);
+    const hasMaster = readMasterAuth();
+    console.log("[auth] AuthProvider mount — isMaster:", hasMaster, "loading:", !hasMaster ? "false (skipped)" : "true");
+
+    // If master auth is valid, we already have a session and loading=false. Skip Supabase.
+    if (hasMaster) {
+      console.log("[auth] Master session active — bypassing Supabase getSession");
+      return;
     }
 
+    // Safety timeout: force loading=false after AUTH_TIMEOUT_MS even if Supabase hangs
+    const timeoutId = setTimeout(() => {
+      console.warn(`[auth] Timeout after ${AUTH_TIMEOUT_MS}ms — forcing loading=false. Supabase may be unreachable.`);
+      setLoading(false);
+    }, AUTH_TIMEOUT_MS);
+
+    console.log("[auth] Calling supabase.auth.getSession()…");
     supabase.auth
       .getSession()
-      .then(({ data }) => {
-        if (data.session) {
-          setSession(data.session);
-        }
+      .then(({ data, error }) => {
+        clearTimeout(timeoutId);
+        console.log("[auth] getSession resolved — session:", !!data.session, "error:", error?.message ?? null);
+        if (data.session) setSession(data.session);
         setLoading(false);
       })
-      .catch(() => {
-        // Supabase unavailable (paused) — master session still works
+      .catch((err: unknown) => {
+        clearTimeout(timeoutId);
+        console.warn("[auth] getSession threw:", err);
         setLoading(false);
       });
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, s) => {
+      console.log("[auth] onAuthStateChange event:", event, "session:", !!s);
+
+      // Never let Supabase auth events override an active master session
+      if (readMasterAuth()) {
+        console.log("[auth] Master session active — ignoring Supabase event:", event);
+        return;
+      }
+
       if (s) setSession(s);
 
       if (event === "SIGNED_IN" && s) {
         loginTime.current = Date.now();
-        const email = s.user.email ?? "";
-        const department = (s.user.user_metadata?.department as string) ?? "";
-        logActivity({ userEmail: email, department, action: "login" });
-
-        const currentPath = window.location.pathname;
-        if (currentPath === "/" || currentPath === "/login") {
-          window.location.replace("/dashboard");
-        }
+        logActivity({
+          userEmail: s.user.email ?? "",
+          department: (s.user.user_metadata?.department as string) ?? "",
+          action: "login",
+        });
+        const p = window.location.pathname;
+        if (p === "/" || p === "/login") window.location.replace("/dashboard");
       }
 
       if (event === "SIGNED_OUT") {
@@ -132,32 +155,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           ? Math.round((Date.now() - loginTime.current) / 1000)
           : null;
         loginTime.current = null;
-        const prevSession = session;
-        if (prevSession?.user?.email) {
+        clearMasterAuth();
+        setSession(null);
+        if (session?.user?.email) {
           logActivity({
-            userEmail: prevSession.user.email,
-            department: (prevSession.user.user_metadata?.department as string) ?? "",
+            userEmail: session.user.email,
+            department: (session.user.user_metadata?.department as string) ?? "",
             action: "logout",
             sessionDurationSeconds: duration,
           });
         }
-        clearMasterAuth();
-        setSession(null);
       }
     });
 
+    // Handle magic-link hash on page load
     if (window.location.hash) {
       supabase.auth.getSession().then(({ data }) => {
-        if (data.session) {
-          window.location.replace("/dashboard");
-        }
-      });
+        if (data.session) window.location.replace("/dashboard");
+      }).catch(() => {});
     }
 
-    return () => listener.subscription.unsubscribe();
+    return () => {
+      clearTimeout(timeoutId);
+      listener.subscription.unsubscribe();
+    };
   }, []);
 
   async function logout() {
+    console.log("[auth] logout called — clearing master auth");
     clearMasterAuth();
     setSession(null);
     await supabase.auth.signOut().catch(() => {});

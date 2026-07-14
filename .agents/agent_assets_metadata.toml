@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "6mYGF4H4J1nx0qlCwN-JM"
+uri = "file://cryptochaintrace-source.zip"
+type = "unspecified"
+title = "CryptoChainTrace — Full Source Code"

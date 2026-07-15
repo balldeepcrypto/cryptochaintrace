@@ -180,7 +180,7 @@ export function ConnectionFinderGraph({
         preventScrolling={false}
       >
         <Background color="#1e293b" gap={24} size={1} style={{ opacity: 0.35 }} />
-        <Controls showInteractiveButton={false} position="bottom-right" style={{ bottom: 8, right: 8 }} />
+        <Controls showInteractive={false} position="bottom-right" style={{ bottom: 8, right: 8 }} />
       </ReactFlow>
     </div>
   );

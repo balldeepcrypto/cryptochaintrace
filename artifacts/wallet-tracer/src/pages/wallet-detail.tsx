@@ -3782,9 +3782,19 @@ export default function WalletDetail() {
       lines.push(`  ✔ Both wallets transact through the same intermediate address(es).`);
       lines.push(``);
 
-      // Classify: direct = 1 hop from at least one wallet; hops = 2+ from both
-      const direct  = tieResult.commonNodes.filter(n => n.pathFromA.length === 2 || n.pathFromB.length === 2);
-      const viaHops = tieResult.commonNodes.filter(n => n.pathFromA.length > 2 && n.pathFromB.length > 2);
+      // SECTION 0: direct A↔B transfer — the common "node" IS one of the wallets
+      const directTransfer = tieResult.commonNodes.filter(
+        n => n.address === tieResult.walletA || n.address === tieResult.walletB
+      );
+      // Classify: direct = 1 hop from at least one wallet; hops = 2+ from both (excluding direct transfers)
+      const direct  = tieResult.commonNodes.filter(
+        n => n.address !== tieResult.walletA && n.address !== tieResult.walletB &&
+             (n.pathFromA.length === 2 || n.pathFromB.length === 2)
+      );
+      const viaHops = tieResult.commonNodes.filter(
+        n => n.address !== tieResult.walletA && n.address !== tieResult.walletB &&
+             n.pathFromA.length > 2 && n.pathFromB.length > 2
+      );
 
       const renderNodeBlock = (node: typeof tieResult.commonNodes[0], idx: number, total: number) => {
         const kn = KNOWN_LABELS[node.address];
@@ -3804,6 +3814,28 @@ export default function WalletDetail() {
           lines.push(``);
         }
       };
+
+      if (directTransfer.length > 0) {
+        lines.push(`${rule}`);
+        lines.push(`  ⚡ SECTION 0 — DIRECT A↔B TRANSACTION`);
+        lines.push(rule);
+        lines.push(``);
+        lines.push(`  ██ HIGHEST EVIDENCE TIER: WALLET A HAS TRANSACTED DIRECTLY WITH WALLET B ██`);
+        lines.push(``);
+        for (const node of directTransfer) {
+          const isNodeB = node.address === tieResult.walletB;
+          const activePath = isNodeB ? node.pathFromA : node.pathFromB;
+          const tx = bestTx(activePath);
+          lines.push(`  Direction  : ${isNodeB
+            ? `WALLET A → WALLET B  (A sent directly to B)`
+            : `WALLET B → WALLET A  (B sent directly to A)`
+          }`);
+          lines.push(`  Address    : ${node.address}`);
+          lines.push(``);
+          emitTxLine(tx, "  ").forEach(l => lines.push(l));
+          lines.push(``);
+        }
+      }
 
       if (direct.length > 0) {
         lines.push(`${rule}`);
@@ -8036,8 +8068,18 @@ export default function WalletDetail() {
                 + " " + d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) + " UTC";
             };
 
-            const directNodes = tieResult.commonNodes.filter(n => n.pathFromA.length === 2 || n.pathFromB.length === 2);
-            const hopNodes    = tieResult.commonNodes.filter(n => n.pathFromA.length > 2 && n.pathFromB.length > 2);
+            // Direct A↔B transfer: the common "node" IS one of the target wallets itself
+            const directTransferNodes = tieResult.commonNodes.filter(
+              n => n.address === tieResult.walletA || n.address === tieResult.walletB
+            );
+            const directNodes = tieResult.commonNodes.filter(
+              n => n.address !== tieResult.walletA && n.address !== tieResult.walletB &&
+                   (n.pathFromA.length === 2 || n.pathFromB.length === 2)
+            );
+            const hopNodes    = tieResult.commonNodes.filter(
+              n => n.address !== tieResult.walletA && n.address !== tieResult.walletB &&
+                   n.pathFromA.length > 2 && n.pathFromB.length > 2
+            );
 
             // Compact TX summary card for one side of the connection
             const TxCard = ({ path, label, accent }: { path: TieFinderHop[]; label: string; accent: string }) => {
@@ -8152,6 +8194,80 @@ export default function WalletDetail() {
             return (
               <div className="p-5 space-y-4">
 
+                {/* ⚡ DIRECT A↔B TRANSFER — highest evidence tier */}
+                {directTransferNodes.length > 0 && (
+                  <div className="rounded-lg border-2 border-fuchsia-500/60 bg-fuchsia-950/15 overflow-hidden">
+                    <div className="flex items-center gap-3 px-4 py-3 bg-fuchsia-950/30 border-b border-fuchsia-500/30">
+                      <span className="text-xl">⚡</span>
+                      <div>
+                        <p className="text-xs font-mono font-bold text-fuchsia-300 uppercase tracking-widest">
+                          DIRECT TRANSACTION DETECTED
+                        </p>
+                        <p className="text-[10px] font-mono text-fuchsia-400/70 mt-0.5">
+                          Wallet A has transacted DIRECTLY with Wallet B — strongest possible on-chain link
+                        </p>
+                      </div>
+                    </div>
+                    <div className="p-4 space-y-4">
+                      {directTransferNodes.map(node => {
+                        const isNodeB = node.address === tieResult.walletB;
+                        const activePath = isNodeB ? node.pathFromA : node.pathFromB;
+                        const tx = bestTx(activePath);
+                        return (
+                          <div key={node.address} className="space-y-2">
+                            <div className="flex items-center gap-2">
+                              <span className="text-[9px] font-mono font-bold text-fuchsia-400 bg-fuchsia-950/40 border border-fuchsia-500/30 px-2 py-0.5 rounded uppercase tracking-wider">
+                                {isNodeB ? "WALLET A → WALLET B" : "WALLET B → WALLET A"}
+                              </span>
+                              <span className="text-[9px] font-mono text-fuchsia-300/60">direct on-chain payment</span>
+                            </div>
+                            <div className="text-[10px] font-mono text-muted-foreground/60 break-all pl-2 border-l border-fuchsia-500/20">
+                              {node.address}
+                            </div>
+                            {tx ? (
+                              <div className="rounded border border-fuchsia-500/20 bg-fuchsia-950/20 p-3 space-y-1.5">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span className={`text-[9px] font-mono px-1 py-0.5 rounded ${
+                                    tx.direction === "in"
+                                      ? "text-green-300 bg-green-950/40 border border-green-500/20"
+                                      : "text-red-300 bg-red-950/40 border border-red-500/20"
+                                  }`}>{tx.direction === "in" ? "IN" : "OUT"}</span>
+                                  <span className="text-sm font-mono font-bold text-fuchsia-200">
+                                    {fmtAmt(tx.value, tx.direction)}&nbsp;{(tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp}
+                                  </span>
+                                  {tx.valueUsd > 0 && (
+                                    <span className="text-[10px] font-mono text-emerald-400">
+                                      ${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="text-[9px] font-mono text-muted-foreground space-y-0.5">
+                                  <div className="flex gap-1.5">
+                                    <span className="text-muted-foreground/40 shrink-0 w-8">TX</span>
+                                    <span className="break-all">{tx.hash || "(none)"}</span>
+                                  </div>
+                                  <div className="flex gap-1.5">
+                                    <span className="text-muted-foreground/40 shrink-0 w-8">Date</span>
+                                    <span>{fmtDate(tx.timestamp || "")}</span>
+                                  </div>
+                                  {tx.memo && (
+                                    <div className="flex gap-1.5">
+                                      <span className="text-muted-foreground/40 shrink-0 w-8">Memo</span>
+                                      <span>{tx.memo}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-[9px] font-mono text-muted-foreground/50 italic pl-2">No TX data available for this path</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
                 {/* Summary banner */}
                 <div className={`flex items-start gap-3 px-4 py-3 rounded-lg border ${
                   tieResult.commonNodes.length > 0 ? "border-sky-500/30 bg-sky-950/20" : "border-yellow-500/20 bg-yellow-950/10"
@@ -8164,6 +8280,7 @@ export default function WalletDetail() {
                       <>
                         <p className="text-xs font-mono font-bold text-sky-300 mb-0.5">
                           CONNECTION CONFIRMED — {tieResult.commonNodes.length} shared node{tieResult.commonNodes.length !== 1 ? "s" : ""} found
+                          {directTransferNodes.length > 0 && <span className="text-fuchsia-400 ml-2">· ⚡ direct A↔B</span>}
                           {directNodes.length > 0 && <span className="text-violet-400 ml-2">· {directNodes.length} direct</span>}
                           {hopNodes.length > 0 && <span className="text-sky-400/70 ml-2">· {hopNodes.length} via hops</span>}
                         </p>

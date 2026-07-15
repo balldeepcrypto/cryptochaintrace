@@ -1,10 +1,18 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
+import ReactFlow, {
+  type Node,
+  type Edge,
+  Background,
+  Controls,
+  MarkerType,
+  BackgroundVariant,
+} from "reactflow";
+import "reactflow/dist/style.css";
 import { useParams } from "wouter";
 import { useGetWalletConnections, getGetWalletConnectionsQueryKey } from "@workspace/api-client-react";
 import { Card } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Network, ZoomIn, ZoomOut, Maximize, AlertCircle, X, ExternalLink, FileText, Copy, Check, BookmarkPlus, Download, FileJson } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Network, AlertCircle, X, ExternalLink, FileText, Copy, Check, BookmarkPlus, Download, FileJson } from "lucide-react";
 import { AddressDisplay } from "@/components/address-display";
 
 type ChainId = "ethereum" | "bitcoin" | "xrp" | "xlm" | "hbar" | "xdc" | "dag" | "polygon" | "bsc";
@@ -21,7 +29,6 @@ const EXPLORER_MAP: Partial<Record<ChainId, (a: string) => string>> = {
   polygon:  (a) => `https://polygon.blockscout.com/address/${a}`,
 };
 
-// Minimum flow amounts per chain — used to filter dust/spam in the report
 const GRAPH_MIN_AMOUNTS: Record<string, number> = {
   ethereum: 0.001,
   bitcoin:  0.001,
@@ -34,9 +41,7 @@ const GRAPH_MIN_AMOUNTS: Record<string, number> = {
   dag:      1.0,
 };
 
-// Compact exchange/known entity labels for graph enrichment
 const GRAPH_KNOWN_LABELS: Record<string, string> = {
-  // ── XRP exchanges (comprehensive) ─────────────────────────────────────────
   rEb8TK3gBgk5auZkwc6sHnwrGVJH8DuaLh: "Bitstamp",
   rMQ98K56yXJbDGv49ZSmW51sLn94Xe1mu1: "Bitstamp",
   rDsbeomae4FXwgQTJp9Rs64Qg9vDiTCdBv: "Bitstamp",
@@ -96,19 +101,16 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   rBgnUKAEiFhCRLPoYNPPe3JUWayRjP6Ayg: "Coinspot",
   rBWpYJhuJWBPakzJ4kYQqHShSkkF3rgeD:  "Cobo Custody",
   rQrgppDZMMKeq1x9gDuoytWeRLmLfXYV3q: "Union Chain",
-  // ── XLM exchanges ──────────────────────────────────────────────────────────
   GBEZDAORANS52QCQ3UXGE6ZBMW3KMBSB42GBXBZMQEVJGALDEF2MGDM: "Binance XLM",
   GCGNWKCJ3KHRLPM3TM6N7D3W5YKDJFL6A2YCXFXNMRTZ4Q66BZDSBS4: "Coinbase XLM",
   GCO2IP3MJNUOKS4PUDI4C7LGGMQDJGXG3COYX3WSB4HHNAHKYV5YL3VC: "Kraken XLM",
   GDEZTHPGZRQG5IVIMKPLMAHUBFVLKUJDQRZJ3G3BGTKH7JHXN39V63M: "Binance XLM 2",
   GAHK7EEG2WWHVKDNT4CEQFZGKF2LGDSW2IVM4S5DP42RBW3K6BTODB4: "Poloniex XLM",
-  // ── HBAR exchanges ─────────────────────────────────────────────────────────
   "0.0.98":    "Hedera Network (fees)",
   "0.0.800":   "Hedera Staking Reward",
   "0.0.29662955": "Binance HBAR",
   "0.0.34741585": "Coinbase HBAR",
   "0.0.15015921": "OKX HBAR",
-  // ── ETH / EVM exchanges ────────────────────────────────────────────────────
   "0xd551234ae421e3bcba99a0da6d736074f22192ff": "Binance ETH",
   "0x3f5ce5fbfe3e9af3971dd833d26ba9b5c936f0be": "Binance ETH 2",
   "0x564286362092d8e7936f0549571a803b203aaced": "Binance ETH 3",
@@ -146,7 +148,6 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   "0xab5c66752a9e8167967685f1450532fb96d5d24f": "Huobi/HTX ETH 2",
   "0xdc76cd25977e0a5ae17155770273ad58648900d3": "Huobi/HTX ETH 3",
   "0x1062a747393198f70f71ec65a582423dba7e5ab3": "Bybit ETH",
-  // ── BTC exchanges ──────────────────────────────────────────────────────────
   "1NDyJtNTjmwk5xPNhjgAMu4HDHigtobu1s": "Binance BTC",
   "bc1qm34lsc65zpw79lxes69zkqmk6ee3ewf0j77s3h": "Binance BTC 2",
   "34xp4vRoCGJym3xR7yCVPFHoCNxv4Twseo": "Binance Cold",
@@ -173,16 +174,16 @@ function nodeStyle(
   isCommingling: boolean,
 ): NodeStyle {
   if (addr === center)
-    return { fill: "#3b82f6", ring: "#1d4ed8", glow: "rgba(59,130,246,0.45)", radius: 14, textColor: "#93c5fd", category: "center" };
+    return { fill: "#1e3a5f", ring: "#3b82f6", glow: "rgba(59,130,246,0.5)", radius: 14, textColor: "#93c5fd", category: "center" };
   if (isCommingling)
-    return { fill: "#eab308", ring: "#ca8a04", glow: "rgba(234,179,8,0.4)",   radius: 11, textColor: "#fde047",  category: "commingling" };
+    return { fill: "#3b2a00", ring: "#eab308", glow: "rgba(234,179,8,0.45)", radius: 11, textColor: "#fde047",  category: "commingling" };
   if (label)
-    return { fill: "#ef4444", ring: "#b91c1c", glow: "rgba(239,68,68,0.4)",   radius: 10, textColor: "#fca5a5",  category: "exchange" };
+    return { fill: "#3b0a0a", ring: "#ef4444", glow: "rgba(239,68,68,0.45)",  radius: 10, textColor: "#fca5a5",  category: "exchange" };
   if ((riskScore ?? 0) > 70)
-    return { fill: "#f97316", ring: "#ea580c", glow: "rgba(249,115,22,0.4)",  radius: 10, textColor: "#fdba74",  category: "high-risk" };
+    return { fill: "#3b1a00", ring: "#f97316", glow: "rgba(249,115,22,0.45)", radius: 10, textColor: "#fdba74",  category: "high-risk" };
   if (isContract)
-    return { fill: "#a855f7", ring: "#7c3aed", glow: "rgba(168,85,247,0.4)",  radius:  9, textColor: "#d8b4fe",  category: "contract" };
-  return   { fill: "#334155", ring: "#1e293b", glow: "rgba(71,85,105,0.25)",  radius:  8, textColor: "#94a3b8",  category: "standard" };
+    return { fill: "#1e1b4b", ring: "#a855f7", glow: "rgba(168,85,247,0.45)", radius:  9, textColor: "#d8b4fe",  category: "contract" };
+  return   { fill: "#0f172a", ring: "#334155", glow: "rgba(71,85,105,0.2)",   radius:  8, textColor: "#94a3b8",  category: "standard" };
 }
 
 const DEPTH_LABELS: Record<DepthStr, string> = {
@@ -194,15 +195,11 @@ const DEPTH_LABELS: Record<DepthStr, string> = {
   "6": "6 Hops (Maximum)",
 };
 
-// US-regulated exchanges — subpoena priority tier 1
 const US_REGULATED_EXCHANGES = new Set([
   "Coinbase", "Kraken", "Gemini", "Bitstamp", "Robinhood",
   "Uphold", "eToro", "Bittrex", "Poloniex", "Bitget",
 ]);
 
-// Peel-chain heuristic score 0–100 based on edge pattern analysis.
-// Calibrated for BFS graph samples (2–10 edges per node); detects spreading
-// and layering signatures without requiring timing data.
 function computePeelScore(
   addr: string,
   edges: Array<{ from: string; to: string; totalValue: string; totalValueUsd?: number | null }>,
@@ -211,49 +208,26 @@ function computePeelScore(
   const inEdges  = edges.filter(e => e.to   === addr);
   const outEdges = edges.filter(e => e.from === addr);
   if (inEdges.length === 0 || outEdges.length === 0) return 0;
-
   const inVol     = inEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
   const maxInFlow = Math.max(...inEdges.map(e => parseFloat(e.totalValue || "0")));
   const avgInAmt  = inVol / inEdges.length;
   const uniqueIn  = new Set(inEdges.map(e => e.from)).size;
   const uniqueOut = new Set(outEdges.map(e => e.to)).size;
-
   let score = 0;
-
-  // 1. Multi-source (commingling): receives from 2+ distinct senders — definitionally suspicious
-  if (uniqueIn >= 3) score += 20;
-  else if (uniqueIn >= 2) score += 12;
-
-  // 2. Spreading: more outflows than inflows
-  if (outEdges.length >= inEdges.length * 2.5) score += 20;
-  else if (outEdges.length >= inEdges.length * 1.2) score += 10;
-
-  // 3. Fan-out: many unique destinations
-  if (uniqueOut >= 6) score += 18;
-  else if (uniqueOut >= 3) score += 10;
-  else if (uniqueOut >= 2) score += 5;
-
-  // 4. Small outflows: peeling small amounts off large inflows
+  if (uniqueIn >= 3) score += 20; else if (uniqueIn >= 2) score += 12;
+  if (outEdges.length >= inEdges.length * 2.5) score += 20; else if (outEdges.length >= inEdges.length * 1.2) score += 10;
+  if (uniqueOut >= 6) score += 18; else if (uniqueOut >= 3) score += 10; else if (uniqueOut >= 2) score += 5;
   const smallOuts  = outEdges.filter(e => parseFloat(e.totalValue || "0") < avgInAmt * 0.2).length;
   const smallRatio = outEdges.length > 0 ? smallOuts / outEdges.length : 0;
-  if (smallRatio > 0.45) score += 18;
-  else if (smallRatio > 0.2) score += 10;
-
-  // 5. Exchange routing — strongest layering signal; boosted
+  if (smallRatio > 0.45) score += 18; else if (smallRatio > 0.2) score += 10;
   const exchOuts = outEdges.filter(e => knownLabels[e.to] ?? knownLabels[(e.to ?? "").toLowerCase()]).length;
-  if (exchOuts >= 2) score += 20;
-  else if (exchOuts >= 1) score += 14;
-
-  // 6. Tiny outputs (< 5% of largest inflow) — classic peel/change pattern
+  if (exchOuts >= 2) score += 20; else if (exchOuts >= 1) score += 14;
   const tinyOuts  = outEdges.filter(e => parseFloat(e.totalValue || "0") < maxInFlow * 0.05).length;
   const tinyRatio = outEdges.length > 0 ? tinyOuts / outEdges.length : 0;
-  if (tinyRatio > 0.25) score += 14;
-  else if (tinyRatio > 0.08) score += 7;
-
+  if (tinyRatio > 0.25) score += 14; else if (tinyRatio > 0.08) score += 7;
   return Math.min(100, score);
 }
 
-// Short explanation string for a peel score — used in report annotations.
 function computePeelReason(
   addr: string,
   edges: Array<{ from: string; to: string; totalValue: string; totalValueUsd?: number | null }>,
@@ -279,6 +253,80 @@ function computePeelReason(
   return parts.slice(0, 3).join(" · ") || "suspicious pattern";
 }
 
+// ── Layout: radial rings by BFS depth from center ──────────────────────────
+function buildRadialLayout(
+  centerAddr: string,
+  nodes: Array<{ address: string; label?: string | null }>,
+  edges: Array<{ from: string; to: string }>,
+): Map<string, { x: number; y: number }> {
+  const W = 1100, H = 820, CX = W / 2, CY = H / 2;
+  const pos = new Map<string, { x: number; y: number }>();
+  pos.set(centerAddr, { x: CX, y: CY });
+
+  const depthMap = new Map<string, number>();
+  depthMap.set(centerAddr, 0);
+  const queue = [centerAddr];
+  while (queue.length) {
+    const cur = queue.shift()!;
+    const curD = depthMap.get(cur)!;
+    for (const e of edges) {
+      if (e.from === cur && !depthMap.has(e.to)) {
+        depthMap.set(e.to, curD + 1);
+        queue.push(e.to);
+      }
+    }
+  }
+
+  const depthGroups = new Map<number, string[]>();
+  for (const [addr, d] of depthMap) {
+    if (addr === centerAddr) continue;
+    if (!depthGroups.has(d)) depthGroups.set(d, []);
+    depthGroups.get(d)!.push(addr);
+  }
+
+  const knownAddrs = new Set(nodes.filter(n => n.label && n.label !== "Target").map(n => n.address));
+  const maxD = Math.max(...[...depthGroups.keys()], 1);
+  const minR = Math.min(W, H) * 0.17;
+  const maxR = Math.min(W, H) * 0.46;
+
+  for (const [d, addrs] of depthGroups) {
+    const r = minR + (maxR - minR) * (d / maxD);
+    const sorted = [...addrs].sort((a, b) => (knownAddrs.has(b) ? 1 : 0) - (knownAddrs.has(a) ? 1 : 0));
+    sorted.forEach((addr, i) => {
+      const angle = -Math.PI / 2 + (i / sorted.length) * 2 * Math.PI;
+      pos.set(addr, { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) });
+    });
+  }
+
+  for (const n of nodes) {
+    if (!pos.has(n.address)) {
+      const angle = Math.random() * 2 * Math.PI;
+      pos.set(n.address, { x: CX + minR * 0.6 * Math.cos(angle), y: CY + minR * 0.6 * Math.sin(angle) });
+    }
+  }
+  return pos;
+}
+
+// ── Edge label formatting ───────────────────────────────────────────────────
+function fmtEdgeLabel(totalValue: string, totalValueUsd: number | null | undefined, chainSym: string): string {
+  const n = parseFloat(totalValue || "0");
+  if (!n || isNaN(n)) return "";
+  let native: string;
+  if (n >= 100_000) native = `${Math.round(n / 1000)}K`;
+  else if (n >= 1_000) native = `${(n / 1000).toFixed(1)}K`;
+  else if (n >= 1) native = n.toFixed(2);
+  else if (n >= 0.01) native = n.toFixed(4);
+  else native = n.toPrecision(3);
+
+  const usd = totalValueUsd ?? 0;
+  let usdStr = "";
+  if (usd >= 1_000_000) usdStr = ` ($${(usd / 1_000_000).toFixed(1)}M)`;
+  else if (usd >= 1_000) usdStr = ` ($${(usd / 1_000).toFixed(1)}K)`;
+  else if (usd >= 1) usdStr = ` ($${Math.round(usd)})`;
+
+  return `${native} ${chainSym}${usdStr}`;
+}
+
 export default function TraceGraph() {
   const params = useParams();
   const address = params.address || "";
@@ -286,13 +334,7 @@ export default function TraceGraph() {
   const chainUp = chain.toUpperCase();
 
   const [depth, setDepth] = useState<DepthStr>("1");
-
-  const canvasRef    = useRef<HTMLCanvasElement>(null);
-  const positionsRef = useRef<Map<string, { x: number; y: number }>>(new Map());
-  const commRef      = useRef<Set<string>>(new Set());
-
-  const [hoveredAddr,     setHoveredAddr]     = useState<string | null>(null);
-  const [selectedAddr,    setSelectedAddr]    = useState<string | null>(null);
+  const [selectedAddr, setSelectedAddr]   = useState<string | null>(null);
   const [showNodeReport,  setShowNodeReport]  = useState(false);
   const [showGraphReport, setShowGraphReport] = useState(false);
   const [nodeReportText,  setNodeReportText]  = useState("");
@@ -300,6 +342,9 @@ export default function TraceGraph() {
   const [reportCopied,    setReportCopied]    = useState(false);
   const [addedCopied,     setAddedCopied]     = useState(false);
   const [focusMode,       setFocusMode]       = useState(false);
+
+  // commRef kept in sync for synchronous use inside report generators
+  const commRef = useRef<Set<string>>(new Set());
 
   const { data: connections, isLoading, error } = useGetWalletConnections(address, {
     chain, depth: parseInt(depth),
@@ -310,11 +355,10 @@ export default function TraceGraph() {
     },
   });
 
-  // Enrich nodes with known exchange labels from GRAPH_KNOWN_LABELS
   const enrichedConnections = useMemo(() => {
     if (!connections) return null;
     const enrichedNodes = connections.nodes.map(n => {
-      if (n.label) return n; // already labeled (center = "Target")
+      if (n.label) return n;
       const known = GRAPH_KNOWN_LABELS[n.address]
         ?? GRAPH_KNOWN_LABELS[n.address.toLowerCase()]
         ?? null;
@@ -323,10 +367,8 @@ export default function TraceGraph() {
     return { ...connections, nodes: enrichedNodes };
   }, [connections]);
 
-  // Chain-specific minimum amount for report filtering
   const graphMinAmount = GRAPH_MIN_AMOUNTS[chain] ?? 1.0;
 
-  // Per-node total USD throughput (in + out) — drives node size and focus mode
   const nodeVolumeUsd = useMemo(() => {
     if (!enrichedConnections) return new Map<string, number>();
     const m = new Map<string, number>();
@@ -338,7 +380,6 @@ export default function TraceGraph() {
     return m;
   }, [enrichedConnections]);
 
-  // Peel-chain score for every node — drives the orange ring indicator and report
   const peelScores = useMemo(() => {
     if (!enrichedConnections) return new Map<string, number>();
     const m = new Map<string, number>();
@@ -349,21 +390,12 @@ export default function TraceGraph() {
     return m;
   }, [enrichedConnections]);
 
-  const drawGraph = useCallback((hovered: string | null) => {
-    const canvas = canvasRef.current;
-    if (!canvas || !enrichedConnections || enrichedConnections.nodes.length === 0) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
+  // ── React Flow nodes + edges ──────────────────────────────────────────────
+  const { rfNodes, rfEdges, commingling } = useMemo(() => {
+    if (!enrichedConnections || enrichedConnections.nodes.length === 0)
+      return { rfNodes: [] as Node[], rfEdges: [] as Edge[], commingling: new Set<string>() };
 
-    const pr = canvas.parentElement?.getBoundingClientRect();
-    if (pr) { canvas.width = pr.width; canvas.height = pr.height; }
-    const W = canvas.width, H = canvas.height, CX = W / 2, CY = H / 2;
-
-    ctx.clearRect(0, 0, W, H);
-
-    // Detect commingling nodes — wallets that receive from 2+ distinct senders.
-    // Known exchange nodes are excluded: exchanges always aggregate from many sources
-    // by design and their presence would otherwise inflate (and destabilise) the hub count.
+    // Commingling detection (same logic as previous canvas drawGraph)
     const knownExchangeAddrs = new Set(
       enrichedConnections.nodes
         .filter(n => n.label && n.label !== "Target")
@@ -372,240 +404,173 @@ export default function TraceGraph() {
     const inMap = new Map<string, Set<string>>();
     for (const e of enrichedConnections.edges) {
       if (e.to === enrichedConnections.centerAddress) continue;
-      if (knownExchangeAddrs.has(e.to)) continue; // exchange nodes handled separately
+      if (knownExchangeAddrs.has(e.to)) continue;
       if (!inMap.has(e.to)) inMap.set(e.to, new Set());
       inMap.get(e.to)!.add(e.from);
     }
     const commingling = new Set(
       [...inMap.entries()].filter(([, f]) => f.size > 1).map(([t]) => t)
     );
-    commRef.current = commingling;
 
-    // Volume stats for scaling
-    const allVols = Array.from(nodeVolumeUsd.values());
-    const maxNodeVol = allVols.length > 0 ? Math.max(...allVols, 1) : 1;
-    const maxEdgeVol = enrichedConnections.edges.length > 0
-      ? Math.max(...enrichedConnections.edges.map(e => e.totalValueUsd ?? 0), 1) : 1;
+    const allVols    = Array.from(nodeVolumeUsd.values());
+    const maxNodeVol = Math.max(...allVols, 1);
+    const maxEdgeVol = Math.max(...enrichedConnections.edges.map(e => e.totalValueUsd ?? 0), 1);
 
-    // Focus mode: build set of "important" nodes to highlight; dim everything else
+    // Focus set: important nodes when focus mode is on
     const focusSet: Set<string> | null = focusMode ? new Set([
       enrichedConnections.centerAddress,
       ...enrichedConnections.nodes.filter(n => n.label && n.label !== "Target").map(n => n.address),
       ...Array.from(commingling),
-      // Top 15% by throughput
       ...Array.from(nodeVolumeUsd.entries())
         .filter(([, v]) => v >= maxNodeVol * 0.15)
         .map(([a]) => a),
     ]) : null;
 
-    // Layout: radial rings by depth (BFS from center via edges)
-    const pos = new Map<string, { x: number; y: number }>();
-    pos.set(enrichedConnections.centerAddress, { x: CX, y: CY });
+    // Layout positions
+    const pos = buildRadialLayout(
+      enrichedConnections.centerAddress,
+      enrichedConnections.nodes,
+      enrichedConnections.edges
+    );
 
-    const depthMap = new Map<string, number>();
-    depthMap.set(enrichedConnections.centerAddress, 0);
-    const queue = [enrichedConnections.centerAddress];
-    while (queue.length) {
-      const cur = queue.shift()!;
-      const curDepth = depthMap.get(cur)!;
-      for (const e of enrichedConnections.edges) {
-        if (e.from === cur && !depthMap.has(e.to)) {
-          depthMap.set(e.to, curDepth + 1);
-          queue.push(e.to);
-        }
-      }
-    }
-    const depthGroups = new Map<number, string[]>();
-    for (const [addr, d] of depthMap) {
-      if (addr === enrichedConnections.centerAddress) continue;
-      if (!depthGroups.has(d)) depthGroups.set(d, []);
-      depthGroups.get(d)!.push(addr);
-    }
-    const maxD = Math.max(...[...depthGroups.keys()], 1);
-    const minR = Math.min(W, H) * 0.15;
-    const maxR = Math.min(W, H) * 0.44;
-    for (const [d, addrs] of depthGroups) {
-      const r = minR + (maxR - minR) * (d / maxD);
-      const sortedAddrs = [...addrs].sort((a, b) => {
-        const scoreA = commingling.has(a) ? 2 : enrichedConnections.nodes.find(n => n.address === a)?.label ? 1 : 0;
-        const scoreB = commingling.has(b) ? 2 : enrichedConnections.nodes.find(n => n.address === b)?.label ? 1 : 0;
-        return scoreB - scoreA;
-      });
-      sortedAddrs.forEach((addr, i) => {
-        const angle = -Math.PI / 2 + (i / sortedAddrs.length) * 2 * Math.PI;
-        pos.set(addr, { x: CX + r * Math.cos(angle), y: CY + r * Math.sin(angle) });
-      });
-    }
-    for (const n of enrichedConnections.nodes) {
-      if (!pos.has(n.address)) {
-        const angle = Math.random() * 2 * Math.PI;
-        pos.set(n.address, { x: CX + minR * Math.cos(angle), y: CY + minR * Math.sin(angle) });
-      }
-    }
-    positionsRef.current = pos;
+    // ── Build React Flow nodes ──
+    const rfNodes: Node[] = enrichedConnections.nodes.map(node => {
+      const isComm   = commingling.has(node.address);
+      const isCenter = node.address === enrichedConnections.centerAddress;
+      const st = nodeStyle(
+        node.address, enrichedConnections.centerAddress,
+        node.riskScore, node.isContract, node.label, isComm
+      );
+      const nodeVol  = nodeVolumeUsd.get(node.address) ?? 0;
+      const volScale = Math.min(1.7, 1 + Math.log1p(nodeVol / maxNodeVol * 40) / 9);
+      const baseW    = st.radius * 12;
+      const w        = Math.round(Math.max(108, Math.min(195, baseW * volScale)));
+      const isDimmed = focusSet !== null && !focusSet.has(node.address);
+      const peel     = peelScores.get(node.address) ?? 0;
 
-    // Draw edges — width and opacity scale with USD volume
-    for (const e of enrichedConnections.edges) {
-      const s = pos.get(e.from), t = pos.get(e.to);
-      if (!s || !t) continue;
-      const isHotEdge  = hovered === e.from || hovered === e.to;
-      const isCommEdge = commingling.has(e.to) || commingling.has(e.from);
-      const isExchEdge = enrichedConnections.nodes.find(n => n.address === e.to)?.label != null
-                      || enrichedConnections.nodes.find(n => n.address === e.from)?.label != null;
-      const isDimmed   = focusSet !== null && !focusSet.has(e.from) && !focusSet.has(e.to);
-      // Volume-scaled line width: 0.5–5px based on log scale
-      const edgeVol = e.totalValueUsd ?? 0;
-      const volWidth = Math.max(0.5, Math.min(4.5, Math.log1p(edgeVol / maxEdgeVol * 60) * 1.2));
+      const lbl = node.label && node.label !== "Target"
+        ? (node.label.length > 14 ? node.label.slice(0, 12) + "…" : node.label)
+        : `${node.address.slice(0, 6)}…${node.address.slice(-4)}`;
 
-      ctx.globalAlpha = isDimmed ? 0.04 : 1;
-      ctx.beginPath();
-      ctx.moveTo(s.x, s.y);
-      ctx.lineTo(t.x, t.y);
-      ctx.strokeStyle = isHotEdge
-        ? "rgba(99,179,237,0.85)"
-        : isCommEdge
-        ? `rgba(234,179,8,${isDimmed ? 0.1 : 0.35})`
-        : isExchEdge
-        ? `rgba(239,68,68,${isDimmed ? 0.05 : 0.28})`
-        : `rgba(99,179,237,${isDimmed ? 0.03 : 0.12})`;
-      ctx.lineWidth = isHotEdge ? Math.max(2.5, volWidth * 1.5) : volWidth;
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      if (isHotEdge) {
-        const px = s.x + (t.x - s.x) * 0.6, py = s.y + (t.y - s.y) * 0.6;
-        const ang = Math.atan2(t.y - s.y, t.x - s.x);
-        ctx.beginPath();
-        ctx.moveTo(px + Math.cos(ang) * 7, py + Math.sin(ang) * 7);
-        ctx.lineTo(px + Math.cos(ang + Math.PI - 2.3) * 7, py + Math.sin(ang + Math.PI - 2.3) * 7);
-        ctx.lineTo(px + Math.cos(ang + Math.PI + 2.3) * 7, py + Math.sin(ang + Math.PI + 2.3) * 7);
-        ctx.closePath();
-        ctx.fillStyle = "rgba(99,179,237,0.85)";
-        ctx.fill();
-      }
-    }
+      const { x, y } = pos.get(node.address) ?? { x: 0, y: 0 };
 
-    // Draw nodes (back-to-front: standard → high-risk → exchange → commingling → center)
-    const sorted = [...enrichedConnections.nodes].sort((a, b) => {
-      const rank = (n: typeof a) =>
-        n.address === enrichedConnections.centerAddress ? 4 :
-        commingling.has(n.address) ? 3 :
-        n.label ? 2 :
-        (n.riskScore ?? 0) > 70 ? 1 : 0;
-      return rank(a) - rank(b);
+      const typeTag = isCenter
+        ? { text: "● TARGET", color: "#93c5fd" }
+        : isComm
+        ? { text: "⚠ HUB", color: "#fde047" }
+        : node.label && node.label !== "Target"
+        ? { text: node.label.toUpperCase().slice(0, 12), color: "#fca5a5" }
+        : (node.riskScore ?? 0) > 70
+        ? { text: "HIGH RISK", color: "#fdba74" }
+        : node.isContract
+        ? { text: "CONTRACT", color: "#d8b4fe" }
+        : null;
+
+      return {
+        id: node.address,
+        position: { x: x - w / 2, y: y - 22 },
+        data: {
+          label: (
+            <div style={{ textAlign: "center", lineHeight: 1.35, padding: "1px 0" }}>
+              {typeTag && (
+                <div style={{
+                  fontSize: 7,
+                  fontWeight: 800,
+                  letterSpacing: "0.1em",
+                  marginBottom: 3,
+                  color: typeTag.color,
+                }}>
+                  {typeTag.text}
+                </div>
+              )}
+              <div style={{ fontSize: 8, fontFamily: "monospace", color: st.textColor, letterSpacing: "0.02em" }}>
+                {lbl}
+              </div>
+              {peel >= 55 && (
+                <div style={{ fontSize: 6.5, color: peel >= 75 ? "#f97316" : "#fb923c", marginTop: 3 }}>
+                  ⚠ PEEL {peel}/100
+                </div>
+              )}
+            </div>
+          ),
+        },
+        style: {
+          background: st.fill,
+          border: `${isCenter ? 2 : 1.5}px solid ${st.ring}`,
+          borderRadius: isCenter ? 10 : 7,
+          padding: "7px 9px",
+          width: w,
+          opacity: isDimmed ? 0.12 : 1,
+          boxShadow: !isDimmed && (isCenter || isComm || (node.label && node.label !== "Target") || (node.riskScore ?? 0) > 70)
+            ? `0 0 ${isCenter ? 22 : 14}px ${st.glow}`
+            : "none",
+          cursor: "pointer",
+          transition: "box-shadow 0.15s, opacity 0.15s",
+        },
+        selected: node.address === selectedAddr,
+      } as Node;
     });
 
-    for (const node of sorted) {
-      const p = pos.get(node.address);
-      if (!p) continue;
-      const isComm   = commingling.has(node.address);
-      const isHov    = node.address === hovered;
-      const isSel    = node.address === selectedAddr;
-      const isDimmed = focusSet !== null && !focusSet.has(node.address);
-      const st = nodeStyle(node.address, enrichedConnections.centerAddress, node.riskScore, node.isContract, node.label, isComm);
+    // ── Build React Flow edges ──
+    const rfEdges: Edge[] = enrichedConnections.edges.map((e, i) => {
+      const isCommEdge = commingling.has(e.to) || commingling.has(e.from);
+      const toNode     = enrichedConnections.nodes.find(n => n.address === e.to);
+      const fromNode   = enrichedConnections.nodes.find(n => n.address === e.from);
+      const isExchEdge =
+        (toNode?.label   != null && toNode.label   !== "Target") ||
+        (fromNode?.label != null && fromNode.label !== "Target");
+      const isDimmed   = focusSet !== null && !focusSet.has(e.from) && !focusSet.has(e.to);
+      const edgeVol    = e.totalValueUsd ?? 0;
+      const volWidth   = Math.max(1, Math.min(4.5, Math.log1p(edgeVol / maxEdgeVol * 60) * 1.1));
 
-      // Volume-based radius bonus: 0–5px extra based on log scale
-      const nodeVol  = nodeVolumeUsd.get(node.address) ?? 0;
-      const volBonus = Math.min(5, Math.log1p(nodeVol / maxNodeVol * 40) * 1.5);
-      const r = st.radius + (isHov ? 3 : 0) + (isDimmed ? 0 : volBonus);
+      const edgeColor = isCommEdge ? "#eab308" : isExchEdge ? "#ef4444" : "#63b3ed";
+      const edgeOpacity = isDimmed ? 0.06 : isCommEdge ? 0.85 : isExchEdge ? 0.65 : 0.4;
+      const edgeLabel = fmtEdgeLabel(e.totalValue, e.totalValueUsd, chainUp);
 
-      ctx.globalAlpha = isDimmed ? 0.18 : 1;
+      return {
+        id: `e-${i}-${e.from.slice(-4)}-${e.to.slice(-4)}`,
+        source: e.from,
+        target: e.to,
+        type: "smoothstep",
+        label: !isDimmed && edgeLabel ? edgeLabel : undefined,
+        labelStyle: {
+          fill: edgeColor,
+          fontFamily: "monospace",
+          fontSize: 7.5,
+          fontWeight: 600,
+        },
+        labelBgStyle: { fill: "#080c14", fillOpacity: 0.88 },
+        labelBgPadding: [3, 2] as [number, number],
+        labelBgBorderRadius: 3,
+        style: {
+          stroke: edgeColor,
+          strokeWidth: isDimmed ? 0.5 : volWidth,
+          opacity: edgeOpacity,
+          strokeDasharray: isCommEdge && !isDimmed ? undefined : undefined,
+        },
+        markerEnd: isDimmed ? undefined : {
+          type: MarkerType.ArrowClosed,
+          color: edgeColor,
+          width: 9,
+          height: 9,
+        },
+        animated: isCommEdge && !isDimmed,
+      } as Edge;
+    });
 
-      if (!isDimmed && (isHov || isSel || isComm || node.label)) {
-        const grad = ctx.createRadialGradient(p.x, p.y, r * 0.4, p.x, p.y, r + (isHov || isSel ? 20 : 12));
-        grad.addColorStop(0, st.glow);
-        grad.addColorStop(1, "transparent");
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r + (isHov || isSel ? 20 : 12), 0, 2 * Math.PI);
-        ctx.fillStyle = grad;
-        ctx.fill();
-      }
-      if (isSel) {
-        ctx.beginPath();
-        ctx.arc(p.x, p.y, r + 6, 0, 2 * Math.PI);
-        ctx.strokeStyle = "#ffffff50";
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 3]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-      ctx.beginPath();
-      ctx.arc(p.x, p.y, r, 0, 2 * Math.PI);
-      ctx.fillStyle = st.fill;
-      ctx.fill();
-      ctx.strokeStyle = isHov ? "#ffffffa0" : st.ring;
-      ctx.lineWidth = isHov ? 2.5 : 1.5;
-      ctx.stroke();
+    return { rfNodes, rfEdges, commingling };
+  }, [enrichedConnections, focusMode, nodeVolumeUsd, peelScores, selectedAddr, chainUp]);
 
-      // Peel-chain risk ring: orange dashed ring for score ≥ 55
-      if (!isDimmed) {
-        const peel = peelScores.get(node.address) ?? 0;
-        if (peel >= 55) {
-          ctx.beginPath();
-          ctx.arc(p.x, p.y, r + 5, 0, 2 * Math.PI);
-          ctx.strokeStyle = peel >= 75 ? "#f97316" : "#fb923c88";
-          ctx.lineWidth = peel >= 75 ? 2 : 1.5;
-          ctx.setLineDash([3, 2]);
-          ctx.stroke();
-          ctx.setLineDash([]);
-        }
-      }
-
-      // Labels: always show for key nodes; hide dimmed standard nodes in focus mode
-      const isCenter = node.address === enrichedConnections.centerAddress;
-      const showLabel = !isDimmed || isComm || node.label || isCenter;
-      if (showLabel) {
-        ctx.globalAlpha = isDimmed ? 0.35 : 1;
-        ctx.font = `${isCenter || isComm ? "bold " : ""}10px monospace`;
-        ctx.textAlign = "center";
-        ctx.fillStyle = isHov ? "#fff" : st.textColor;
-        const lbl = node.label
-          ? (node.label.length > 16 ? node.label.slice(0, 14) + "…" : node.label)
-          : `${node.address.slice(0, 4)}…${node.address.slice(-4)}`;
-        ctx.fillText(lbl, p.x, p.y + r + 14);
-      }
-      ctx.globalAlpha = 1;
-    }
-  }, [enrichedConnections, selectedAddr, focusMode, nodeVolumeUsd, peelScores]);
-
-  useEffect(() => { drawGraph(hoveredAddr); }, [enrichedConnections, hoveredAddr, selectedAddr, drawGraph]);
-
+  // Keep commRef in sync for report generators (called on user action, safe after render)
   useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas || !enrichedConnections) return;
+    commRef.current = commingling;
+  }, [commingling]);
 
-    const hit = (e: MouseEvent): string | null => {
-      const rect = canvas.getBoundingClientRect();
-      const sx = canvas.width / rect.width, sy = canvas.height / rect.height;
-      const cx = (e.clientX - rect.left) * sx, cy = (e.clientY - rect.top) * sy;
-      for (const [addr, p] of positionsRef.current) {
-        if (Math.hypot(cx - p.x, cy - p.y) <= 22) return addr;
-      }
-      return null;
-    };
-
-    const onMove = (e: MouseEvent) => {
-      const h = hit(e);
-      canvas.style.cursor = h ? "pointer" : "crosshair";
-      setHoveredAddr(h);
-    };
-    const onClick = (e: MouseEvent) => {
-      const h = hit(e);
-      setSelectedAddr(prev => (prev === h ? null : h));
-    };
-
-    canvas.addEventListener("mousemove", onMove);
-    canvas.addEventListener("click",     onClick);
-    return () => {
-      canvas.removeEventListener("mousemove", onMove);
-      canvas.removeEventListener("click",     onClick);
-    };
-  }, [enrichedConnections]);
-
+  // ── Derived: selected node panel data ────────────────────────────────────
   const selectedNode    = enrichedConnections?.nodes.find(n => n.address === selectedAddr) ?? null;
   const explorerUrl     = EXPLORER_MAP[chain];
-  const isCommingling   = selectedAddr ? commRef.current.has(selectedAddr) : false;
+  const isCommingling   = selectedAddr ? commingling.has(selectedAddr) : false;
 
-  // Edges between selected node and center (for panel stats)
   const edgesWithCenter = enrichedConnections?.edges.filter(e =>
     (e.from === selectedAddr && e.to === address) ||
     (e.to === selectedAddr   && e.from === address)
@@ -614,7 +579,6 @@ export default function TraceGraph() {
   const volWithCenter  = edgesWithCenter.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
   const usdWithCenter  = edgesWithCenter.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
 
-  // Hub strength stats for selected commingling node
   const hubInEdges   = isCommingling && enrichedConnections
     ? enrichedConnections.edges.filter(e => e.to === selectedAddr)
     : [];
@@ -622,6 +586,7 @@ export default function TraceGraph() {
   const hubInflowVol = hubInEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
   const hubInflowUsd = hubInEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
 
+  // ── Report generators (unchanged logic) ──────────────────────────────────
   function genNodeReport(): string {
     if (!selectedNode || !enrichedConnections) return "";
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
@@ -678,29 +643,23 @@ export default function TraceGraph() {
     if (!enrichedConnections) return "";
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const commingling  = commRef.current;
-    const hubNodes      = enrichedConnections.nodes.filter(n => commingling.has(n.address));
-    const exchNodes     = enrichedConnections.nodes.filter(n => n.label && n.label !== "Target" && !commingling.has(n.address));
+    const hubNodes     = enrichedConnections.nodes.filter(n => commingling.has(n.address));
+    const exchNodes    = enrichedConnections.nodes.filter(n => n.label && n.label !== "Target" && !commingling.has(n.address));
     const highRiskNodes = enrichedConnections.nodes.filter(n =>
       !n.label && n.address !== address && (
-        // High API risk score: exclude hubs (they're counted separately)
         ((n.riskScore ?? 0) > 70 && !commingling.has(n.address)) ||
-        // Peel score ≥ 50 — threshold aligns with [PEEL:MOD] display tag (fires at 55)
-        // and captures typical graph peel scores in the 50-75 range.
-        // Hubs are included here since they are the primary peel-chain holders.
         (peelScores.get(n.address) ?? 0) >= 50
       )
     );
 
     const filteredEdges = [...enrichedConnections.edges]
       .filter(e => parseFloat(e.totalValue || "0") >= graphMinAmount)
-      // Stable: highest native value first; from+to addresses as tie-breaker
       .sort((a, b) => parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0") || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
 
     const totalGraphVolume = filteredEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
     const totalGraphUsd    = filteredEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
     const hasUsd = totalGraphUsd > 0;
 
-    // ── Pre-compute hub stats (used in Key Findings + hub section)
     const hubStats = hubNodes.map(n => {
       const inEdges = filteredEdges.filter(e => e.to === n.address);
       const sources = [...new Set(inEdges.map(e => e.from))];
@@ -709,10 +668,8 @@ export default function TraceGraph() {
       const strength = sources.length * (hubUsd > 0 ? hubUsd : hubVol * 10);
       const peel = peelScores.get(n.address) ?? 0;
       return { n, inEdges, sources, hubVol, hubUsd, strength, peel };
-    // Stable: highest commingling strength first; address tie-breaker
     }).sort((a, b) => b.strength - a.strength || a.n.address.localeCompare(b.n.address));
 
-    // ── Pre-compute exchange stats
     const exchStats = exchNodes.map(n => {
       const nodeEdges = filteredEdges.filter(e => e.from === n.address || e.to === n.address);
       const vol  = nodeEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
@@ -725,12 +682,8 @@ export default function TraceGraph() {
       return { n, vol, usd, inVol, outVol, connected, fromHubs, isUS };
     });
 
-    // ── Auto-generate Key Findings — always exactly 5 bullets
-    // Each slot has a primary branch and a guaranteed fallback so the section
-    // is always meaningful regardless of graph composition.
     const findings: string[] = [];
 
-    // ── F1: Hub analysis (always fires)
     if (hubStats.length > 0) {
       const top     = hubStats[0];
       const a       = `${top.n.address.slice(0, 6)}…${top.n.address.slice(-4)}`;
@@ -751,7 +704,6 @@ export default function TraceGraph() {
       );
     }
 
-    // ── F2: Exchange coverage (always fires)
     const usExch = exchStats.filter(e => e.isUS);
     if (usExch.length > 0) {
       const names  = [...new Set(usExch.map(e => e.n.label))].slice(0, 3).join(", ");
@@ -782,8 +734,6 @@ export default function TraceGraph() {
       );
     }
 
-    // ── F3: Layering / peel-chain signals (always fires)
-    // Stable: highest peel score first; address tie-breaker
     const allPeelSorted = [...peelScores.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
     const highPeelList  = allPeelSorted.filter(([, s]) => s >= 55);
     if (allPeelSorted.length > 0) {
@@ -799,89 +749,50 @@ export default function TraceGraph() {
         countNote
       );
     } else {
-      findings.push(
-        `No peel-chain patterns detected — wallets show simple point-to-point` +
-        ` flows without layering signatures`
-      );
+      findings.push(`No peel-chain patterns detected — wallets show simple point-to-point flows without layering signatures`);
     }
 
-    // ── F4: Center flow pattern (always fires)
-    const centerToExch = filteredEdges.filter(
-      e => e.from === address && exchNodes.some(n => n.address === e.to)
-    );
+    const centerToExch  = filteredEdges.filter(e => e.from === address && exchNodes.some(n => n.address === e.to));
     const centerOutEdges = filteredEdges.filter(e => e.from === address);
     if (centerToExch.length > 0) {
-      const names = [...new Set(
-        centerToExch.map(e =>
-          GRAPH_KNOWN_LABELS[e.to] ?? GRAPH_KNOWN_LABELS[(e.to ?? "").toLowerCase()] ?? "Unknown"
-        )
-      )].slice(0, 3).join(", ");
+      const names = [...new Set(centerToExch.map(e => GRAPH_KNOWN_LABELS[e.to] ?? GRAPH_KNOWN_LABELS[(e.to ?? "").toLowerCase()] ?? "Unknown"))].slice(0, 3).join(", ");
       const usd = centerToExch.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
       const vol = centerToExch.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
-      const v   = usd > 0
-        ? `$${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`
-        : `${vol.toFixed(2)} ${chainUp}`;
-      findings.push(
-        `Center sent ${v} directly to ${names}` +
-        ` — ${centerToExch.length} traceable on-chain deposit${centerToExch.length !== 1 ? "s" : ""}`
-      );
+      const v   = usd > 0 ? `$${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD` : `${vol.toFixed(2)} ${chainUp}`;
+      findings.push(`Center sent ${v} directly to ${names} — ${centerToExch.length} traceable on-chain deposit${centerToExch.length !== 1 ? "s" : ""}`);
     } else if (centerOutEdges.length > 0) {
       const outUsd = centerOutEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0);
       const outVol = centerOutEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
-      const v      = outUsd > 0
-        ? `$${outUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`
-        : `${outVol.toFixed(2)} ${chainUp}`;
-      findings.push(
-        `Center sent ${v} across ${centerOutEdges.length} outbound flow${centerOutEdges.length !== 1 ? "s" : ""}` +
-        ` — no direct exchange deposits found at this depth`
-      );
+      const v = outUsd > 0 ? `$${outUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD` : `${outVol.toFixed(2)} ${chainUp}`;
+      findings.push(`Center sent ${v} across ${centerOutEdges.length} outbound flow${centerOutEdges.length !== 1 ? "s" : ""} — no direct exchange deposits found at this depth`);
     } else {
-      findings.push(
-        `Center wallet shows only inbound flows at this depth` +
-        ` — increase hops to trace downstream movement`
-      );
+      findings.push(`Center wallet shows only inbound flows at this depth — increase hops to trace downstream movement`);
     }
 
-    // ── F5: Network structure summary (always fires)
     if (hubStats.length >= 2) {
       const avg     = (hubStats.reduce((s, h) => s + h.sources.length, 0) / hubStats.length).toFixed(1);
       const hubUsdT = hubStats.reduce((s, h) => s + h.hubUsd, 0);
       const hubVolT = hubStats.reduce((s, h) => s + h.hubVol, 0);
-      const volStr  = hubUsdT > 0
-        ? `$${hubUsdT.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD`
-        : `${hubVolT.toFixed(2)} ${chainUp}`;
-      findings.push(
-        `${hubStats.length}-hub layering network — ${volStr} flows through hubs` +
-        ` averaging ${avg} sources each; structure indicates deliberate obfuscation`
-      );
+      const volStr  = hubUsdT > 0 ? `$${hubUsdT.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD` : `${hubVolT.toFixed(2)} ${chainUp}`;
+      findings.push(`${hubStats.length}-hub layering network — ${volStr} flows through hubs averaging ${avg} sources each; structure indicates deliberate obfuscation`);
     } else if (totalGraphVolume > 0) {
-      // Top-3 wallets concentration as a network-health metric
       const topByVol = [...enrichedConnections.nodes]
         .filter(n => n.address !== address)
         .map(n => {
-          const vol = filteredEdges
-            .filter(e => e.from === n.address || e.to === n.address)
-            .reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
+          const vol = filteredEdges.filter(e => e.from === n.address || e.to === n.address).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0);
           return { addr: n.address, vol };
         })
-        // Stable: highest volume first; address tie-breaker
         .sort((a, b) => b.vol - a.vol || a.addr.localeCompare(b.addr))
         .slice(0, 3);
       const top3Pct = totalGraphVolume > 0
         ? ((topByVol.reduce((s, x) => s + x.vol, 0) / (totalGraphVolume || 1)) * 100).toFixed(0)
         : "0";
       findings.push(
-        `Top 3 wallets hold ${top3Pct}% of graph volume` +
-        ` across ${enrichedConnections.nodes.length} nodes` +
-        (highRiskNodes.length > 0
-          ? `; ${highRiskNodes.length} node${highRiskNodes.length !== 1 ? "s" : ""} flagged high-risk`
-          : ` — run deeper hops to expose downstream layering`)
+        `Top 3 wallets hold ${top3Pct}% of graph volume across ${enrichedConnections.nodes.length} nodes` +
+        (highRiskNodes.length > 0 ? `; ${highRiskNodes.length} node${highRiskNodes.length !== 1 ? "s" : ""} flagged high-risk` : ` — run deeper hops to expose downstream layering`)
       );
     } else {
-      findings.push(
-        `${enrichedConnections.nodes.length} wallets mapped across ${parseInt(depth)} hop${parseInt(depth) !== 1 ? "s" : ""}` +
-        ` — extend to 6 hops for full network exposure`
-      );
+      findings.push(`${enrichedConnections.nodes.length} wallets mapped across ${parseInt(depth)} hop${parseInt(depth) !== 1 ? "s" : ""} — extend to 6 hops for full network exposure`);
     }
 
     const lines: string[] = [
@@ -908,7 +819,6 @@ export default function TraceGraph() {
       ``,
     ];
 
-    // ── COMMINGLING HUBS
     if (hubStats.length > 0) {
       lines.push(`─── ⚠ COMMINGLING HUBS (${hubStats.length}) — sorted by strength ${"─".repeat(Math.max(0, 22 - String(hubStats.length).length))}`);
       lines.push(``);
@@ -916,13 +826,8 @@ export default function TraceGraph() {
         const strengthLabel = hubUsd > 0
           ? `${sources.length} sources × $${hubUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} = ${strength.toLocaleString("en-US", { maximumFractionDigits: 0 })}`
           : `${sources.length} sources × ${hubVol.toFixed(2)} ${chainUp}`;
-        const peelTag = peel >= 75 ? `  ⚠ PEEL:${peel}/100 [HIGH]`
-                      : peel >= 55 ? `  ⚠ PEEL:${peel}/100 [MOD]`
-                      : peel  > 0  ? `  PEEL:${peel}/100`
-                      : "";
-        const peelReason = peel >= 55
-          ? computePeelReason(n.address, filteredEdges, GRAPH_KNOWN_LABELS)
-          : "";
+        const peelTag = peel >= 75 ? `  ⚠ PEEL:${peel}/100 [HIGH]` : peel >= 55 ? `  ⚠ PEEL:${peel}/100 [MOD]` : peel > 0 ? `  PEEL:${peel}/100` : "";
+        const peelReason = peel >= 55 ? computePeelReason(n.address, filteredEdges, GRAPH_KNOWN_LABELS) : "";
         lines.push(`  ${n.address}`);
         if (n.label && n.label !== "Target") lines.push(`  Label    : ${n.label}`);
         lines.push(`  STRENGTH : ${strengthLabel}${peelTag}`);
@@ -941,7 +846,6 @@ export default function TraceGraph() {
       }
     }
 
-    // ── EXCHANGE / KNOWN ENTITIES
     if (exchStats.length > 0) {
       lines.push(`─── EXCHANGE / KNOWN ENTITIES (${exchStats.length}) ${"─".repeat(Math.max(0, 33 - String(exchStats.length).length))}`);
       lines.push(``);
@@ -955,9 +859,7 @@ export default function TraceGraph() {
       }
     }
 
-    // ── RECOMMENDED SUBPOENA TARGETS
     const subpoenaTargets = [...exchStats]
-      // Stable: US-regulated → USD volume → connected wallets → address tie-breaker
       .sort((a, b) => {
         if (a.isUS !== b.isUS) return a.isUS ? -1 : 1;
         if (b.usd !== a.usd) return b.usd - a.usd;
@@ -972,50 +874,35 @@ export default function TraceGraph() {
       lines.push(``);
       subpoenaTargets.forEach(({ n, vol, usd, connected, isUS, fromHubs }, i) => {
         const usTag  = isUS ? "  ★ US-REGULATED" : "";
-        // Use accumulated USD ratio (totalValueUsd sums all txs); fall back to
-        // native vol ratio only when no price data is available. Do NOT use
-        // vol/totalGraphVolume — totalValue stores only the first tx, not the sum.
         const pctNum = totalGraphUsd > 0 && usd > 0
           ? Math.round(usd / totalGraphUsd * 100)
           : totalGraphVolume > 0 && vol > 0
           ? Math.round(vol / totalGraphVolume * 100)
           : 0;
-        const volPct = pctNum > 0 ? `${pctNum}% of graph flow` : null;
+        const volPct   = pctNum > 0 ? `${pctNum}% of graph flow` : null;
         const isHighVol = totalGraphUsd > 0 ? usd > totalGraphUsd * 0.15 : vol > totalGraphVolume * 0.15;
-        // Build a single-sentence note: vol%, hub context, and action
         let justify: string;
         if (isUS && fromHubs > 0) {
-          justify = `US-regulated; ${fromHubs} hub${fromHubs !== 1 ? "s" : ""} deposit here` +
-            (volPct ? ` (${volPct})` : "") + ` — highest subpoena priority`;
+          justify = `US-regulated; ${fromHubs} hub${fromHubs !== 1 ? "s" : ""} deposit here` + (volPct ? ` (${volPct})` : "") + ` — highest subpoena priority`;
         } else if (isUS) {
-          justify = `US-regulated — compellable under MLCA/BSA` +
-            (volPct ? `; handles ${volPct}` : "") +
-            (connected > 3 ? `; ${connected} wallets in graph` : "");
+          justify = `US-regulated — compellable under MLCA/BSA` + (volPct ? `; handles ${volPct}` : "") + (connected > 3 ? `; ${connected} wallets in graph` : "");
         } else if (fromHubs > 0) {
-          justify = `${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""} deposit here` +
-            (volPct ? ` — ${volPct}` : "") + `; obtain full deposit records`;
+          justify = `${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""} deposit here` + (volPct ? ` — ${volPct}` : "") + `; obtain full deposit records`;
         } else if (isHighVol) {
-          justify = `High-volume endpoint — ${volPct ?? "major flow"}` +
-            (connected > 3 ? `; ${connected} wallets connected` : "") +
-            `; request deposit/withdrawal history`;
+          justify = `High-volume endpoint — ${volPct ?? "major flow"}` + (connected > 3 ? `; ${connected} wallets connected` : "") + `; request deposit/withdrawal history`;
         } else {
-          justify = `${connected} wallet${connected !== 1 ? "s" : ""} connect here` +
-            (volPct ? ` (${volPct})` : "") + `; request KYC records`;
+          justify = `${connected} wallet${connected !== 1 ? "s" : ""} connect here` + (volPct ? ` (${volPct})` : "") + `; request KYC records`;
         }
-        const volStr = usd > 0
-          ? `${vol.toFixed(4)} ${chainUp}  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD)`
-          : `${vol.toFixed(4)} ${chainUp}`;
+        const volStr = usd > 0 ? `${vol.toFixed(4)} ${chainUp}  ($${usd.toLocaleString("en-US", { maximumFractionDigits: 0 })} USD)` : `${vol.toFixed(4)} ${chainUp}`;
         lines.push(`  #${i + 1}  ${(n.label ?? "").toUpperCase()}${usTag}`);
         lines.push(`       ${n.address}`);
         lines.push(`       Volume    : ${volStr}`);
-        lines.push(`       Connected : ${connected} wallet${connected !== 1 ? "s" : ""} in graph` +
-          (fromHubs > 0 ? `, incl. ${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""}` : ""));
+        lines.push(`       Connected : ${connected} wallet${connected !== 1 ? "s" : ""} in graph` + (fromHubs > 0 ? `, incl. ${fromHubs} commingling hub${fromHubs !== 1 ? "s" : ""}` : ""));
         lines.push(`       Note      : ${justify}`);
         lines.push(``);
       });
     }
 
-    // ── ALL NODES
     lines.push(`─── ALL NODES ${"─".repeat(50)}`);
     lines.push(``);
     for (const n of enrichedConnections.nodes) {
@@ -1030,7 +917,6 @@ export default function TraceGraph() {
     }
     lines.push(``);
 
-    // ── TOP FLOWS
     if (filteredEdges.length > 0) {
       lines.push(`─── TOP FLOWS BY VOLUME (≥ ${graphMinAmount} ${chainUp}) ${"─".repeat(20)}`);
       lines.push(``);
@@ -1069,47 +955,14 @@ export default function TraceGraph() {
   <title>${title}</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: 'Courier New', Courier, monospace;
-      font-size: 10.5pt;
-      line-height: 1.6;
-      background: #fff;
-      color: #111;
-      padding: 2.2cm 2cm 2cm 2cm;
-    }
-    .header {
-      display: flex;
-      justify-content: space-between;
-      align-items: flex-start;
-      margin-bottom: 20px;
-      padding-bottom: 12px;
-      border-bottom: 2px solid #111;
-    }
+    body { font-family: 'Courier New', Courier, monospace; font-size: 10.5pt; line-height: 1.6; background: #fff; color: #111; padding: 2.2cm 2cm 2cm 2cm; }
+    .header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 12px; border-bottom: 2px solid #111; }
     .header-title { font-size: 14pt; font-weight: bold; font-family: Arial, sans-serif; }
     .header-sub { font-size: 9pt; color: #555; margin-top: 2px; font-family: Arial, sans-serif; }
     .header-meta { font-size: 9pt; color: #555; text-align: right; font-family: Arial, sans-serif; }
-    pre {
-      white-space: pre-wrap;
-      overflow-wrap: break-word;
-      word-break: break-word;
-      font-size: 10pt;
-      line-height: 1.55;
-      max-width: 100%;
-    }
-    .footer {
-      margin-top: 24px;
-      padding-top: 10px;
-      border-top: 1px solid #ccc;
-      font-size: 8.5pt;
-      color: #777;
-      font-family: Arial, sans-serif;
-      display: flex;
-      justify-content: space-between;
-    }
-    @media print {
-      body { padding: 1.5cm 1.5cm 1.5cm 1.5cm; }
-      @page { margin: 0; size: A4; }
-    }
+    pre { white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; font-size: 10pt; line-height: 1.55; max-width: 100%; }
+    .footer { margin-top: 24px; padding-top: 10px; border-top: 1px solid #ccc; font-size: 8.5pt; color: #777; font-family: Arial, sans-serif; display: flex; justify-content: space-between; }
+    @media print { body { padding: 1.5cm 1.5cm 1.5cm 1.5cm; } @page { margin: 0; size: A4; } }
   </style>
 </head>
 <body>
@@ -1139,10 +992,8 @@ export default function TraceGraph() {
     const commingling = commRef.current;
     const filteredEdges = [...enrichedConnections.edges]
       .filter(e => parseFloat(e.totalValue || "0") >= graphMinAmount)
-      // Stable: highest native value first; from+to addresses as tie-breaker
       .sort((a, b) => parseFloat(b.totalValue || "0") - parseFloat(a.totalValue || "0") || a.from.localeCompare(b.from) || a.to.localeCompare(b.to));
     const exchNodes = enrichedConnections.nodes.filter(n => n.label && n.label !== "Target" && !commingling.has(n.address));
-
     const data = {
       meta: {
         generated: new Date().toISOString(),
@@ -1170,8 +1021,7 @@ export default function TraceGraph() {
           const inEdges = filteredEdges.filter(e => e.to === n.address);
           const sources = [...new Set(inEdges.map(e => e.from))];
           return {
-            address: n.address,
-            label: n.label,
+            address: n.address, label: n.label,
             inboundSources: sources,
             totalInboundVolume: inEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0),
             totalInboundVolumeUsd: inEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0),
@@ -1186,8 +1036,7 @@ export default function TraceGraph() {
       exchangeNodes: exchNodes.map(n => {
         const nodeEdges = filteredEdges.filter(e => e.from === n.address || e.to === n.address);
         return {
-          address: n.address,
-          label: n.label,
+          address: n.address, label: n.label,
           totalVolume: nodeEdges.reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0),
           totalVolumeUsd: nodeEdges.reduce((s, e) => s + (e.totalValueUsd ?? 0), 0),
           receivedVolume: filteredEdges.filter(e => e.to === n.address).reduce((s, e) => s + parseFloat(e.totalValue || "0"), 0),
@@ -1216,7 +1065,6 @@ export default function TraceGraph() {
         transactionCount: e.transactionCount,
       })),
     };
-
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
@@ -1231,20 +1079,20 @@ export default function TraceGraph() {
   return (
     <div className="flex flex-col h-full bg-background relative overflow-hidden">
 
-      {/* ── Top-left control card ── */}
-      <div className="absolute top-4 left-4 right-4 flex justify-between items-start z-10 pointer-events-none">
-        <Card className="bg-card/80 backdrop-blur pointer-events-auto border-primary/20 shadow-lg w-80">
+      {/* ── Control card (top-left) ── */}
+      <div className="absolute top-4 left-4 z-10 pointer-events-auto">
+        <Card className="bg-[#0d1117]/92 backdrop-blur border-primary/20 shadow-xl w-72">
           <div className="p-4 space-y-4">
             <div>
-              <h3 className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-1">Center Node</h3>
-              <div className="font-mono text-primary truncate">
+              <h3 className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-1">Center Node</h3>
+              <div className="font-mono text-primary text-[11px] truncate">
                 <AddressDisplay address={address} truncate={true} />
               </div>
             </div>
             <div>
-              <h3 className="text-xs font-mono text-muted-foreground uppercase tracking-wider mb-2">Network Depth</h3>
+              <h3 className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider mb-2">Network Depth</h3>
               <Select value={depth} onValueChange={(v: DepthStr) => setDepth(v)}>
-                <SelectTrigger className="font-mono h-8"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="font-mono h-8 text-xs"><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="1">1 Hop (Quick)</SelectItem>
                   <SelectItem value="2">2 Hops (Standard)</SelectItem>
@@ -1255,24 +1103,22 @@ export default function TraceGraph() {
                 </SelectContent>
               </Select>
               {parseInt(depth) >= 3 && (
-                <p className="text-[10px] font-mono text-yellow-500/70 mt-1">
-                  Deeper graphs may take a few seconds to load.
-                </p>
+                <p className="text-[10px] font-mono text-yellow-500/70 mt-1">Deeper graphs may take a few seconds.</p>
               )}
             </div>
             {enrichedConnections && (
               <div className="pt-2 border-t border-border/50 grid grid-cols-3 gap-2 text-xs font-mono">
                 <div>
-                  <span className="text-muted-foreground block mb-0.5">NODES</span>
-                  <span className="text-lg font-bold">{enrichedConnections.nodes.length}</span>
+                  <span className="text-muted-foreground block mb-0.5 text-[9px]">NODES</span>
+                  <span className="text-base font-bold">{enrichedConnections.nodes.length}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground block mb-0.5">EDGES</span>
-                  <span className="text-lg font-bold">{enrichedConnections.edges.length}</span>
+                  <span className="text-muted-foreground block mb-0.5 text-[9px]">EDGES</span>
+                  <span className="text-base font-bold">{enrichedConnections.edges.length}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground block mb-0.5">HUBS</span>
-                  <span className="text-lg font-bold text-yellow-400">{commRef.current.size}</span>
+                  <span className="text-muted-foreground block mb-0.5 text-[9px]">HUBS</span>
+                  <span className="text-base font-bold text-yellow-400">{commingling.size}</span>
                 </div>
               </div>
             )}
@@ -1298,27 +1144,19 @@ export default function TraceGraph() {
                 </button>
               </div>
             )}
-            <p className="text-[10px] font-mono text-muted-foreground/50 pt-0 border-t border-border/30">
-              Click any node for details · hover for edges
+            <p className="text-[9px] font-mono text-muted-foreground/40 pt-0 border-t border-border/20">
+              Click node for details · drag to rearrange · scroll to zoom
             </p>
           </div>
         </Card>
-
-        <div className="flex gap-2 pointer-events-auto">
-          <Button variant="outline" size="icon" className="bg-card/80 backdrop-blur"><ZoomIn className="w-4 h-4" /></Button>
-          <Button variant="outline" size="icon" className="bg-card/80 backdrop-blur"><ZoomOut className="w-4 h-4" /></Button>
-          <Button variant="outline" size="icon" className="bg-card/80 backdrop-blur"><Maximize className="w-4 h-4" /></Button>
-        </div>
       </div>
 
-      {/* ── Canvas ── */}
+      {/* ── React Flow graph ── */}
       {isLoading && (
         <div className="absolute inset-0 flex items-center justify-center z-20 pointer-events-none">
           <div className="flex flex-col items-center gap-3">
             <Network className="w-8 h-8 text-primary animate-pulse" />
-            <span className="text-sm font-mono text-muted-foreground">
-              Building {DEPTH_LABELS[depth]} graph…
-            </span>
+            <span className="text-sm font-mono text-muted-foreground">Building {DEPTH_LABELS[depth]} graph…</span>
           </div>
         </div>
       )}
@@ -1330,49 +1168,94 @@ export default function TraceGraph() {
           </div>
         </div>
       )}
-      <canvas ref={canvasRef} className="w-full h-full" style={{ cursor: "crosshair" }} />
+
+      <div className="w-full h-full" style={{ background: "#020812" }}>
+        <ReactFlow
+          nodes={rfNodes}
+          edges={rfEdges}
+          fitView
+          fitViewOptions={{ padding: 0.08, maxZoom: 1.4 }}
+          onNodeClick={(_, node) => setSelectedAddr(prev => prev === node.id ? null : node.id)}
+          onPaneClick={() => setSelectedAddr(null)}
+          nodesDraggable={true}
+          nodesConnectable={false}
+          elementsSelectable={true}
+          panOnScroll={false}
+          zoomOnScroll={true}
+          minZoom={0.08}
+          maxZoom={3}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            color="#1e293b"
+            gap={28}
+            size={1.2}
+            style={{ opacity: 0.4 }}
+          />
+          <Controls
+            showInteractive={false}
+            style={{ bottom: 90, left: 16, background: "rgba(13,17,23,0.9)", border: "1px solid rgba(255,255,255,0.08)", borderRadius: 8 }}
+          />
+        </ReactFlow>
+      </div>
+
+      {/* ── Legend ── */}
+      <Card className="absolute bottom-4 right-4 bg-[#0d1117]/90 backdrop-blur pointer-events-none border-border/30 z-10 p-3">
+        <h4 className="text-[8px] font-mono uppercase text-muted-foreground mb-2 tracking-widest">Legend</h4>
+        <div className="space-y-1.5 text-[9px] font-mono">
+          {([
+            ["#1e3a5f","#3b82f6","Target Wallet"],
+            ["#3b0a0a","#ef4444","Exchange / Known Entity"],
+            ["#3b2a00","#eab308","Commingling Hub"],
+            ["#3b1a00","#f97316","High Risk"],
+            ["#1e1b4b","#a855f7","Smart Contract"],
+            ["#0f172a","#334155","Standard Wallet"],
+          ] as [string,string,string][]).map(([fill,ring,label]) => (
+            <div key={label} className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full inline-block shrink-0" style={{background:fill,border:`1.5px solid ${ring}`}} />
+              {label}
+            </div>
+          ))}
+          <div className="mt-2 pt-2 border-t border-border/20 space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-yellow-400/60">～～</span> Animated = HUB flow
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-orange-400/70">⚠</span> PEEL ≥ 55 = layering signal
+            </div>
+          </div>
+        </div>
+      </Card>
 
       {/* ── Node info panel ── */}
       {selectedNode && (
-        <div className="absolute bottom-24 right-4 z-20 pointer-events-auto w-[22rem] max-w-[calc(100vw-2rem)]">
+        <div className="absolute bottom-4 left-4 z-20 pointer-events-auto w-[22rem] max-w-[calc(100vw-2rem)]" style={{ bottom: selectedAddr ? "1rem" : undefined }}>
           <Card className={`bg-[#0d1117]/96 backdrop-blur-sm shadow-2xl border ${
-            isCommingling            ? "border-yellow-500/60" :
+            isCommingling                                     ? "border-yellow-500/60" :
             selectedNode.label && selectedNode.label !== "Target" ? "border-red-500/50"    :
-            selectedAddr === address ? "border-primary/50"    : "border-border/50"
+            selectedAddr === address                          ? "border-primary/50"    : "border-border/50"
           }`}>
             <div className="p-4 space-y-3">
-              {/* Node header */}
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0 space-y-1">
                   {isCommingling && (
                     <div className="space-y-0.5">
-                      <div className="text-[10px] font-mono font-bold text-yellow-400 flex items-center gap-1">
-                        ⚠ COMMINGLING HUB
-                      </div>
+                      <div className="text-[10px] font-mono font-bold text-yellow-400 flex items-center gap-1">⚠ COMMINGLING HUB</div>
                       <div className="text-[9px] font-mono text-yellow-500/80">
                         ⚡ {hubSources} source{hubSources !== 1 ? "s" : ""}
-                        {hubInflowUsd > 0
-                          ? ` · $${hubInflowUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} inflow`
-                          : hubInflowVol > 0
-                          ? ` · ${hubInflowVol.toFixed(3)} ${chainUp} inflow`
-                          : ""}
-                        {hubSources > 0 && hubInflowUsd > 0
-                          ? ` · strength ${(hubSources * hubInflowUsd).toLocaleString("en-US", { maximumFractionDigits: 0 })}`
-                          : ""}
+                        {hubInflowUsd > 0 ? ` · $${hubInflowUsd.toLocaleString("en-US", { maximumFractionDigits: 0 })} inflow` : hubInflowVol > 0 ? ` · ${hubInflowVol.toFixed(3)} ${chainUp} inflow` : ""}
+                        {hubSources > 0 && hubInflowUsd > 0 ? ` · strength ${(hubSources * hubInflowUsd).toLocaleString("en-US", { maximumFractionDigits: 0 })}` : ""}
                       </div>
                     </div>
                   )}
                   {selectedNode.label && selectedNode.label !== "Target" && (
-                    <div className="text-xs font-mono font-bold text-red-400 uppercase tracking-wide">
-                      {selectedNode.label}
-                    </div>
+                    <div className="text-xs font-mono font-bold text-red-400 uppercase tracking-wide">{selectedNode.label}</div>
                   )}
                   {selectedAddr === address && (
                     <div className="text-[10px] font-mono font-bold text-primary">ROOT NODE</div>
                   )}
-                  <div className="font-mono text-[10px] text-muted-foreground break-all leading-relaxed">
-                    {selectedNode.address}
-                  </div>
+                  <div className="font-mono text-[10px] text-muted-foreground break-all leading-relaxed">{selectedNode.address}</div>
                 </div>
                 <button
                   onClick={() => setSelectedAddr(null)}
@@ -1382,7 +1265,6 @@ export default function TraceGraph() {
                 </button>
               </div>
 
-              {/* Stats grid */}
               <div className="grid grid-cols-3 gap-2 pt-2 border-t border-border/30">
                 <div className="text-center">
                   <div className="text-[9px] font-mono text-muted-foreground mb-0.5">TOTAL TXS</div>
@@ -1403,7 +1285,6 @@ export default function TraceGraph() {
                 </div>
               </div>
 
-              {/* Connection to center stats */}
               {txsWithCenter > 0 && selectedAddr !== address && (
                 <div className="pt-2 border-t border-border/20 space-y-1">
                   <div className="text-[9px] font-mono text-muted-foreground uppercase tracking-wider">With Center Wallet</div>
@@ -1415,9 +1296,7 @@ export default function TraceGraph() {
                     <div className="bg-border/10 rounded px-2 py-1 text-center">
                       <div className="text-[9px] font-mono text-muted-foreground">VOLUME</div>
                       <div className="text-xs font-mono font-bold text-primary">
-                        {volWithCenter >= 1000
-                          ? `${(volWithCenter / 1000).toFixed(1)}K`
-                          : volWithCenter.toFixed(3)}{" "}{chainUp}
+                        {volWithCenter >= 1000 ? `${(volWithCenter / 1000).toFixed(1)}K` : volWithCenter.toFixed(3)} {chainUp}
                       </div>
                     </div>
                   </div>
@@ -1429,7 +1308,6 @@ export default function TraceGraph() {
                 </div>
               )}
 
-              {/* Balance */}
               {selectedNode.balance && selectedNode.balance !== "0" && (
                 <div className="pt-1 border-t border-border/20 text-xs font-mono text-center">
                   <span className="text-muted-foreground">BALANCE  </span>
@@ -1437,14 +1315,10 @@ export default function TraceGraph() {
                 </div>
               )}
 
-              {/* Contract badge */}
               {selectedNode.isContract && (
-                <div className="text-[10px] font-mono text-violet-400 bg-violet-950/30 border border-violet-500/20 rounded px-2 py-1 text-center">
-                  SMART CONTRACT
-                </div>
+                <div className="text-[10px] font-mono text-violet-400 bg-violet-950/30 border border-violet-500/20 rounded px-2 py-1 text-center">SMART CONTRACT</div>
               )}
 
-              {/* Action buttons */}
               <div className="flex flex-col gap-1.5 pt-1 border-t border-border/20">
                 <div className="flex gap-2">
                   <a
@@ -1487,26 +1361,6 @@ export default function TraceGraph() {
           </Card>
         </div>
       )}
-
-      {/* ── Legend ── */}
-      <Card className="absolute bottom-4 left-4 bg-card/80 backdrop-blur pointer-events-none border-border/40 z-10 p-3">
-        <h4 className="text-[9px] font-mono uppercase text-muted-foreground mb-2 tracking-widest">Legend</h4>
-        <div className="space-y-1.5 text-[10px] font-mono">
-          {([
-            ["#3b82f6","#1d4ed8","Target Wallet"],
-            ["#ef4444","#b91c1c","Exchange / Known Entity"],
-            ["#eab308","#ca8a04","Commingling Hub"],
-            ["#f97316","#ea580c","High Risk"],
-            ["#a855f7","#7c3aed","Smart Contract"],
-            ["#334155","#1e293b","Standard Wallet"],
-          ] as [string,string,string][]).map(([fill,ring,label]) => (
-            <div key={label} className="flex items-center gap-2">
-              <span className="w-3 h-3 rounded-full inline-block shrink-0" style={{background:fill,border:`1.5px solid ${ring}`}} />
-              {label}
-            </div>
-          ))}
-        </div>
-      </Card>
 
       {/* ── Node Report Modal ── */}
       {showNodeReport && (
@@ -1577,7 +1431,7 @@ export default function TraceGraph() {
               <span>·</span>
               <span>{enrichedConnections?.edges.filter(e => parseFloat(e.totalValue || "0") >= graphMinAmount).length ?? 0} significant flows</span>
               <span>·</span>
-              <span>{commRef.current.size} commingling hub{commRef.current.size !== 1 ? "s" : ""}</span>
+              <span>{commingling.size} commingling hub{commingling.size !== 1 ? "s" : ""}</span>
             </div>
             <pre className="flex-1 overflow-auto p-5 text-[11px] font-mono text-foreground/90 leading-relaxed whitespace-pre">{graphReportText}</pre>
           </div>

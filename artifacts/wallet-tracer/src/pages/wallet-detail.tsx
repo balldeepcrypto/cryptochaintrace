@@ -20,6 +20,7 @@ import {
   Landmark, Star, Route, Package,
 } from "lucide-react";
 import { Link } from "wouter";
+import { ConnectionFinderGraph } from "@/components/connection-finder-graph";
 
 // ─── Known entity labels ──────────────────────────────────────────────────────
 // "dag-team" = DAG official entities (DOR Metagraph, DTM, Team Foundation, Treasury,
@@ -3713,97 +3714,112 @@ export default function WalletDetail() {
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = tieResult.chain.toUpperCase();
     const rule = "─".repeat(66);
-    const sep = (label = "") =>
-      label ? `\n${rule}\n  ${label}\n${rule}` : rule;
     const fmtDate = (ts: string) => ts ? ts.replace("T", " ").slice(0, 16) + " UTC" : "—";
     const fmtAmt = (v: string, dir: "in" | "out") => {
       const n = parseFloat(v);
       const sign = dir === "in" ? "+" : "−";
       if (!n || isNaN(n)) return `${sign}0.00`;
       const abs = Math.abs(n);
-      const decimals = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
-      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals })}`;
+      const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+      return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
     };
-    const emitTx = (tx: Tx, pad = "") => {
-      const dir   = tx.direction === "in" ? "IN " : "OUT";
+
+    // Single highest-value TX from a hop path (skip hop 0 = root, which has no tx)
+    const bestTx = (path: TieFinderHop[]): Tx | null => {
+      const txs = path.slice(1).map(h => h.tx).filter(Boolean) as Tx[];
+      if (!txs.length) return null;
+      return txs.reduce((best, t) => {
+        const bv = best.valueUsd > 0 ? best.valueUsd : Math.abs(parseFloat(best.value) || 0);
+        const tv = t.valueUsd > 0 ? t.valueUsd : Math.abs(parseFloat(t.value) || 0);
+        return tv > bv ? t : best;
+      }, txs[0]);
+    };
+
+    const emitTxLine = (tx: Tx | null, indent: string): string[] => {
+      if (!tx) return [`${indent}  (No transaction data available)`];
       const asset = (tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp;
-      const usd   = tx.valueUsd > 0 ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD]` : "";
-      const out: string[] = [];
-      out.push(`${pad}  Direction : [${dir}]`);
-      out.push(`${pad}  Amount    : ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}`);
-      out.push(`${pad}  From      : ${tx.from || "—"}`);
-      out.push(`${pad}  To        : ${tx.to || "—"}`);
-      out.push(`${pad}  TX Hash   : ${tx.hash || "(none)"}`);
-      out.push(`${pad}  Date      : ${fmtDate(tx.timestamp || "")}`);
+      const usd = tx.valueUsd > 0
+        ? `  [$${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD]`
+        : "";
+      const out: string[] = [
+        `${indent}  Amount  : ${fmtAmt(tx.value, tx.direction as "in" | "out")} ${asset}${usd}`,
+        `${indent}  TX Hash : ${tx.hash || "(none)"}`,
+        `${indent}  Date    : ${fmtDate(tx.timestamp || "")}`,
+      ];
       if ((tx as Tx & { destinationTag?: number | null }).destinationTag != null)
-        out.push(`${pad}  ↳ Dest Tag : ${(tx as Tx & { destinationTag?: number | null }).destinationTag}`);
-      if (tx.memo) out.push(`${pad}  ↳ Memo     : ${tx.memo}`);
+        out.push(`${indent}  Tag     : ${(tx as Tx & { destinationTag?: number | null }).destinationTag}`);
+      if (tx.memo) out.push(`${indent}  Memo    : ${tx.memo}`);
       return out;
     };
 
     const lines: string[] = [];
-    lines.push(`╔══════════════════════════════════════════════════════════════╗`);
-    lines.push(`║      CONNECTION FINDER REPORT — CryptoChainTrace            ║`);
-    lines.push(`╚══════════════════════════════════════════════════════════════╝`);
+
+    // ── Header ──────────────────────────────────────────────────────────────
+    lines.push(`╔══════════════════════════════════════════════════════════════════╗`);
+    lines.push(`║        CONNECTION FINDER REPORT — CryptoChainTrace              ║`);
+    lines.push(`╚══════════════════════════════════════════════════════════════════╝`);
     lines.push(`CRYPTOCHAINTRACE — BLOCKCHAIN INTELLIGENCE`);
     lines.push(`AGENCY / LAW ENFORCEMENT EDITION`);
-    lines.push(`${"─".repeat(64)}`);
+    lines.push(rule);
     lines.push(`Generated  : ${now}`);
     lines.push(`Chain      : ${chainUp}`);
     lines.push(`Wallet A   : ${tieResult.walletA}`);
     lines.push(`Wallet B   : ${tieResult.walletB}`);
-    lines.push(`Max Hops   : ${tieResult.maxHops}`);
     lines.push(`Scanned    : ${tieResult.nodesScannedA} nodes from A  |  ${tieResult.nodesScannedB} nodes from B`);
-    lines.push("");
-    lines.push(`NOTE: TX details are pulled from the full combined transaction history of ALL tracked wallets + all discovered intermediate addresses along each path.`);
-    lines.push(`      All wallets are treated equally — no single wallet is the "primary".`);
-    lines.push(`      The report now shows complete hop-by-hop records wherever the transaction data exists in any loaded history.`);
-    lines.push("");
+    lines.push(`Note       : TX shown is the single highest-value transaction on each path.`);
+    lines.push(``);
 
     if (tieResult.commonNodes.length === 0) {
-      lines.push(sep("RESULT — NO CONNECTION FOUND"));
-      lines.push("");
+      lines.push(`\n${rule}\n  RESULT — NO CONNECTION FOUND WITHIN ${tieResult.maxHops} HOPS\n${rule}`);
+      lines.push(``);
       lines.push(`  NO VERIFIABLE PRIVATE-WALLET CONNECTION found within ${tieResult.maxHops} hops.`);
       lines.push(`  Wallet A and Wallet B share no common private-wallet counterparty`);
       lines.push(`  within the search depth. Exchange/bridge/protocol addresses are`);
       lines.push(`  excluded. Consider increasing Max Hops or loading more TX history.`);
-      lines.push("");
     } else {
-      lines.push(sep("RESULT — VERIFIED CONNECTION CONFIRMED"));
-      lines.push("");
-      lines.push(`  ✔ CONNECTION CONFIRMED — ${tieResult.commonNodes.length} common node(s) found.`);
-      lines.push(`  Both wallets transact through the same intermediate address(es).`);
-      lines.push("");
+      lines.push(`\n${rule}\n  RESULT — CONNECTION CONFIRMED — ${tieResult.commonNodes.length} COMMON NODE(S) FOUND\n${rule}`);
+      lines.push(``);
+      lines.push(`  ✔ Both wallets transact through the same intermediate address(es).`);
+      lines.push(``);
 
-      tieResult.commonNodes.forEach((node, ni) => {
+      // Classify: direct = 1 hop from at least one wallet; hops = 2+ from both
+      const direct  = tieResult.commonNodes.filter(n => n.pathFromA.length === 2 || n.pathFromB.length === 2);
+      const viaHops = tieResult.commonNodes.filter(n => n.pathFromA.length > 2 && n.pathFromB.length > 2);
+
+      const renderNodeBlock = (node: typeof tieResult.commonNodes[0], idx: number, total: number) => {
         const kn = KNOWN_LABELS[node.address];
-        lines.push(sep(`COMMON NODE ${ni + 1} of ${tieResult!.commonNodes.length}`));
-        lines.push("");
-        lines.push(`  Address  : ${node.address}${kn ? `  [${kn.label.toUpperCase()}]` : "  [PRIVATE WALLET]"}`);
-        lines.push(`  Wallet A reaches this node in ${node.pathFromA.length - 1} hop(s)`);
-        lines.push(`  Wallet B reaches this node in ${node.pathFromB.length - 1} hop(s)`);
-        lines.push("");
+        const label = kn ? `[${kn.label.toUpperCase()}]` : "[PRIVATE WALLET]";
+        lines.push(`  [${idx + 1} of ${total}]  ${node.address}  ${label}`);
+        lines.push(``);
 
-        const renderPath = (path: TieFinderHop[], label: string) => {
-          lines.push(`  ── ${label} → Common Node:`);
-          lines.push("");
-          path.forEach((hop, idx) => {
-            const hKn  = KNOWN_LABELS[hop.address];
-            const hLbl = hKn ? `  [${hKn.label}]` : "";
-            if (idx === 0) {
-              lines.push(`  ${hop.address}${hLbl}  ← ${label}`);
-            } else {
-              lines.push(`  ↓  Hop ${idx}`);
-              lines.push(`  ${hop.address}${hLbl}${idx === path.length - 1 ? "  ← COMMON NODE" : ""}`);
-              if (hop.tx) emitTx(hop.tx, "  ").forEach(l => lines.push(l));
-            }
-          });
-          lines.push("");
-        };
+        for (const [wallet, path] of [["WALLET A", node.pathFromA], ["WALLET B", node.pathFromB]] as const) {
+          const hops = path.length - 1;
+          const tx   = bestTx(path);
+          const inter = path.slice(1, -1).map(h => h.address);
+          const hopLabel = hops === 1 ? "DIRECT (1 hop)" : `${hops} hops`;
+          lines.push(`      ┌─ VIA ${wallet} — ${hopLabel} ${"─".repeat(Math.max(0, 38 - hopLabel.length))}`);
+          if (inter.length > 0) lines.push(`      │  Via        : ${inter.join(" → ")}`);
+          emitTxLine(tx, "      │").forEach(l => lines.push(l));
+          lines.push(`      └${"─".repeat(54)}`);
+          lines.push(``);
+        }
+      };
 
-        renderPath(node.pathFromA, "WALLET A");
-        renderPath(node.pathFromB, "WALLET B");
-      });
+      if (direct.length > 0) {
+        lines.push(`${rule}`);
+        lines.push(`  SECTION 1 — DIRECT CONNECTIONS  (1 hop from at least one wallet)`);
+        lines.push(rule);
+        lines.push(``);
+        direct.forEach((node, i) => renderNodeBlock(node, i, direct.length));
+      }
+
+      if (viaHops.length > 0) {
+        lines.push(`${rule}`);
+        lines.push(`  SECTION 2 — THROUGH INTERMEDIARIES  (2+ hops from both wallets)`);
+        lines.push(rule);
+        lines.push(``);
+        viaHops.forEach((node, i) => renderNodeBlock(node, i, viaHops.length));
+      }
     }
 
     return auditAndSign(lines, {
@@ -7991,179 +8007,228 @@ export default function WalletDetail() {
           )}
 
           {/* ── Results ── */}
-          {tieResult && (
-            <div className="p-5 space-y-5">
+          {tieResult && (() => {
+            const chainUp = tieResult.chain.toUpperCase();
 
-              {/* Summary bar */}
-              <div className={`flex items-start gap-3 px-4 py-3 rounded-lg border ${
-                tieResult.commonNodes.length > 0
-                  ? "border-sky-500/30 bg-sky-950/20"
-                  : "border-yellow-500/20 bg-yellow-950/10"
-              }`}>
-                <div className={`mt-0.5 shrink-0 ${tieResult.commonNodes.length > 0 ? "text-sky-400" : "text-yellow-400"}`}>
-                  {tieResult.commonNodes.length > 0
-                    ? <Network className="w-4 h-4" />
-                    : <AlertTriangle className="w-4 h-4" />
-                  }
-                </div>
-                <div className="flex-1 min-w-0">
-                  {tieResult.commonNodes.length > 0 ? (
-                    <>
-                      <p className="text-xs font-mono font-bold text-sky-300 mb-0.5">
-                        CONNECTION CONFIRMED — {tieResult.commonNodes.length} common node{tieResult.commonNodes.length !== 1 ? "s" : ""} found
-                      </p>
-                      <p className="text-[10px] font-mono text-muted-foreground">
-                        Both wallets transact through the same intermediate address{tieResult.commonNodes.length !== 1 ? "es" : ""}
-                        &nbsp;·&nbsp; {tieResult.nodesScannedA} nodes scanned from A · {tieResult.nodesScannedB} from B · max {tieResult.maxHops} hops
-                      </p>
-                    </>
+            // Pick the single highest-value TX from a path
+            const bestTx = (path: TieFinderHop[]): Tx | null => {
+              const txs = path.slice(1).map(h => h.tx).filter(Boolean) as Tx[];
+              if (!txs.length) return null;
+              return txs.reduce((b, t) => {
+                const bv = b.valueUsd > 0 ? b.valueUsd : Math.abs(parseFloat(b.value) || 0);
+                const tv = t.valueUsd > 0 ? t.valueUsd : Math.abs(parseFloat(t.value) || 0);
+                return tv > bv ? t : b;
+              }, txs[0]);
+            };
+
+            const fmtAmt = (v: string, dir: string) => {
+              const n = parseFloat(v);
+              const sign = dir === "in" ? "+" : "−";
+              if (!n || isNaN(n)) return `${sign}0.00`;
+              const abs = Math.abs(n);
+              const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
+              return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
+            };
+            const fmtDate = (ts: string) => {
+              if (!ts) return "—";
+              const d = new Date(ts);
+              return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })
+                + " " + d.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false }) + " UTC";
+            };
+
+            const directNodes = tieResult.commonNodes.filter(n => n.pathFromA.length === 2 || n.pathFromB.length === 2);
+            const hopNodes    = tieResult.commonNodes.filter(n => n.pathFromA.length > 2 && n.pathFromB.length > 2);
+
+            // Compact TX summary card for one side of the connection
+            const TxCard = ({ path, label, accent }: { path: TieFinderHop[]; label: string; accent: string }) => {
+              const hops = path.length - 1;
+              const tx   = bestTx(path);
+              const inter = path.slice(1, -1).map(h => h.address);
+              const isDirect = hops === 1;
+              return (
+                <div className={`rounded border ${accent === "green" ? "border-green-500/20 bg-green-950/10" : "border-amber-500/20 bg-amber-950/10"} p-3 space-y-2`}>
+                  <div className="flex items-center gap-2">
+                    <span className={`text-[9px] font-mono font-bold uppercase tracking-wider px-1.5 py-0.5 rounded ${
+                      accent === "green" ? "text-green-300 bg-green-950/40 border border-green-500/30" : "text-amber-300 bg-amber-950/40 border border-amber-500/30"
+                    }`}>{label}</span>
+                    <span className={`text-[9px] font-mono ${isDirect ? "text-violet-400 font-bold" : "text-muted-foreground"}`}>
+                      {isDirect ? "⚡ DIRECT (1 hop)" : `${hops} hops`}
+                    </span>
+                  </div>
+                  {inter.length > 0 && (
+                    <div className="text-[9px] font-mono text-muted-foreground/70 leading-relaxed">
+                      <span className="text-muted-foreground/40">Via </span>
+                      {inter.map((a, i) => (
+                        <span key={a + i}>{a.slice(0, 8)}…{a.slice(-4)}{i < inter.length - 1 ? " → " : ""}</span>
+                      ))}
+                    </div>
+                  )}
+                  {tx ? (
+                    <div className="space-y-1 pl-2 border-l border-border/30">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[9px] font-mono px-1 py-0.5 rounded ${
+                          tx.direction === "in"
+                            ? "text-green-300 bg-green-950/40 border border-green-500/20"
+                            : "text-red-300 bg-red-950/40 border border-red-500/20"
+                        }`}>{tx.direction === "in" ? "IN" : "OUT"}</span>
+                        <span className="text-[11px] font-mono font-semibold text-foreground">
+                          {fmtAmt(tx.value, tx.direction)}&nbsp;{(tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp}
+                        </span>
+                        {tx.valueUsd > 0 && (
+                          <span className="text-[9px] font-mono text-emerald-400/80">
+                            ${tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })} USD
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[9px] font-mono text-muted-foreground space-y-0.5">
+                        <div className="flex gap-1.5">
+                          <span className="text-muted-foreground/40 shrink-0">TX</span>
+                          <span className="break-all">{tx.hash || "(none)"}</span>
+                        </div>
+                        <div className="flex gap-1.5">
+                          <span className="text-muted-foreground/40 shrink-0">Date</span>
+                          <span>{fmtDate(tx.timestamp || "")}</span>
+                        </div>
+                        {(tx as Tx & { destinationTag?: number | null }).destinationTag != null && (
+                          <div className="flex gap-1.5">
+                            <span className="text-muted-foreground/40 shrink-0">Tag</span>
+                            <span>{(tx as Tx & { destinationTag?: number | null }).destinationTag}</span>
+                          </div>
+                        )}
+                        {tx.memo && (
+                          <div className="flex gap-1.5">
+                            <span className="text-muted-foreground/40 shrink-0">Memo</span>
+                            <span>{tx.memo}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   ) : (
-                    <>
-                      <p className="text-xs font-mono font-bold text-yellow-300 mb-0.5">
-                        NO VERIFIABLE PRIVATE-WALLET CONNECTION found within {tieResult.maxHops} hops
-                      </p>
-                      <p className="text-[10px] font-mono text-muted-foreground">
-                        {tieResult.nodesScannedA} nodes scanned from A · {tieResult.nodesScannedB} from B.
-                        Try increasing Max Hops or loading more TX history first.
-                      </p>
-                    </>
+                    <div className="text-[9px] font-mono text-muted-foreground/50 italic pl-2">No TX data available</div>
                   )}
                 </div>
+              );
+            };
+
+            // One card per common node
+            const NodeCard = ({ node, label }: { node: typeof tieResult.commonNodes[0]; label: string }) => {
+              const kn = KNOWN_LABELS[node.address];
+              const isDirect = node.pathFromA.length === 2 || node.pathFromB.length === 2;
+              return (
+                <div className={`rounded-lg border overflow-hidden ${isDirect ? "border-violet-500/25 bg-violet-950/5" : "border-sky-500/20 bg-sky-950/5"}`}>
+                  <div className={`px-4 py-3 border-b flex items-start gap-3 ${isDirect ? "border-violet-500/15 bg-violet-950/15" : "border-sky-500/15 bg-sky-950/15"}`}>
+                    <div className={`shrink-0 w-5 h-5 rounded-full flex items-center justify-center mt-0.5 text-[9px] font-mono font-bold ${
+                      isDirect ? "bg-violet-500/20 border border-violet-500/40 text-violet-300" : "bg-sky-500/20 border border-sky-500/40 text-sky-300"
+                    }`}>{label}</div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap mb-0.5">
+                        {isDirect && (
+                          <span className="text-[9px] font-mono font-bold text-violet-400 bg-violet-950/40 border border-violet-500/30 px-1.5 py-0.5 rounded">
+                            ⚡ DIRECT CONNECTION
+                          </span>
+                        )}
+                        {kn && (
+                          <span className="text-[9px] font-mono text-blue-300 bg-blue-950/30 border border-blue-500/20 px-1.5 py-0.5 rounded">
+                            {kn.label}
+                          </span>
+                        )}
+                        <span className="text-[9px] font-mono text-muted-foreground/50">SHARED NODE</span>
+                      </div>
+                      <div className="text-[11px] font-mono text-foreground/90 break-all">{node.address}</div>
+                      <div className="text-[9px] font-mono text-muted-foreground mt-0.5">
+                        A: {node.pathFromA.length - 1} hop{node.pathFromA.length - 1 !== 1 ? "s" : ""}
+                        &nbsp;·&nbsp;B: {node.pathFromB.length - 1} hop{node.pathFromB.length - 1 !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-3 p-3 divide-y lg:divide-y-0 lg:divide-x divide-border/20">
+                    <TxCard path={node.pathFromA} label="WALLET A" accent="green" />
+                    <TxCard path={node.pathFromB} label="WALLET B" accent="amber" />
+                  </div>
+                </div>
+              );
+            };
+
+            return (
+              <div className="p-5 space-y-4">
+
+                {/* Summary banner */}
+                <div className={`flex items-start gap-3 px-4 py-3 rounded-lg border ${
+                  tieResult.commonNodes.length > 0 ? "border-sky-500/30 bg-sky-950/20" : "border-yellow-500/20 bg-yellow-950/10"
+                }`}>
+                  <div className={`mt-0.5 shrink-0 ${tieResult.commonNodes.length > 0 ? "text-sky-400" : "text-yellow-400"}`}>
+                    {tieResult.commonNodes.length > 0 ? <Network className="w-4 h-4" /> : <AlertTriangle className="w-4 h-4" />}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    {tieResult.commonNodes.length > 0 ? (
+                      <>
+                        <p className="text-xs font-mono font-bold text-sky-300 mb-0.5">
+                          CONNECTION CONFIRMED — {tieResult.commonNodes.length} shared node{tieResult.commonNodes.length !== 1 ? "s" : ""} found
+                          {directNodes.length > 0 && <span className="text-violet-400 ml-2">· {directNodes.length} direct</span>}
+                          {hopNodes.length > 0 && <span className="text-sky-400/70 ml-2">· {hopNodes.length} via hops</span>}
+                        </p>
+                        <p className="text-[10px] font-mono text-muted-foreground">
+                          {tieResult.nodesScannedA} nodes from A · {tieResult.nodesScannedB} from B · max {tieResult.maxHops} hops · TX shown = highest-value per path
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="text-xs font-mono font-bold text-yellow-300 mb-0.5">
+                          NO CONNECTION FOUND within {tieResult.maxHops} hops
+                        </p>
+                        <p className="text-[10px] font-mono text-muted-foreground">
+                          {tieResult.nodesScannedA} nodes from A · {tieResult.nodesScannedB} from B.
+                          Try increasing Max Hops or loading more TX history first.
+                        </p>
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* React Flow graph */}
+                {tieResult.commonNodes.length > 0 && (
+                  <ConnectionFinderGraph
+                    walletA={tieResult.walletA}
+                    walletB={tieResult.walletB}
+                    commonNodes={tieResult.commonNodes}
+                    getLabel={(addr) => KNOWN_LABELS[addr]?.label ?? null}
+                  />
+                )}
+
+                {/* Section 1 — Direct connections */}
+                {directNodes.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-px flex-1 bg-violet-500/20" />
+                      <span className="text-[9px] font-mono font-bold text-violet-400 uppercase tracking-widest px-2">
+                        ⚡ Direct Connections — 1 hop from at least one wallet
+                      </span>
+                      <div className="h-px flex-1 bg-violet-500/20" />
+                    </div>
+                    {directNodes.map((node, i) => (
+                      <NodeCard key={node.address + i} node={node} label={String(i + 1)} />
+                    ))}
+                  </div>
+                )}
+
+                {/* Section 2 — Through hops */}
+                {hopNodes.length > 0 && (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <div className="h-px flex-1 bg-sky-500/15" />
+                      <span className="text-[9px] font-mono font-bold text-sky-500/70 uppercase tracking-widest px-2">
+                        Through Intermediaries — 2+ hops from both wallets
+                      </span>
+                      <div className="h-px flex-1 bg-sky-500/15" />
+                    </div>
+                    {hopNodes.map((node, i) => (
+                      <NodeCard key={node.address + i} node={node} label={String(i + 1)} />
+                    ))}
+                  </div>
+                )}
               </div>
-
-              {/* Common node details */}
-              {tieResult.commonNodes.map((node, ni) => {
-                const kn = KNOWN_LABELS[node.address];
-                const chainUp = tieResult!.chain.toUpperCase();
-                const fmtDate = (ts: string) => {
-                  if (!ts) return "—";
-                  const d = new Date(ts);
-                  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
-                    + " " + d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" }) + " UTC";
-                };
-                const fmtAmt = (v: string, dir: string) => {
-                  const n = parseFloat(v);
-                  const sign = dir === "in" ? "+" : "−";
-                  if (!n || isNaN(n)) return `${sign}0.00`;
-                  const abs = Math.abs(n);
-                  const dec = abs >= 1000 ? 2 : abs >= 1 ? 4 : abs >= 0.001 ? 6 : 8;
-                  return `${sign}${n.toLocaleString("en-US", { minimumFractionDigits: dec, maximumFractionDigits: dec })}`;
-                };
-
-                const renderTrail = (path: TieFinderHop[], label: string, color: string) => (
-                  <div className="space-y-0">
-                    <div className={`text-[10px] font-mono font-bold ${color} uppercase tracking-wider mb-2`}>
-                      {label} — {path.length - 1} hop{path.length - 1 !== 1 ? "s" : ""}
-                    </div>
-                    <div className="space-y-0">
-                      {path.map((hop, idx) => {
-                        const hopKn  = KNOWN_LABELS[hop.address];
-                        const isRoot = idx === 0;
-                        const isLast = idx === path.length - 1;
-                        return (
-                          <div key={hop.address + idx} className="relative">
-                            {/* Connector line */}
-                            {idx > 0 && (
-                              <div className="flex items-center gap-2 py-0.5 pl-3">
-                                <div className="w-px h-4 bg-border/40 ml-1.5" />
-                                <span className="text-[9px] font-mono text-muted-foreground/50">HOP {idx}</span>
-                              </div>
-                            )}
-                            {/* Address row */}
-                            <div className={`flex items-start gap-2 px-3 py-2 rounded ${
-                              isRoot ? "bg-muted/10 border border-border/20" :
-                              isLast ? "bg-sky-950/20 border border-sky-500/20" :
-                              "bg-muted/5 border border-border/10"
-                            }`}>
-                              <div className={`mt-0.5 w-1.5 h-1.5 rounded-full shrink-0 ${
-                                isRoot ? "bg-green-400" : isLast ? "bg-sky-400" : "bg-muted-foreground/40"
-                              }`} />
-                              <div className="flex-1 min-w-0">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span className="text-[11px] font-mono text-foreground break-all">{hop.address}</span>
-                                  {isRoot && <span className="text-[9px] font-mono text-green-400/80 bg-green-950/30 border border-green-500/20 px-1.5 py-0.5 rounded">{label}</span>}
-                                  {isLast && !isRoot && <span className="text-[9px] font-mono text-sky-400/80 bg-sky-950/30 border border-sky-500/20 px-1.5 py-0.5 rounded">COMMON NODE</span>}
-                                  {hopKn && <span className="text-[9px] font-mono text-blue-300/80 bg-blue-950/30 border border-blue-500/20 px-1.5 py-0.5 rounded">{hopKn.label}</span>}
-                                </div>
-                                {/* TX details for this hop */}
-                                {hop.tx && !isRoot && (
-                                  <div className="mt-1.5 pl-2 border-l border-border/30 space-y-0.5">
-                                    <div className="flex items-center gap-2 flex-wrap">
-                                      <span className={`text-[9px] font-mono px-1 py-0.5 rounded ${
-                                        hop.tx.direction === "in"
-                                          ? "text-green-300 bg-green-950/30 border border-green-500/20"
-                                          : "text-red-300 bg-red-950/30 border border-red-500/20"
-                                      }`}>
-                                        {hop.tx.direction === "in" ? "IN" : "OUT"}
-                                      </span>
-                                      <span className="text-[10px] font-mono text-foreground/90 font-medium">
-                                        {fmtAmt(hop.tx.value, hop.tx.direction)}&nbsp;
-                                        {(hop.tx as Tx & { tokenSymbol?: string }).tokenSymbol || chainUp}
-                                      </span>
-                                      {hop.tx.valueUsd > 0 && (
-                                        <span className="text-[9px] font-mono text-muted-foreground">
-                                          ${hop.tx.valueUsd.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                                        </span>
-                                      )}
-                                    </div>
-                                    <div className="text-[10px] font-mono text-muted-foreground space-y-0.5">
-                                      <div><span className="text-muted-foreground/50">From </span>{hop.tx.from || "—"}</div>
-                                      <div><span className="text-muted-foreground/50">To   </span>{hop.tx.to || "—"}</div>
-                                      <div><span className="text-muted-foreground/50">TX   </span>{hop.tx.hash || "(none)"}</div>
-                                      <div><span className="text-muted-foreground/50">Date </span>{fmtDate(hop.tx.timestamp || "")}</div>
-                                      {(hop.tx as Tx & { destinationTag?: number | null }).destinationTag != null && (
-                                        <div><span className="text-muted-foreground/50">Tag  </span>{(hop.tx as Tx & { destinationTag?: number | null }).destinationTag}</div>
-                                      )}
-                                      {hop.tx.memo && (
-                                        <div><span className="text-muted-foreground/50">Memo </span>{hop.tx.memo}</div>
-                                      )}
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-
-                return (
-                  <div key={node.address + ni} className="rounded-lg border border-sky-500/20 bg-sky-950/5 overflow-hidden">
-                    {/* Common node header */}
-                    <div className="px-4 py-3 border-b border-sky-500/15 bg-sky-950/15 flex items-start gap-3">
-                      <div className="shrink-0 w-5 h-5 rounded-full bg-sky-500/20 border border-sky-500/40 flex items-center justify-center mt-0.5">
-                        <span className="text-[9px] font-mono font-bold text-sky-300">{ni + 1}</span>
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-[10px] font-mono text-sky-400/70 uppercase tracking-wider mb-0.5">
-                          Common Node {ni + 1} of {tieResult!.commonNodes.length}
-                          {kn ? ` — ${kn.label.toUpperCase()}` : ""}
-                        </div>
-                        <div className="text-[11px] font-mono text-sky-200 break-all">{node.address}</div>
-                        <div className="text-[9px] font-mono text-muted-foreground mt-1">
-                          Wallet A reaches here in {node.pathFromA.length - 1} hop{node.pathFromA.length - 1 !== 1 ? "s" : ""}
-                          &nbsp;·&nbsp;
-                          Wallet B reaches here in {node.pathFromB.length - 1} hop{node.pathFromB.length - 1 !== 1 ? "s" : ""}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Two trail columns */}
-                    <div className="grid grid-cols-1 lg:grid-cols-2 divide-y lg:divide-y-0 lg:divide-x divide-border/20">
-                      <div className="p-4">
-                        {renderTrail(node.pathFromA, "WALLET A", "text-green-400")}
-                      </div>
-                      <div className="p-4">
-                        {renderTrail(node.pathFromB, "WALLET B", "text-amber-400")}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+            );
+          })()}
         </Card>
       )}
 

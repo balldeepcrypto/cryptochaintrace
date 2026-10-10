@@ -159,6 +159,8 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   "1KUUJPkyDhamZXgpsyXqNGc3x1QPXtdhgz": "BitFinex BTC",
   "3JZq4atEAjqAjW7bSNiQVqHdSVJAq5UBXH": "Bittrex BTC",
   "1LdRcdxfbSnmCYYNdeYpUnztiYzVfBEQeC": "Poloniex BTC",
+  "DAG3WnpWbwnnKBLtu8FvBp3VUkmxJgdcs41dTHg5": "KuCoin DAG",
+  "DAG8xxL12vUzgeiCXkH8uC76spbRuVofaAkovyL2": "KuCoin DAG",
 };
 
 interface NodeStyle {

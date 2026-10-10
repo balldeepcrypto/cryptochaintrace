@@ -813,6 +813,8 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG5yqn4JRkW5oAMthhBayBtkZzfAvRQnkH1dCG4: { label: "KuCoin DAG 2",     type: "exchange" },
   DAG2rMPHX4w1cMMjowmewRMjD1in53yRURt6Eijh: { label: "KuCoin DAG 3",     type: "exchange" },
   DAG2Evedeb9cS7d28bxF4wwgeryiEqfDo8diZMZg: { label: "KuCoin DAG 4",     type: "exchange" },
+  DAG3WnpWbwnnKBLtu8FvBp3VUkmxJgdcs41dTHg5: { label: "KuCoin DAG",       type: "exchange" },
+  DAG8xxL12vUzgeiCXkH8uC76spbRuVofaAkovyL2: { label: "KuCoin DAG",       type: "exchange" },
   DAG6LvxLSdWoC9uJZPgXtcmkcWBaGYypF6smaPyH: { label: "BitForex DAG",     type: "exchange" },
   DAG1pLpkyX7aTtFZtbF98kgA9QTZRzrsGaFmf4BT: { label: "Uphold DAG Exchange", type: "exchange" },
   DAG3sFdwPJAEJNkv5bJhFQgzCGRkv9mZXPjjK9FW: { label: "Bitrue DAG",       type: "exchange" },

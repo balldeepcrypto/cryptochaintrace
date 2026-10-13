@@ -800,6 +800,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   // Bridge / Infrastructure (DAG only)
   DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Official Bridge / Base Wallet", type: "official" },
   DAG7R9cHuBgWS7w2tybcJHrTHFxtMdNB6523JAMQ: { label: "Constellation Official Bridge / Base Wallet", type: "official" },
+  DAG471pakWWz3ZAFvX5uhA7uyufSkv7E41Lh77Ge: { label: "Gate Bridge Cold Wallet", type: "bridge" },
   DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz: { label: "DAG Reward / Team Wallet",      type: "genesis"  },
   // Constellation Foundation Wallets
   DAG7R5sZCC87GB2C7oxsLE7EvSkPZyCGtPEqd25n: { label: "Constellation Foundation / Legacy Distribution Wallet", type: "official" },

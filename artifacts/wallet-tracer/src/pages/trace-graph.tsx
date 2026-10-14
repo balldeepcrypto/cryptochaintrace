@@ -164,6 +164,8 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   "DAG7R9cHuBgWS7w2tybcJHrTHFxtMdNB6523JAMQ": "Constellation Official Bridge / Base Wallet",
   "DAG471pakWWz3ZAFvX5uhA7uyufSkv7E41Lh77Ge": "Gate Bridge Cold Wallet",
   "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV": "Lattice Treasury",
+  "DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P": "TestNet Reward Pool",
+  "DAG2hdmjMKARKjeCrwG6StZENRvKU1KkwqxpcJ4K": "TestNet Reward Pool",
 };
 
 interface NodeStyle {

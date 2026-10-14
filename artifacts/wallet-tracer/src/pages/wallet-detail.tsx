@@ -786,6 +786,9 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   // DTM Reward Pool
   DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "DTM Reward Pool",           type: "official" },
   DAG0Njmo6JZ3FhkLsipJSppepUHPuTXcSifARfvK: { label: "DTM Reward Pool",           type: "official" },
+  // TestNet Reward Pool
+  DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P: { label: "TestNet Reward Pool",       type: "official" },
+  DAG2hdmjMKARKjeCrwG6StZENRvKU1KkwqxpcJ4K: { label: "TestNet Reward Pool",       type: "official" },
   // PylonFi DOR Node
   DAG7k3M5aAWdV3S3E5nZXvvQyGprkYbVKxz6gGRS: { label: "PylonFi DOR Node",              type: "official" },
   // Constellation Protocol

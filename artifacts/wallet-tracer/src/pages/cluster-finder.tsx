@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AlertCircle, ArrowDownLeft, ArrowRight, Clock3, Copy, GitBranch, LoaderCircle, Network, OctagonX, Play, ShieldCheck, Square, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -57,6 +57,8 @@ export default function ClusterFinder() {
   const [scanError, setScanError] = useState("");
   const [selectedInput, setSelectedInput] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => () => controllerRef.current?.abort(), []);
 
   const enteredAddresses = useMemo(() => {
     const parsed = addressText.split(/[\n,\t; ]+/).map((address) => address.trim()).filter(Boolean);
@@ -348,7 +350,7 @@ export default function ClusterFinder() {
                 <div className="flex items-center justify-between gap-4 border-b border-border/70 px-4 py-3 sm:px-5">
                   <div>
                     <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Network topology</div>
-                    <p className="mt-1 text-xs text-foreground/80">Directed flows only · private wallets only</p>
+                    <p className="mt-1 text-xs text-foreground/80">Successful transfers only · directed private-wallet flows</p>
                   </div>
                   <div className="flex items-center gap-3 font-mono text-[9px] uppercase tracking-[0.1em] text-muted-foreground">
                     <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-amber-200" /> Lead</span>

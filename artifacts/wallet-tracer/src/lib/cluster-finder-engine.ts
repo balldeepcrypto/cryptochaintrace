@@ -285,7 +285,7 @@ export async function runClusterFinder(
       scannedWallets += 1;
 
       for (const tx of history) {
-        if (!tx.from || !tx.to || tx.from === tx.to) continue;
+        if (tx.status !== "success" || !tx.from || !tx.to || tx.from === tx.to) continue;
         const fromKey = rememberAddress(tx.from);
         const toKey = rememberAddress(tx.to);
         if (!fromKey || !toKey || !isPrivate(tx.from) || !isPrivate(tx.to)) continue;
@@ -366,6 +366,7 @@ export async function runClusterFinder(
     }
   }
   for (let i = 0; i < forwardQueue.length; i += 1) {
+    if (forwardQueue[i] === primaryKey) continue;
     for (const flow of flowsByFrom.get(forwardQueue[i]) ?? []) {
       if (!canReachPrimary.has(flow.to) || reachableFromInputs.has(flow.to)) continue;
       reachableFromInputs.add(flow.to);
@@ -374,7 +375,7 @@ export async function runClusterFinder(
   }
 
   const relevantFlows = flowList.filter(
-    (flow) => reachableFromInputs.has(flow.from) && canReachPrimary.has(flow.to),
+    (flow) => flow.from !== primaryKey && reachableFromInputs.has(flow.from) && canReachPrimary.has(flow.to),
   );
   const relevantFlowsByFrom = new Map<string, ClusterFlow[]>();
   for (const flow of relevantFlows) {
@@ -395,7 +396,11 @@ export async function runClusterFinder(
     connections.push({
       inputAddress: addressByKey.get(inputKey) ?? inputKey,
       nodes: path.nodes.map((key) => addressByKey.get(key) ?? key),
-      flows: path.flows,
+      flows: path.flows.map((flow) => ({
+        ...flow,
+        from: addressByKey.get(flow.from) ?? flow.from,
+        to: addressByKey.get(flow.to) ?? flow.to,
+      })),
     });
   }
   connectedInputs = connections.length;
@@ -424,7 +429,11 @@ export async function runClusterFinder(
     primaryAddress: addressByKey.get(primaryKey) ?? primaryAddress,
     inputAddresses,
     nodes,
-    flows: relevantFlows,
+    flows: relevantFlows.map((flow) => ({
+      ...flow,
+      from: addressByKey.get(flow.from) ?? flow.from,
+      to: addressByKey.get(flow.to) ?? flow.to,
+    })),
     connections,
     disconnectedAddresses,
     excludedAddresses,

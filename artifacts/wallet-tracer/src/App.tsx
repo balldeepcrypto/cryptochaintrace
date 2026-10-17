@@ -16,6 +16,7 @@ import SubmitCase from "@/pages/submit";
 import Login from "@/pages/login";
 import ManageAnalysts from "@/pages/manage-analysts";
 import AnalystActivity from "@/pages/analyst-activity";
+import ClusterFinder from "@/pages/cluster-finder";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -104,6 +105,13 @@ function Router() {
             </Layout>
           </ProtectedRoute>
         )}
+      </Route>
+      <Route path="/cluster-finder">
+        <ProtectedRoute>
+          <Layout>
+            <ClusterFinder />
+          </Layout>
+        </ProtectedRoute>
       </Route>
       <Route path="/manage-analysts">
         <ProtectedRoute>

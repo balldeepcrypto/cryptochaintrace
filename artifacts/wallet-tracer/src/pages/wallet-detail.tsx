@@ -1113,14 +1113,14 @@ const normalizeXdcAddress = (addr: string): string => {
 // Universal address normalizer — applies chain-specific normalization.
 // For XDC: xdc-prefix → 0x-prefix + lowercase. All other chains: unchanged.
 // Use this for EVERY address that appears in a URL, query key, or fetch call.
-const getNormalizedAddress = (addr: string, chain: string): string => {
+export const getNormalizedAddress = (addr: string, chain: string): string => {
   if (chain !== "xdc") return addr;
   return normalizeXdcAddress(addr);
 };
 
 // Helper to resolve KNOWN_LABELS for any chain — handles XDC xdc→0x normalisation
 // and a lowercase fallback so lookups are robust across address formats.
-const getKnownInfo = (addr: string, chain: string): { label: string; type: string } | null => {
+export const getKnownInfo = (addr: string, chain: string): { label: string; type: string } | null => {
   if (!addr) return null;
   let lookupAddr = addr.trim();
   if (chain.toLowerCase() === "xdc" && lookupAddr.toLowerCase().startsWith("xdc")) {

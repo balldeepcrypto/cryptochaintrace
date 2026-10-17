@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { Link, useLocation } from "wouter";
-import { Search, Activity, Network, Box, Info, X, LogOut, Users, ClipboardList } from "lucide-react";
+import { Search, Activity, Network, GitFork, Box, Info, X, LogOut, Users, ClipboardList } from "lucide-react";
 import { useAuth } from "@/lib/auth-context";
 import { getRecentSearches, type RecentSearchEntry } from "@/lib/recent-searches";
 
@@ -45,6 +45,12 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <div className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/dashboard' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
               <Search className="w-4 h-4" />
               Intelligence Search
+            </div>
+          </Link>
+          <Link href="/cluster-finder">
+            <div data-testid="link-cluster-finder" className={`flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium cursor-pointer transition-colors ${location === '/cluster-finder' ? 'bg-accent text-accent-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+              <GitFork className="w-4 h-4" />
+              Cluster Finder
             </div>
           </Link>
 
@@ -101,7 +107,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <div className="text-sm font-mono text-muted-foreground">
               {location === '/dashboard' ? 'SYS // SEARCH_MODULE' :
                location.startsWith('/wallet/') ? 'SYS // PROFILE_INSPECTION' :
-               location.startsWith('/trace/') ? 'SYS // NETWORK_ANALYSIS' : 'SYS // UNKNOWN_STATE'}
+               location.startsWith('/trace/') ? 'SYS // NETWORK_ANALYSIS' :
+               location === '/cluster-finder' ? 'SYS // CLUSTER_ANALYSIS' : 'SYS // UNKNOWN_STATE'}
             </div>
             <div className="flex items-center gap-4 text-xs font-mono">
               <div className="flex items-center gap-1.5 text-success">

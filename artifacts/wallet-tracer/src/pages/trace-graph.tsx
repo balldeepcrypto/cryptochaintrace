@@ -161,6 +161,7 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   "1LdRcdxfbSnmCYYNdeYpUnztiYzVfBEQeC": "Poloniex BTC",
   "DAG3WnpWbwnnKBLtu8FvBp3VUkmxJgdcs41dTHg5": "KuCoin DAG",
   "DAG8xxL12vUzgeiCXkH8uC76spbRuVofaAkovyL2": "KuCoin DAG",
+  "DAG2rMPHX4w1cMMjowmewRMjD1in53yRURt6Eijh": "KuCoin",
   "DAG7R9cHuBgWS7w2tybcJHrTHFxtMdNB6523JAMQ": "Constellation Official Bridge / Base Wallet",
   "DAG471pakWWz3ZAFvX5uhA7uyufSkv7E41Lh77Ge": "Gate Bridge Cold Wallet",
   "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV": "Lattice Treasury",

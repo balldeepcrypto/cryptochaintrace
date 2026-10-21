@@ -167,6 +167,7 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV": "Lattice Treasury",
   "DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P": "TestNet Reward Pool",
   "DAG2hdmjMKARKjeCrwG6StZENRvKU1KkwqxpcJ4K": "TestNet Reward Pool",
+  "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W": "PacaSwap METAGRAPH",
 };
 
 interface NodeStyle {

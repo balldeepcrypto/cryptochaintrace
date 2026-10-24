@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AlertCircle, ArrowDownLeft, ArrowRight, Clock3, Copy, GitBranch, LoaderCircle, Network, OctagonX, Play, ShieldCheck, Square, Unplug } from "lucide-react";
+import { AlertCircle, ArrowDownLeft, ArrowRight, Clock3, Copy, GitBranch, LoaderCircle, Network, OctagonX, Play, Printer, ShieldCheck, Square, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,6 +16,7 @@ import {
   type ClusterProgress,
 } from "@/lib/cluster-finder-engine";
 import { getKnownInfo, getNormalizedAddress } from "@/pages/wallet-detail";
+import { printClusterReport } from "@/lib/cluster-finder-exports";
 
 type ScanState = "idle" | "running" | "cancelled" | "failed" | "complete";
 
@@ -260,13 +261,18 @@ export default function ClusterFinder() {
                     <span className="font-mono text-xs tabular-nums text-cyan-100">{Math.round(progressPercent)}%</span>
                   </div>
                   <Progress value={progressPercent} className="h-1 rounded-none bg-muted [&>div]:bg-cyan-200" aria-label="Cluster scan progress" />
+                  {progress?.requestStatus && (
+                    <p className="border border-amber-200/20 bg-amber-200/5 p-3 text-xs leading-5 text-amber-100" data-testid="status-cluster-retry">
+                      {progress.requestStatus}
+                    </p>
+                  )}
                   <div className="grid grid-cols-2 gap-px border border-border/60 bg-border/50 sm:grid-cols-4">
                     <Metric label="Wallets scanned" value={progress?.scannedWallets ?? 0} />
                     <Metric label="Transactions" value={progress?.transactionCount ?? 0} />
                     <Metric label="Queue remaining" value={progress?.queuedWallets ?? 0} />
                     <Metric label="Inputs connected" value={`${progress?.connectedInputs ?? 0} / ${progress?.totalInputs ?? inputCount}`} />
                   </div>
-                  <p className="text-xs leading-5 text-muted-foreground">History is traced backward from the lead and connected input roots. This scan may take time when wallet history is extensive.</p>
+                  <p className="text-xs leading-5 text-muted-foreground">History is traced backward from the lead and connected input roots. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Extensive histories can take time; you can cancel during a cooldown.</p>
                 </div>
               ) : scanState === "idle" ? (
                 <div className="flex min-h-[175px] items-center gap-4">
@@ -316,6 +322,11 @@ export default function ClusterFinder() {
 
         {result && (
           <section className="space-y-5" aria-label="Cluster scan results" data-testid="section-cluster-results">
+            <div className="flex justify-end">
+              <Button type="button" variant="outline" onClick={() => printClusterReport(result)} data-testid="button-print-cluster-report">
+                <Printer className="mr-2 h-4 w-4" /> Print Report
+              </Button>
+            </div>
             <div className="flex flex-col justify-between gap-3 border-b border-border/70 pb-3 sm:flex-row sm:items-end">
               <div>
                 <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/70">03 / Observed cluster</div>

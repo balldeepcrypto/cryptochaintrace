@@ -1,6 +1,10 @@
-import ReactFlow, { Background, BackgroundVariant, Controls, MarkerType, Position, type Edge, type Node } from "reactflow";
+import { useState } from "react";
+import ReactFlow, { Background, BackgroundVariant, Controls, MarkerType, Position, type Edge, type Node, type ReactFlowInstance } from "reactflow";
 import "reactflow/dist/style.css";
 import type { ClusterFlow, ClusterNode } from "@/lib/cluster-finder-engine";
+import { buildClusterGraphSvg, downloadClusterGraph } from "@/lib/cluster-finder-exports";
+import { Button } from "@/components/ui/button";
+import { Download } from "lucide-react";
 
 interface ClusterFinderGraphProps {
   nodes: ClusterNode[];
@@ -13,6 +17,7 @@ function shorten(address: string) {
 }
 
 export function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = [] }: ClusterFinderGraphProps) {
+  const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
   const depth = new Map<string, number>();
   const primary = clusterNodes.find((node) => node.role === "primary")?.address;
   if (primary) depth.set(primary, 0);
@@ -91,9 +96,23 @@ export function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = 
   const height = Math.max(380, Math.max(1, ...[...levels.values()].map((items) => items.length)) * 128 + 100);
 
   return (
-    <div className="h-[420px] w-full overflow-hidden border border-border/70 bg-[#0b1118] sm:h-[500px]" data-testid="graph-private-flows" aria-label="Private wallet flow graph">
+    <div className="relative h-[420px] w-full overflow-hidden border border-border/70 bg-[#0b1118] sm:h-[500px]" data-testid="graph-private-flows" aria-label="Private wallet flow graph">
+      {nodes.length > 0 && (
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="absolute right-3 top-3 z-10 bg-background"
+          data-testid="button-export-cluster-graph"
+          title="Download the entire graph as an SVG image, including highlighted routes and a full wallet address key"
+          onClick={() => downloadClusterGraph(buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows, selectedPath))}
+        >
+          <Download className="mr-2 h-3.5 w-3.5" /> Download Graph (SVG)
+        </Button>
+      )}
       {nodes.length ? (
         <ReactFlow
+          onInit={setInstance}
           nodes={nodes}
           edges={edges}
           fitView

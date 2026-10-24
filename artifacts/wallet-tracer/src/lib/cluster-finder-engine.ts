@@ -2,6 +2,7 @@ import {
   getWalletTransactions,
   type Transaction,
 } from "@workspace/api-client-react";
+import { clusterRequest } from "./cluster-finder-requests";
 
 // Cluster Finder deployment refresh.
 export const CLUSTER_CHAIN_OPTIONS = [
@@ -47,6 +48,7 @@ export interface ClusterConnectionFlow extends ClusterFlow {
 
 export interface ClusterProgress {
   phase: "scanning" | "building";
+  requestStatus?: string;
   activeAddress: string | null;
   scannedWallets: number;
   transactionCount: number;
@@ -209,9 +211,10 @@ export async function runClusterFinder(
   const truncatedKeys = new Set<string>();
   const fetchErrors: Array<{ address: string; message: string }> = [];
 
-  const reportProgress = (phase: ClusterProgress["phase"], activeAddress: string | null) => {
+  const reportProgress = (phase: ClusterProgress["phase"], activeAddress: string | null, requestStatus?: string) => {
     onProgress?.({
       phase,
+      requestStatus,
       activeAddress,
       scannedWallets,
       transactionCount: scannedTransactions,
@@ -234,11 +237,22 @@ export async function runClusterFinder(
         PAGE_SIZE[chain],
         MAX_CLUSTER_HISTORY_PER_WALLET - transactions.length,
       );
-      const response = await getWalletTransactions(
-        address,
-        { chain, page, limit, cursor },
-        { signal },
-      );
+      let response;
+      try {
+        response = await clusterRequest(
+          () => getWalletTransactions(address, { chain, page, limit, cursor }, { signal }),
+          signal,
+          (message) => reportProgress("scanning", address, message),
+        );
+      } catch (error) {
+        if (signal.aborted) throw abortError();
+        fetchErrors.push({
+          address,
+          message: `${error instanceof Error ? error.message : String(error)} (${transactions.length.toLocaleString()} fetched transactions retained; history incomplete.)`,
+        });
+        return transactions;
+      }
+      reportProgress("scanning", address);
       const pageTransactions = response.transactions.slice(0, limit);
       transactions.push(...pageTransactions);
       scannedTransactions += pageTransactions.length;

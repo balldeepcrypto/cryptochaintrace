@@ -86,6 +86,8 @@ export interface ClusterFinderOptions {
 export const MAX_CLUSTER_HISTORY_PER_WALLET = 25_000;
 
 const INFRASTRUCTURE_TYPES = new Set(["exchange", "bridge", "genesis"]);
+const LABELED_INFRASTRUCTURE_TYPES = new Set(["official", "dag-team", "defi"]);
+const PRIVATE_ENTITY_LABEL = /\bteam\s+(?:foundation|fdn)\b|\bstardust\s+collective\b/i;
 const PAGE_SIZE: Record<ClusterChain, number> = {
   bitcoin: 25,
   dag: 250,
@@ -167,8 +169,15 @@ export async function runClusterFinder(
   };
   const knownInfo = (address: string) => getKnownInfo(address, chain);
   const isPrivate = (address: string) => {
-    const type = knownInfo(address)?.type.toLowerCase();
-    return !type || !INFRASTRUCTURE_TYPES.has(type);
+    const info = knownInfo(address);
+    if (!info) return true;
+    const type = info.type.toLowerCase();
+    // Exchange/bridge/genesis classifications take precedence over any label.
+    if (INFRASTRUCTURE_TYPES.has(type)) return false;
+    // Include Team Foundation and Stardust Collective, including legacy Fdn
+    // labels, without admitting other official, reward, or METAGRAPH wallets.
+    if (PRIVATE_ENTITY_LABEL.test(info.label)) return true;
+    return !LABELED_INFRASTRUCTURE_TYPES.has(type);
   };
 
   const primaryKey = canonicalize(primaryAddress);

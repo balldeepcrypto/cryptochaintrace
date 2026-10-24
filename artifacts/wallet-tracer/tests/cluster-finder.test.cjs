@@ -193,6 +193,79 @@ test("long private routes still have no hop cap and exclude exchanges and failed
   assert.equal(result.nodes.length, 17);
 });
 
+test("Team Foundation and Stardust Collective are included as inputs, proxies, and leads", async () => {
+  for (const [label, type] of [
+    ["Team Foundation Wallet", "official"],
+    ["Stardust Collective Wallet", "official"],
+    ["[Stardust Team Foundation]", "dag-team"],
+    ["[Stardust Team Fdn 2]", "dag-team"],
+    ["[Stardust Team Fdn 7]", "dag-team"],
+  ]) {
+    const transfers = [tx("input", "proxy"), tx("proxy", "lead")];
+    const api = engine(async (address) => ({
+      transactions: transfers.filter((item) => item.from === address || item.to === address),
+      hasMore: false,
+    }));
+    const result = await api.runClusterFinder(options({ getKnownInfo: () => ({ label, type }) }));
+    assert.equal(result.complete, true, label);
+    assert.equal(result.connections.length, 1, label);
+    assert.equal(result.connections[0].flows.length, 2, label);
+    assert.equal(result.nodes.length, 3, label);
+    assert.ok(result.nodes.every((node) => node.label === label), label);
+    assert.equal(result.excludedAddresses.length, 0, label);
+  }
+});
+
+test("other labeled infrastructure stays excluded from inputs, proxies, and lead selection", async () => {
+  for (const [label, type] of [
+    ["KuCoin", "exchange"],
+    ["Team Foundation Exchange", "exchange"],
+    ["Stardust Collective Bridge", "bridge"],
+    ["Team Foundation Genesis", "genesis"],
+    ["PacaSwap METAGRAPH", "defi"],
+    ["DOR Metagraph", "official"],
+    ["Node Staking Reward Wallet", "official"],
+    ["Dor Enterprise Reward Wallet", "official"],
+    ["Upsider Reward METAGRAPH Wallet", "official"],
+    ["Constellation Distribution Wallet (Node Rewards)", "official"],
+    ["DTM Reward Pool", "official"],
+    ["TestNet Reward Pool", "official"],
+    ["[DAG Treasury 2]", "dag-team"],
+    ["Constellation Protocol Wallet", "official"],
+  ]) {
+    const scanned = [];
+    const api = engine(async (address) => {
+      scanned.push(address);
+      return {
+        transactions: address === "lead"
+          ? [tx("blocked-input", "lead"), tx("blocked-proxy", "lead")]
+          : [tx("input", "blocked-proxy")],
+        hasMore: false,
+      };
+    });
+    const getKnownInfo = (address) => address.startsWith("blocked-") ? { label, type } : null;
+    const result = await api.runClusterFinder(options({
+      addresses: ["input", "blocked-input", "lead"], getKnownInfo,
+    }));
+    assert.equal(result.excludedAddresses[0], "blocked-input", label);
+    assert.ok(!scanned.some((address) => address.startsWith("blocked-")), label);
+    assert.equal(result.flows.length, 0, label);
+    assert.equal(result.nodes.length, 0, label);
+    await assert.rejects(api.runClusterFinder(options({
+      addresses: ["input", "blocked-lead"], primaryAddress: "blocked-lead", getKnownInfo,
+    })), /excluded from private-wallet paths/);
+  }
+});
+
+test("unlabeled and other non-infrastructure labeled wallets remain eligible", async () => {
+  for (const info of [null, { label: "Founder", type: "founder" }, { label: "Flagged private wallet", type: "flagged" }]) {
+    const api = engine(async () => ({ transactions: [tx("input", "lead")], hasMore: false }));
+    const result = await api.runClusterFinder(options({ getKnownInfo: () => info }));
+    assert.equal(result.connections.length, 1);
+    assert.equal(result.complete, true);
+  }
+});
+
 test("pagination still enforces the existing 25k per-wallet history cap", async () => {
   let pages = 0;
   const api = engine(async (address, params) => {

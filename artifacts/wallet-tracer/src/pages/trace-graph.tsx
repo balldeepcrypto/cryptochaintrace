@@ -168,6 +168,10 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   "DAG0qE5tkz6cMUD5M2dkqgfV4TQCzUUdAP5MFM9P": "TestNet Reward Pool",
   "DAG2hdmjMKARKjeCrwG6StZENRvKU1KkwqxpcJ4K": "TestNet Reward Pool",
   "DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W": "PacaSwap METAGRAPH",
+  "DAG5LEmVdtMGryBs1UBLMfg37LoSiVHC8Q4odps9": "Node Staking Reward Wallet",
+  "DAG5hKjytwENhcx2vmC5qWyWSgnqWmYq7cUvGLDG": "Node Staking Reward Wallet",
+  "DAG85WHJvW9yVfVj1CYshjAg5zrptbNHrhVEbh6o": "Dor Enterprise Reward Wallet",
+  "DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1": "Upsider Reward METAGRAPH Wallet",
 };
 
 interface NodeStyle {

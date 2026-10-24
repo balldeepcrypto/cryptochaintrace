@@ -812,6 +812,10 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG72buDf2jPtHXBZqb2gdcGaWx9JkPYTX1YmSSS: { label: "Constellation Foundation / Core Wallet",                type: "official" },
   DAG6stSuh8C46VVHvFybyCjdC4UPu42xXq2Si9Z3: { label: "Constellation Distribution Wallet (Node Rewards)",      type: "official" },
   DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W: { label: "PacaSwap METAGRAPH", type: "defi" },
+  DAG5LEmVdtMGryBs1UBLMfg37LoSiVHC8Q4odps9: { label: "Node Staking Reward Wallet", type: "official" },
+  DAG5hKjytwENhcx2vmC5qWyWSgnqWmYq7cUvGLDG: { label: "Node Staking Reward Wallet", type: "official" },
+  DAG85WHJvW9yVfVj1CYshjAg5zrptbNHrhVEbh6o: { label: "Dor Enterprise Reward Wallet", type: "official" },
+  DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1: { label: "Upsider Reward METAGRAPH Wallet", type: "official" },
   // DAG Exchanges
   DAG6Yxge8Tzd8DJDJeL4hMLntnhheHGR4DYSPQvf: { label: "MEXC DAG",        type: "exchange" },
   DAG4TETUwraLYX1mYdC8ymUxxWsoNZPffUpDf4Ar: { label: "Gate.io DAG",      type: "exchange" },

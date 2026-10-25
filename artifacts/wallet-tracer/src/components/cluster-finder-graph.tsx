@@ -21,19 +21,27 @@ export function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = 
   const depth = new Map<string, number>();
   const primary = clusterNodes.find((node) => node.role === "primary")?.address;
   if (primary) depth.set(primary, 0);
-  for (let pass = 0; pass < clusterNodes.length; pass += 1) {
-    let changed = false;
-    for (const flow of flows) {
-      const targetDepth = depth.get(flow.to);
-      if (targetDepth !== undefined && depth.get(flow.from) === undefined) {
-        depth.set(flow.from, targetDepth + 1);
-        changed = true;
+  const queue = primary ? [primary] : [];
+  // Layout follows connectivity, not transfer direction: outgoing-only
+  // branches must be visible alongside incoming branches.
+  const expandLayout = () => {
+    for (let index = 0; index < queue.length; index += 1) {
+      const current = queue[index];
+      for (const flow of flows) {
+        const neighbor = flow.from === current ? flow.to : flow.to === current ? flow.from : null;
+        if (!neighbor || depth.has(neighbor)) continue;
+        depth.set(neighbor, depth.get(current)! + 1);
+        queue.push(neighbor);
       }
     }
-    if (!changed) break;
+  };
+  expandLayout();
+  for (const node of clusterNodes) {
+    if (depth.has(node.address)) continue;
+    depth.set(node.address, 0);
+    queue.push(node.address);
+    expandLayout();
   }
-  const unresolved = clusterNodes.filter((node) => !depth.has(node.address));
-  unresolved.forEach((node, index) => depth.set(node.address, index % 2));
   const levels = new Map<number, ClusterNode[]>();
   clusterNodes.forEach((node) => {
     const level = depth.get(node.address) ?? 0;
@@ -135,7 +143,7 @@ export function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = 
           <div>
             <div className="mx-auto mb-3 h-px w-12 bg-amber-300/50" />
             <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">No connecting private-wallet flows</p>
-            <p className="mt-2 max-w-sm text-xs leading-5 text-muted-foreground/70">Only private nodes and flows that connect an input toward the lead wallet appear here.</p>
+            <p className="mt-2 max-w-sm text-xs leading-5 text-muted-foreground/70">Eligible wallets and observed IN/OUT flows within six hops of the starting wallets appear here.</p>
           </div>
         </div>
       )}

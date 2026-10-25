@@ -173,8 +173,8 @@ test("exhausted page retries retain earlier observed paths and mark history inco
   assert.match(result.fetchErrors[0].message, /1 fetched transactions retained/);
 });
 
-test("long private routes still have no hop cap and exclude exchanges and failed transfers", async () => {
-  const route = ["input", ...Array.from({ length: 15 }, (_, i) => `proxy-${i}`), "lead"];
+test("six-hop expansion from both starting wallets joins their trails without re-scanning", async () => {
+  const route = ["input", ...Array.from({ length: 11 }, (_, i) => `proxy-${i}`), "lead"];
   const transfers = route.slice(0, -1).map((from, i) => tx(from, route[i + 1]));
   const histories = new Map(route.map((address) => [address, transfers.filter((item) => item.from === address || item.to === address)]));
   histories.get("lead").push(tx("exchange", "lead"), { ...tx("failed-private", "lead"), status: "failed" });
@@ -187,10 +187,67 @@ test("long private routes still have no hop cap and exclude exchanges and failed
     getKnownInfo: (address) => address === "exchange" ? { label: "KuCoin", type: "exchange" } : null,
   }));
   assert.equal(result.complete, true);
-  assert.equal(result.connections[0].flows.length, 16);
-  assert.equal(Math.max(...result.connections[0].flows.map((flow) => flow.hop)), 16);
+  assert.equal(result.connections[0].flows.length, 12);
+  assert.equal(Math.max(...result.flows.map((flow) => flow.discoveryHop)), 6);
   assert.ok(!scanned.includes("exchange") && !scanned.includes("failed-private"));
-  assert.equal(result.nodes.length, 17);
+  assert.equal(result.nodes.length, 13);
+  assert.equal(scanned.length, new Set(scanned).size);
+});
+
+test("lead-only scan recursively follows unique IN/OUT through six hops and retains no seventh-hop nodes", async () => {
+  const route = ["lead", ...Array.from({ length: 7 }, (_, i) => `wallet-${i + 1}`)];
+  const transfers = route.slice(0, -1).map((from, i) =>
+    i % 2 ? tx(route[i + 1], from) : tx(from, route[i + 1]));
+  // Duplicate history entries, cycle, self-transfer, failed and unrelated rows.
+  transfers.push(tx("wallet-1", "lead", "cycle"));
+  const scanned = [];
+  const api = engine(async (address) => {
+    scanned.push(address);
+    const relevant = transfers.filter((item) => item.from === address || item.to === address);
+    return {
+      transactions: [...relevant, ...relevant, tx(address, address, "self"),
+        tx("unrelated-a", "unrelated-b", "unrelated"),
+        { ...tx(address, "failed-wallet"), status: "failed" }],
+      hasMore: false,
+    };
+  });
+  const result = await api.runClusterFinder(options({ addresses: [], primaryAddress: "lead" }));
+  assert.equal(result.complete, true);
+  assert.equal(scanned.length, 7);
+  assert.equal(new Set(scanned).size, 7);
+  assert.ok(scanned.includes("wallet-6"));
+  assert.ok(!scanned.includes("wallet-7"));
+  assert.equal(result.nodes.length, 7);
+  assert.equal(result.flows.length, 7);
+  assert.ok(result.flows.every((flow) => flow.transactions.length === 1));
+  assert.ok(result.flows.every((flow) => flow.discoveryHop <= 6));
+  assert.ok(result.flows.some((flow) => flow.from === "lead" && flow.to === "wallet-1"));
+  assert.ok(result.flows.some((flow) => flow.from === "wallet-2" && flow.to === "wallet-1"));
+  assert.ok(result.nodes.every((node) => node.address !== "wallet-7"));
+});
+
+test("breadth-first layers preserve shortest depths and canonical wallets scan once across shared branches", async () => {
+  const transfers = [
+    tx("LEAD", "A"), tx("input", "a"), tx("a", "b"),
+    tx("b", "c"), tx("c", "d"), tx("d", "e"), tx("e", "f"), tx("f", "g"),
+  ];
+  const scanned = [];
+  const api = engine(async (address) => {
+    const key = address.toLowerCase();
+    scanned.push(key);
+    // Deliberately vary completion times among the workers.
+    if (key === "lead") await Promise.resolve().then(() => Promise.resolve());
+    return { transactions: transfers.filter((item) =>
+      item.from.toLowerCase() === key || item.to.toLowerCase() === key), hasMore: false };
+  });
+  const result = await api.runClusterFinder(options({
+    addresses: ["INPUT", "input", "lead", "LEAD"], primaryAddress: "lead", chain: "ethereum",
+  }));
+  assert.equal(new Set(scanned).size, scanned.length);
+  assert.equal(scanned.filter((address) => address === "a").length, 1);
+  assert.ok(scanned.includes("f") && !scanned.includes("g"));
+  assert.ok(scanned.indexOf("a") > scanned.indexOf("lead"));
+  assert.equal(result.flows.find((flow) => flow.to.toLowerCase() === "f").discoveryHop, 6);
 });
 
 test("Treasury, Team Foundation and Stardust Collective are included as inputs, proxies, and leads", async () => {
@@ -258,7 +315,8 @@ test("other labeled infrastructure stays excluded from inputs, proxies, and lead
     assert.equal(result.excludedAddresses[0], "blocked-input", label);
     assert.ok(!scanned.some((address) => address.startsWith("blocked-")), label);
     assert.equal(result.flows.length, 0, label);
-    assert.equal(result.nodes.length, 0, label);
+    assert.equal(result.nodes.length, 2, label);
+    assert.ok(result.nodes.every((node) => !node.address.startsWith("blocked-")), label);
     await assert.rejects(api.runClusterFinder(options({
       addresses: ["input", "blocked-lead"], primaryAddress: "blocked-lead", getKnownInfo,
     })), /excluded from private-wallet paths/);
@@ -310,7 +368,8 @@ test("US exchange touches are recorded IN/OUT without adding exchange paths or r
   assert.equal(scanned.length, 4);
   assert.equal(result.connections.length, 1);
   assert.equal(result.connections[0].flows.length, 2);
-  assert.equal(result.nodes.length, 3);
+  assert.equal(result.nodes.length, 4);
+  assert.ok(result.nodes.some((node) => node.address === "orphan"));
   assert.equal(result.flows.length, 2);
   assert.equal(result.disconnectedAddresses[0], "orphan");
   assert.equal(result.usExchangeTransactions.length, 3);
@@ -409,6 +468,23 @@ test("report includes exact amounts, every hop/hash/direction, UTC and incomplet
   assert.ok(!report.includes("<unsafe"));
   assert.match(report, /branches and cycles/);
   assert.match(report, /table-header-group/);
+});
+
+test("full recursive report preserves outgoing-only flows with no directed input-to-lead connection", () => {
+  const result = reportResult();
+  result.connections = [];
+  result.inputAddresses = [];
+  result.flows = [{
+    id: "outgoing", from: "lead", to: "private-<wallet>", discoveryHop: 6,
+    transactions: [tx("lead", "private-<wallet>", "outgoing-hash")],
+  }];
+  const report = exportsModule().buildClusterReport(result);
+  for (const value of ["Complete recursive IN/OUT trail", "Discovery hop 6", "lead → private-&lt;wallet&gt;",
+    "outgoing-hash", "0.000000000000000001 DAG", "2026-10-24T10:20:30.123Z",
+    "six hops", "US exchange IN/OUT transactions"]) {
+    assert.ok(report.includes(value), value);
+  }
+  assert.ok(!report.includes("no artificial hop limit"));
 });
 
 test("printed US exchange section includes every required field, directions and escaped data", () => {

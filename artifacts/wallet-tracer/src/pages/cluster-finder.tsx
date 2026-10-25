@@ -91,7 +91,7 @@ export default function ClusterFinder() {
   const selectedPath = activeSelection?.nodes ?? [];
 
   const startScan = async () => {
-    if (scanState === "running" || !primaryAddress.trim() || !hasPrimary || inputCount < 1) return;
+    if (scanState === "running" || !primaryAddress.trim() || !hasPrimary) return;
     const controller = new AbortController();
     controllerRef.current = controller;
     setResult(null);
@@ -154,7 +154,7 @@ export default function ClusterFinder() {
               </div>
               <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">Cluster Finder</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Trace private-wallet routes that converge on a lead. Unlabeled wallets and Treasury, Stardust Collective, or Team Foundation labels are allowed; other labeled wallets are excluded. Incomplete history stays visibly incomplete.
+                Expand unique IN/OUT trails up to six hops from the lead and any additional starting wallets. Unlabeled wallets and Treasury, Stardust Collective, or Team Foundation labels are allowed; other labeled wallets are excluded. Incomplete history stays visibly incomplete.
               </p>
             </div>
             <div className="flex items-center gap-2 border-t border-border/60 pt-4 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground md:border-l md:border-t-0 md:pl-5 md:pt-0">
@@ -214,7 +214,7 @@ export default function ClusterFinder() {
                   data-testid="input-cluster-primary"
                   aria-label="Primary lead wallet address"
                 />
-                <p className="mt-2 text-[11px] leading-5 text-muted-foreground/70">The lead is automatically included in the scan list. Add at least one other wallet to compare.</p>
+                <p className="mt-2 text-[11px] leading-5 text-muted-foreground/70">The lead is automatically included. Additional starting wallets are optional. Starting wallets are hop 0; each eligible wallet through hop 6 is scanned once.</p>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
                 <div className="font-mono text-[10px] uppercase tracking-[0.13em] text-muted-foreground" data-testid="text-scan-input-count">
@@ -225,7 +225,7 @@ export default function ClusterFinder() {
                     <Square className="h-3.5 w-3.5 fill-current" /> Cancel scan
                   </Button>
                 ) : (
-                  <Button onClick={startScan} disabled={!hasPrimary || inputCount < 1} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
+                  <Button onClick={startScan} disabled={!hasPrimary} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
                     <Play className="h-3.5 w-3.5 fill-current" /> Run cluster scan
                   </Button>
                 )}
@@ -272,14 +272,14 @@ export default function ClusterFinder() {
                     <Metric label="Queue remaining" value={progress?.queuedWallets ?? 0} />
                     <Metric label="Inputs connected" value={`${progress?.connectedInputs ?? 0} / ${progress?.totalInputs ?? inputCount}`} />
                   </div>
-                  <p className="text-xs leading-5 text-muted-foreground">History is traced backward from the lead and connected input roots. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Extensive histories can take time; you can cancel during a cooldown.</p>
+                  <p className="text-xs leading-5 text-muted-foreground">IN/OUT history expands breadth-first from all starting wallets through six hops, without re-scanning wallets. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Extensive histories can take time; you can cancel during a cooldown.</p>
                 </div>
               ) : scanState === "idle" ? (
                 <div className="flex min-h-[175px] items-center gap-4">
                   <div className="grid h-12 w-12 shrink-0 place-items-center border border-cyan-200/15 bg-cyan-200/[0.04] text-cyan-100/80"><GitBranch className="h-5 w-5" /></div>
                   <div>
                     <p className="text-sm text-foreground/90">Ready to examine convergence.</p>
-                    <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Provide one or more input wallets and a lead address. Disconnected inputs remain distinct from connected private paths.</p>
+                    <p className="mt-1 max-w-md text-xs leading-5 text-muted-foreground">Provide a lead address and optional additional starting wallets. Separate components are displayed without implying a connection between them.</p>
                   </div>
                 </div>
               ) : scanState === "failed" ? (
@@ -330,7 +330,7 @@ export default function ClusterFinder() {
             <div className="flex flex-col justify-between gap-3 border-b border-border/70 pb-3 sm:flex-row sm:items-end">
               <div>
                 <div className="font-mono text-[10px] uppercase tracking-[0.18em] text-cyan-200/70">03 / Observed cluster</div>
-                <h2 className="mt-1 text-xl font-medium tracking-tight">Paths toward the lead wallet</h2>
+                <h2 className="mt-1 text-xl font-medium tracking-tight">Recursive private/team IN/OUT trail</h2>
               </div>
               <div className="font-mono text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Network <span className="text-foreground">{CLUSTER_CHAIN_OPTIONS.find((item) => item.value === result.chain)?.label}</span><span className="mx-2 text-border">/</span> lead <span className="text-amber-100">{shortAddress(result.primaryAddress)}</span></div>
             </div>
@@ -350,7 +350,7 @@ export default function ClusterFinder() {
 
             {(result.disconnectedAddresses.length > 0 || result.excludedAddresses.length > 0 || result.truncatedAddresses.length > 0) && (
               <div className="grid gap-3 lg:grid-cols-3" data-testid="panel-scan-qualifiers">
-                {result.disconnectedAddresses.length > 0 && <Qualifier title="No observed connection" icon={<Unplug className="h-3.5 w-3.5" />} addresses={result.disconnectedAddresses} tone="amber" testId="panel-disconnected-addresses" note="No private-wallet path to the lead was found in the scanned history. This is not proof that no relationship exists." />}
+                {result.disconnectedAddresses.length > 0 && <Qualifier title="No directed path to lead" icon={<Unplug className="h-3.5 w-3.5" />} addresses={result.disconnectedAddresses} tone="amber" testId="panel-disconnected-addresses" note="No directed private-wallet path toward the lead was found within the scanned six-hop boundary. These wallets may still have IN/OUT links in the full graph. This is not proof that no relationship exists." />}
                 {result.excludedAddresses.length > 0 && <Qualifier title="Known infrastructure excluded" icon={<ShieldCheck className="h-3.5 w-3.5" />} addresses={result.excludedAddresses} tone="slate" testId="panel-excluded-addresses" note="All labeled wallets are excluded except Treasury, Stardust Collective, and Team Foundation. Exchanges, bridges, and genesis wallets remain excluded regardless of label." />}
                 {result.truncatedAddresses.length > 0 && <Qualifier title="History truncated" icon={<AlertCircle className="h-3.5 w-3.5" />} addresses={result.truncatedAddresses} tone="rose" testId="panel-truncated-addresses" note={`Wallet history reached the ${MAX_CLUSTER_HISTORY_PER_WALLET.toLocaleString()} transaction cap. Paths may be incomplete.`} />}
               </div>
@@ -369,13 +369,33 @@ export default function ClusterFinder() {
                   </div>
                 </div>
                 <ClusterFinderGraph nodes={result.nodes} flows={result.flows} selectedPath={selectedPath} />
-                <div className="border-t border-border/60 px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/65">Graph contains only engine-returned interconnecting private wallets and their observed flows.</div>
+                <div className="border-t border-border/60 px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/65">All eligible IN/OUT links within six hops · arrows show sender → recipient · separate components do not imply a connection.</div>
+                <div className="border-t border-border/60 p-4" data-testid="panel-recursive-trail">
+                  <h3 className="text-sm font-medium">Complete recursive trail</h3>
+                  <p className="mt-1 mb-3 text-xs text-muted-foreground">Discovery hops are minimum expansion depth from any starting wallet, not chronological transfer order. Expand a flow for all unique transactions.</p>
+                  {result.flows.map((flow) => (
+                    <details key={flow.id} className="border-t border-border/60 py-3">
+                      <summary className="cursor-pointer break-all font-mono text-[11px]">
+                        Discovery hop {flow.discoveryHop ?? "—"} · {flow.from} → {flow.to} · {flow.transactions.length} TX
+                      </summary>
+                      {flow.transactions.map((tx, index) => (
+                        <div key={`${tx.hash}-${index}`} className="mt-3 space-y-1 break-all border-l border-border pl-3 text-xs">
+                          <p><strong>Direction:</strong> {flow.from} → {flow.to}</p>
+                          <p><strong>Exact amount:</strong> {tx.value} {tx.tokenSymbol}</p>
+                          <p><strong>Date/time:</strong> {formatTimestamp(tx.timestamp)}</p>
+                          <p className="font-mono"><strong>TX hash:</strong> {tx.hash}</p>
+                        </div>
+                      ))}
+                    </details>
+                  ))}
+                  {!result.flows.length && <p className="text-xs text-muted-foreground">No eligible transfers were observed.</p>}
+                </div>
               </Card>
 
               <div className="space-y-4">
                 <Card className="rounded-none border-border/80 bg-card/65 shadow-none">
                   <div className="border-b border-border/70 px-4 py-3">
-                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Input connection index</div>
+                    <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Directed input-to-lead index</div>
                     <p className="mt-1 text-xs text-foreground/80">{result.connections.length} observed path{result.connections.length === 1 ? "" : "s"}</p>
                   </div>
                   {result.connections.length ? (

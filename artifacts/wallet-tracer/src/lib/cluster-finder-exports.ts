@@ -24,6 +24,17 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       }).join("")}
       </tbody></table>
     `).join("")}</section>`).join("");
+  const trailSection = `<section><h2>Complete recursive IN/OUT trail</h2>
+    <p>Expansion follows both transfer directions up to six hops from the lead and additional starting wallets (hop 0).
+    Each wallet is scanned once. Discovery hops indicate minimum expansion depth from any starting wallet, not chronological transfer order.
+    Separate starting-wallet components are shown without implying a connection between them.</p>
+    ${result.flows.map((flow) => `<h3>Discovery hop ${text(flow.discoveryHop ?? "—")} — ${flow.transactions.length} observed transaction(s)</h3>
+      <p class="address"><strong>Direction:</strong> ${text(flow.from)} → ${text(flow.to)}</p>
+      <table><thead><tr><th>TX hash</th><th>Exact amount</th><th>Date/time (UTC)</th></tr></thead><tbody>
+      ${flow.transactions.map((tx) => {
+        const date = new Date(tx.timestamp);
+        return `<tr><td class="hash">${text(tx.hash)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td></tr>`;
+      }).join("")}</tbody></table>`).join("") || "<p>No eligible transfers were observed.</p>"}</section>`;
   const exchangeTransactions = result.usExchangeTransactions ?? [];
   const exchangeSection = `<section><h2>US exchange IN/OUT transactions</h2>
     <p>Observed in the fetched histories of scanned eligible wallets, including wallets without an observed connection to the lead.
@@ -63,16 +74,19 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     <p>Generated: ${text(new Date().toISOString())} · Chain: ${text(result.chain)}</p>
     <p class="address"><strong>Lead wallet:</strong> ${text(result.primaryAddress)}</p>
     <p>${result.scannedWallets} wallets scanned · ${result.scannedTransactions} transactions scanned · ${result.connections.length} connected inputs</p>
-    <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? "Scan complete within the configured history cap." : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
+    <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? "Scan complete within the six-hop boundary and configured history cap." : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
     <p>Hop-by-hop paths show only observed successful transfers between unlabeled wallets or wallets labeled Treasury, Stardust Collective, or Team Foundation. Arrows indicate sender → recipient.
     Hop numbers are minimum distance from each input; branches and cycles are listed as observed flows, not proof of a single chronological path or common ownership.
-    Histories are limited to 25,000 transactions per wallet; traversal has no artificial hop limit.</p>
+    Histories are limited to 25,000 transactions per wallet; recursive IN/OUT expansion stops at six hops from any starting wallet.
+    Wallets at hop six are scanned, but links to wallets beyond the boundary are not followed.</p>
     ${list("Input wallets", result.inputAddresses)}
-    ${list("No observed connection (not proof of no relationship)", result.disconnectedAddresses)}
+    ${list("No directed input-to-lead path within scanned boundary (IN/OUT links may still exist)", result.disconnectedAddresses)}
     ${list("Known infrastructure excluded", result.excludedAddresses)}
     ${list("Histories that reached the 25,000 transaction cap", result.truncatedAddresses)}
     ${result.fetchErrors.length ? `<h3>Incomplete history warnings</h3><ul>${result.fetchErrors.map((error) => `<li>${text(error.address)}: ${text(error.message)}</li>`).join("")}</ul>` : ""}
-    ${sections || "<p>No connecting private-wallet paths were observed in this scan.</p>"}
+    ${trailSection}
+    <h2>Directed input-to-lead paths</h2>
+    ${sections || "<p>No directed input-to-lead paths were observed in this scan.</p>"}
     ${exchangeSection}
     </body></html>`;
 }

@@ -33,6 +33,7 @@ export interface ClusterFlow {
   id: string;
   from: string;
   to: string;
+  discoveryHop?: number;
   transactions: ClusterTransaction[];
 }
 
@@ -93,6 +94,7 @@ export interface ClusterFinderOptions {
 }
 
 export const MAX_CLUSTER_HISTORY_PER_WALLET = 25_000;
+export const MAX_CLUSTER_HOPS = 6;
 
 const INFRASTRUCTURE_TYPES = new Set(["exchange", "bridge", "genesis"]);
 const PRIVATE_ENTITY_LABEL = /\btreasury\b|\bteam\s+(?:foundation|fdn)\b|\bstardust\s+collective\b/i;
@@ -141,6 +143,7 @@ function buildConnectionFlows(
 
   for (let i = 0; i < queue.length; i += 1) {
     const current = queue[i];
+    if (current === primaryKey) continue;
     for (const flow of flowsByFrom.get(current) ?? []) {
       if (!canReachPrimary.has(flow.to)) continue;
       connectionFlows.push({ ...flow, hop: (distance.get(current) ?? 0) + 1 });
@@ -158,10 +161,9 @@ function buildConnectionFlows(
 }
 
 /**
- * Walks incoming private-wallet flows backwards from the primary wallet until
- * every relevant branch reaches a supplied wallet or a dead end. Each wallet's
- * history is capped at the same 25,000 transactions as the existing wallet UI;
- * there is intentionally no hop-depth limit.
+ * Breadth-first expansion in both transfer directions from every starting
+ * wallet. Starting wallets are depth zero; wallets through depth six are
+ * scanned once. Histories retain the existing 25,000 transaction cap.
  */
 export async function runClusterFinder(
   options: ClusterFinderOptions,
@@ -201,9 +203,9 @@ export async function runClusterFinder(
     return key;
   };
 
-  const requestedKeys = [...new Set(addresses.map(rememberAddress).filter(Boolean))];
-  if (!primaryKey || !requestedKeys.includes(primaryKey)) {
-    throw new Error("Choose a primary wallet from the entered address list.");
+  const requestedKeys = [...new Set([...addresses, primaryAddress].map(rememberAddress).filter(Boolean))];
+  if (!primaryKey) {
+    throw new Error("Enter a primary wallet.");
   }
   if (!isPrivate(addressByKey.get(primaryKey) ?? primaryAddress)) {
     const label = knownInfo(addressByKey.get(primaryKey) ?? primaryAddress)?.label ?? "known infrastructure wallet";
@@ -226,6 +228,7 @@ export async function runClusterFinder(
   }>();
   const queue = [primaryKey, ...inputKeys];
   const enqueued = new Set(queue);
+  const depthByKey = new Map(queue.map((key) => [key, 0]));
   let queueIndex = 0;
   let scannedWallets = 0;
   let scannedTransactions = 0;
@@ -300,8 +303,8 @@ export async function runClusterFinder(
     return transactions;
   };
 
-  const worker = async () => {
-    while (queueIndex < queue.length) {
+  const worker = async (levelEnd: number) => {
+    while (queueIndex < levelEnd) {
       if (signal.aborted) throw abortError();
       const currentKey = queue[queueIndex++];
       const currentAddress = addressByKey.get(currentKey) ?? currentKey;
@@ -326,7 +329,9 @@ export async function runClusterFinder(
         if (tx.status !== "success" || !tx.from || !tx.to || tx.from === tx.to) continue;
         const fromKey = rememberAddress(tx.from);
         const toKey = rememberAddress(tx.to);
-        if (!fromKey || !toKey) continue;
+        if (!fromKey || !toKey || fromKey === toKey) continue;
+        // Ignore unrelated entries in a provider's wallet-history response.
+        if (fromKey !== currentKey && toKey !== currentKey) continue;
 
         const compactTx: ClusterTransaction = {
           hash: tx.hash,
@@ -360,6 +365,13 @@ export async function runClusterFinder(
         }
         if (!isPrivate(tx.from) || !isPrivate(tx.to)) continue;
 
+        const neighborKey = fromKey === currentKey ? toKey : fromKey;
+        const depth = depthByKey.get(currentKey)!;
+        if (!enqueued.has(neighborKey) && depth < MAX_CLUSTER_HOPS) {
+          enqueued.add(neighborKey);
+          depthByKey.set(neighborKey, depth + 1);
+          queue.push(neighborKey);
+        }
         const bucketKey = `${fromKey}\u0000${toKey}`;
         let bucket = flowBuckets.get(bucketKey);
         if (!bucket) {
@@ -367,41 +379,36 @@ export async function runClusterFinder(
           flowBuckets.set(bucketKey, bucket);
         }
         bucket.transactions.set(transactionKey(compactTx, fromKey, toKey), compactTx);
-
-        // The transaction response is for the current wallet. Follow only
-        // incoming flows toward the primary; supplied wallets are roots.
-        if (
-          currentKey !== primaryKey &&
-          inputKeySet.has(currentKey)
-        ) continue;
-        if (toKey !== currentKey || !isPrivate(tx.from) || enqueued.has(fromKey)) continue;
-        enqueued.add(fromKey);
-        queue.push(fromKey);
       }
       reportProgress("scanning", null);
     }
   };
 
-  await Promise.all(Array.from({ length: 3 }, () => worker()));
+  // Finish a whole breadth-first layer before starting the next. This keeps
+  // shortest discovery depths stable even when histories finish out of order.
+  while (queueIndex < queue.length) {
+    const levelEnd = queue.length;
+    await Promise.all(Array.from({ length: 3 }, () => worker(levelEnd)));
+  }
   if (signal.aborted) throw abortError();
 
   reportProgress("building", null);
   const flowList: ClusterFlow[] = [...flowBuckets.values()]
+    // A depth-six history may expose a depth-seven neighbor. Retain a flow
+    // only if both ends were discovered inside the six-hop scan boundary.
+    .filter((bucket) => depthByKey.has(bucket.fromKey) && depthByKey.has(bucket.toKey))
     .sort((a, b) => a.fromKey.localeCompare(b.fromKey) || a.toKey.localeCompare(b.toKey))
     .map((bucket, index) => ({
     id: `flow-${index + 1}`,
     from: bucket.fromKey,
     to: bucket.toKey,
+    discoveryHop: Math.max(1, depthByKey.get(bucket.fromKey)!, depthByKey.get(bucket.toKey)!),
     transactions: [...bucket.transactions.values()].sort(
       (a, b) => Date.parse(a.timestamp) - Date.parse(b.timestamp),
     ),
     }));
-  const flowsByFrom = new Map<string, ClusterFlow[]>();
   const flowsByTo = new Map<string, ClusterFlow[]>();
   for (const flow of flowList) {
-    const outgoing = flowsByFrom.get(flow.from) ?? [];
-    outgoing.push(flow);
-    flowsByFrom.set(flow.from, outgoing);
     const incoming = flowsByTo.get(flow.to) ?? [];
     incoming.push(flow);
     flowsByTo.set(flow.to, incoming);
@@ -417,26 +424,9 @@ export async function runClusterFinder(
     }
   }
 
-  const reachableFromInputs = new Set<string>();
-  const forwardQueue: string[] = [];
-  for (const inputKey of inputKeys) {
-    if (canReachPrimary.has(inputKey)) {
-      reachableFromInputs.add(inputKey);
-      forwardQueue.push(inputKey);
-    }
-  }
-  for (let i = 0; i < forwardQueue.length; i += 1) {
-    if (forwardQueue[i] === primaryKey) continue;
-    for (const flow of flowsByFrom.get(forwardQueue[i]) ?? []) {
-      if (!canReachPrimary.has(flow.to) || reachableFromInputs.has(flow.to)) continue;
-      reachableFromInputs.add(flow.to);
-      forwardQueue.push(flow.to);
-    }
-  }
-
-  const relevantFlows = flowList.filter(
-    (flow) => flow.from !== primaryKey && reachableFromInputs.has(flow.from) && canReachPrimary.has(flow.to),
-  );
+  // The graph/report retain the entire observed IN/OUT trail, not just
+  // input-to-lead directed paths. The connection index remains supplementary.
+  const relevantFlows = flowList;
   const relevantFlowsByFrom = new Map<string, ClusterFlow[]>();
   for (const flow of relevantFlows) {
     const outgoing = relevantFlowsByFrom.get(flow.from) ?? [];
@@ -465,7 +455,7 @@ export async function runClusterFinder(
   }
   connectedInputs = connections.length;
 
-  const nodeKeys = new Set<string>();
+  const nodeKeys = new Set<string>(depthByKey.keys());
   for (const flow of relevantFlows) {
     nodeKeys.add(flow.from);
     nodeKeys.add(flow.to);

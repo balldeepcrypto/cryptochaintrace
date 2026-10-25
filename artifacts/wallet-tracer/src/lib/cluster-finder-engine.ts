@@ -192,6 +192,7 @@ export async function runClusterFinder(
   };
   const knownInfo = (address: string) => getKnownInfo(address, chain);
   const isPrivate = (address: string) => {
+    if (chain === "dag" && canonicalize(address) === "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV") return false;
     const info = knownInfo(address);
     if (!info) return true;
     const type = info.type.toLowerCase();

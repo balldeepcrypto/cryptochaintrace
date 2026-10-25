@@ -4047,7 +4047,7 @@ export default function WalletDetail() {
   const multiResultRef = useRef<MultiAnalysisResult | null>(null);
   const [fullPkgLoading, setFullPkgLoading] = useState(false);
   const [fullPkgProgress, setFullPkgProgress] = useState("");
-  const [victimWallet, setVictimWallet] = useState("rh64D3AcJkFRgyZe5XYFp4jEVLn43NCqaH");
+  const [victimWallet, setVictimWallet] = useState("");
   const [victimName, setVictimName] = useState("Ball Deep Crypto");
   const comminglePanelRef = useRef<HTMLDivElement>(null);
   const pathPanelRef      = useRef<HTMLDivElement>(null);

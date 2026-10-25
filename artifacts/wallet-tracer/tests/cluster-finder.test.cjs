@@ -341,6 +341,44 @@ test("Treasury, Team Foundation and Stardust Collective are included as inputs, 
   }
 });
 
+test("the specified Lattice Treasury DAG wallet is excluded as input, proxy, and lead", async () => {
+  const lattice = "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV";
+  for (const getKnownInfo of [
+    (address) => address === lattice ? { label: "Lattice Treasury", type: "dag-team" } : null,
+    () => null,
+  ]) {
+    const scanned = [];
+    const transfers = [tx("input", lattice), tx(lattice, "lead"), tx("input", "lead")];
+    const api = engine(async (address) => {
+      scanned.push(address);
+      return {
+        transactions: transfers.filter((item) => item.from === address || item.to === address),
+        hasMore: false,
+      };
+    });
+    const result = await api.runClusterFinder(options({
+      addresses: ["input", lattice, "lead"], getKnownInfo,
+    }));
+    assert.equal(result.complete, true);
+    assert.ok(result.excludedAddresses.includes(lattice));
+    assert.ok(!scanned.includes(lattice));
+    assert.ok(!result.nodes.some((node) => node.address === lattice));
+    assert.ok(result.flows.every((flow) => flow.from !== lattice && flow.to !== lattice));
+    assert.equal(result.connections.length, 1);
+    assert.equal(result.connections[0].flows.length, 1);
+    await assert.rejects(api.runClusterFinder(options({
+      primaryAddress: lattice, getKnownInfo,
+    })), /primary wallet.*excluded/);
+  }
+});
+
+test("FULL PKG VICTIM starts blank and remains editable", () => {
+  const source = fs.readFileSync(path.join(__dirname, "../src/pages/wallet-detail.tsx"), "utf8");
+  assert.match(source, /const \[victimWallet, setVictimWallet\] = useState\(""\)/);
+  assert.match(source, /value=\{victimWallet\}/);
+  assert.match(source, /onChange=\{e => setVictimWallet\(e\.target\.value\.trim\(\)\)\}/);
+});
+
 test("other labeled infrastructure stays excluded from inputs, proxies, and lead selection", async () => {
   for (const [label, type] of [
     ["KuCoin", "exchange"],

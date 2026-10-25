@@ -75,6 +75,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     <p class="address"><strong>Lead wallet:</strong> ${text(result.primaryAddress)}</p>
     <p>${result.scannedWallets} wallets scanned · ${result.scannedTransactions} transactions scanned · ${result.connections.length} connected inputs</p>
     <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? "Scan complete within the six-hop boundary and configured history cap." : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
+    ${result.incompleteReason ? `<p class="warning">${text(result.incompleteReason)}</p>` : ""}
     <p>Hop-by-hop paths show only observed successful transfers between unlabeled wallets or wallets labeled Treasury, Stardust Collective, or Team Foundation. Arrows indicate sender → recipient.
     Hop numbers are minimum distance from each input; branches and cycles are listed as observed flows, not proof of a single chronological path or common ownership.
     Histories are limited to 25,000 transactions per wallet; recursive IN/OUT expansion stops at six hops from any starting wallet.

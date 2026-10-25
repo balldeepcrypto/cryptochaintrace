@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import ReactFlow, { Background, BackgroundVariant, Controls, MarkerType, Position, type Edge, type Node, type ReactFlowInstance } from "reactflow";
 import "reactflow/dist/style.css";
 import type { ClusterFlow, ClusterNode } from "@/lib/cluster-finder-engine";
@@ -16,20 +16,27 @@ function shorten(address: string) {
   return address.length > 24 ? `${address.slice(0, 10)}…${address.slice(-8)}` : address;
 }
 
-export function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = [] }: ClusterFinderGraphProps) {
+export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = [] }: ClusterFinderGraphProps) {
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
   const depth = new Map<string, number>();
   const primary = clusterNodes.find((node) => node.role === "primary")?.address;
   if (primary) depth.set(primary, 0);
   const queue = primary ? [primary] : [];
+  const neighbors = new Map<string, Set<string>>();
+  for (const flow of flows) {
+    if (!neighbors.has(flow.from)) neighbors.set(flow.from, new Set());
+    if (!neighbors.has(flow.to)) neighbors.set(flow.to, new Set());
+    neighbors.get(flow.from)!.add(flow.to);
+    neighbors.get(flow.to)!.add(flow.from);
+  }
   // Layout follows connectivity, not transfer direction: outgoing-only
   // branches must be visible alongside incoming branches.
+  let layoutIndex = 0;
   const expandLayout = () => {
-    for (let index = 0; index < queue.length; index += 1) {
-      const current = queue[index];
-      for (const flow of flows) {
-        const neighbor = flow.from === current ? flow.to : flow.to === current ? flow.from : null;
-        if (!neighbor || depth.has(neighbor)) continue;
+    while (layoutIndex < queue.length) {
+      const current = queue[layoutIndex++];
+      for (const neighbor of neighbors.get(current) ?? []) {
+        if (depth.has(neighbor)) continue;
         depth.set(neighbor, depth.get(current)! + 1);
         queue.push(neighbor);
       }
@@ -124,7 +131,8 @@ export function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = 
           nodes={nodes}
           edges={edges}
           fitView
-          fitViewOptions={{ padding: 0.2 }}
+          fitViewOptions={{ padding: 0.2, minZoom: 0.25 }}
+          onlyRenderVisibleElements
           minZoom={0.25}
           maxZoom={1.5}
           nodesDraggable={false}
@@ -150,4 +158,4 @@ export function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = 
       <span className="sr-only">Graph canvas height {height}px</span>
     </div>
   );
-}
+});

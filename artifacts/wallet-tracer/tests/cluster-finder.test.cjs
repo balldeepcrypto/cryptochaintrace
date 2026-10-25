@@ -38,12 +38,15 @@ function scheduler() {
     // Advance simulated time, not real time; the scheduler has one active
     // request/backoff at a time, even when workers enqueue concurrently.
     setTimeout: (callback, ms) => {
+      // Request deadlines are real timers and cancelled by successful requests;
+      // only scheduling/backoff delays advance the simulated request clock.
+      if (ms === 45_000) return setTimeout(callback, ms);
       waits.push(ms);
       now += ms;
       queueMicrotask(callback);
       return waits.length;
     },
-    clearTimeout: () => {},
+    clearTimeout: (timer) => { if (typeof timer === "object") clearTimeout(timer); },
   });
   return { ...api, now: () => now, waits };
 }
@@ -121,6 +124,20 @@ test("cancellation interrupts a live rate-limit cooldown immediately", async () 
   assert.equal(attempts, 1);
 });
 
+test("stalled requests time out even when the provider ignores abort; explicit cancellation is immediate", async () => {
+  const api = scheduler();
+  let attemptSignal;
+  await assert.rejects(api.clusterTimedRequest((signal) => {
+    attemptSignal = signal;
+    return new Promise(() => {});
+  }, new AbortController().signal, 10), /timed out/);
+  assert.equal(attemptSignal.aborted, true);
+  const controller = new AbortController();
+  const pending = api.clusterTimedRequest(() => new Promise(() => {}), controller.signal, 45_000);
+  controller.abort();
+  await assert.rejects(pending, /cancelled/);
+});
+
 function tx(from, to, hash = `${from}-${to}`) {
   return { hash, from, to, value: "0.000000000000000001", timestamp: "2026-10-24T10:20:30.123Z", tokenSymbol: "DAG", status: "success" };
 }
@@ -171,6 +188,53 @@ test("exhausted page retries retain earlier observed paths and mark history inco
   assert.equal(result.scannedTransactions, 1);
   assert.equal(result.fetchErrors.length, 1);
   assert.match(result.fetchErrors[0].message, /1 fetched transactions retained/);
+});
+
+test("page-by-page snapshots expose trails before history completion and cancellation returns fetched data", async () => {
+  const controller = new AbortController();
+  const snapshots = [];
+  const telemetry = [];
+  const api = engine(async (address, params) => {
+    if (address !== "lead") return { transactions: [], hasMore: false };
+    if (!params.cursor) return {
+      transactions: [tx("lead", "private-one", "already-fetched"), tx("coinbase", "lead", "us-fetched")],
+      hasMore: true, nextCursor: "pending-page",
+    };
+    const observed = snapshots.find((result) => result.flows.some((flow) => flow.transactions.some((item) => item.hash === "already-fetched")));
+    assert.ok(observed, "a fetched trail must be visible before the next page settles");
+    assert.equal(observed.complete, false);
+    controller.abort();
+    throw new DOMException("cancelled", "AbortError");
+  });
+  const result = await api.runClusterFinder(options({
+    addresses: ["lead"], signal: controller.signal,
+    onSnapshot: (snapshot) => snapshots.push(snapshot),
+    onProgress: (progress) => telemetry.push(progress),
+    getKnownInfo: (address) => address === "coinbase" ? { label: "Coinbase", type: "exchange" } : null,
+  }));
+  assert.equal(result.complete, false);
+  assert.match(result.incompleteReason, /stopped/);
+  assert.equal(result.flows[0].transactions[0].hash, "already-fetched");
+  assert.equal(result.usExchangeTransactions[0].transaction.hash, "us-fetched");
+  assert.ok(telemetry.some((progress) => progress.pagesFetched === 1 && progress.discoveredWallets === 2));
+  assert.equal(snapshots[0].flows.length, 0, "earlier snapshots must not mutate");
+  assert.equal(snapshots.at(-1), result);
+});
+
+test("invalid and repeated pagination cursors retain fetched pages with explicit incomplete warnings", async () => {
+  for (const repeat of [false, true]) {
+    const api = engine(async (address, params) => {
+      if (address !== "lead") return { transactions: [], hasMore: false };
+      return {
+        transactions: [tx("input", "lead", params.cursor ? "page-two" : "page-one")],
+        hasMore: true, nextCursor: repeat ? "same-cursor" : undefined,
+      };
+    });
+    const result = await api.runClusterFinder(options());
+    assert.equal(result.complete, false);
+    assert.equal(result.flows[0].transactions.length, repeat ? 2 : 1);
+    assert.match(result.fetchErrors[0].message, /retained.*incomplete/);
+  }
 });
 
 test("six-hop expansion from both starting wallets joins their trails without re-scanning", async () => {
@@ -519,6 +583,94 @@ test("printed report explicitly states when no US transactions were observed", (
   assert.match(report, /US exchange IN\/OUT transactions/);
   assert.match(report, /No US-exchange transactions were observed/);
   assert.match(report, /not proof that none exist/);
+});
+
+function checkpointStorage() {
+  const records = new Map();
+  let failWrites = false;
+  const indexedDB = {
+    open() {
+      const request = {};
+      queueMicrotask(() => {
+        request.result = {
+          close() {},
+          transaction() {
+            let aborted = false;
+            const transaction = {
+              abort() { aborted = true; queueMicrotask(() => transaction.onabort?.()); },
+              objectStore() {
+                return {
+                  put(value, key) {
+                    if (failWrites) throw new Error("quota");
+                    records.set(key, structuredClone(value));
+                  },
+                  delete(key) { records.delete(key); },
+                  get(key) {
+                    const get = {};
+                    queueMicrotask(() => { get.result = structuredClone(records.get(key)); get.onsuccess?.(); });
+                    return get;
+                  },
+                };
+              },
+            };
+            queueMicrotask(() => queueMicrotask(() => { if (!aborted) transaction.oncomplete?.(); }));
+            return transaction;
+          },
+        };
+        request.onsuccess?.();
+      });
+      return request;
+    },
+  };
+  const freshModule = () => load("cluster-finder-storage", {}, {
+    indexedDB, crypto: require("node:crypto").webcrypto,
+  });
+  return { freshModule, records, failWrites: () => { failWrites = true; } };
+}
+
+test("checkpoints survive module reload, stay account-scoped, and clearing invalidates late scan writes", async () => {
+  const storage = checkpointStorage();
+  let api = storage.freshModule();
+  const runId = api.beginClusterCheckpoint("account-a");
+  const checkpoint = {
+    version: 1, runId, savedAt: "2026-10-25T10:00:00Z", chain: "dag",
+    primaryAddress: "lead", addressText: "input", state: "running",
+    result: reportResult(), progress: null, error: "",
+  };
+  assert.equal(await api.saveClusterCheckpoint("account-a", checkpoint), true);
+  api = storage.freshModule(); // Simulates losing module memory on reload.
+  const restored = await api.loadClusterCheckpoint("account-a");
+  assert.equal(restored.result.flows[0].transactions[0].hash, checkpoint.result.flows[0].transactions[0].hash);
+  assert.equal(restored.state, "running"); // UI marks interrupted scans partial, never auto-resumes.
+  assert.equal(await api.loadClusterCheckpoint("account-b"), null);
+  await api.clearClusterCheckpoint("account-a");
+  assert.equal(await api.saveClusterCheckpoint("account-a", checkpoint), false);
+  assert.equal(await api.loadClusterCheckpoint("account-a"), null);
+  assert.equal(await storage.freshModule().loadClusterCheckpoint("account-a"), null);
+});
+
+test("storage failures are explicit while in-memory partial results remain recoverable", async () => {
+  const storage = checkpointStorage();
+  storage.failWrites();
+  const api = storage.freshModule();
+  const checkpoint = {
+    version: 1, runId: api.beginClusterCheckpoint("account-a"),
+    savedAt: "2026-10-25T10:00:00Z", chain: "dag", primaryAddress: "lead",
+    addressText: "", state: "cancelled", result: reportResult(), progress: null, error: "",
+  };
+  await assert.rejects(api.saveClusterCheckpoint("account-a", checkpoint), /browser storage/);
+  const recovered = await api.loadClusterCheckpoint("account-a");
+  assert.equal(recovered.persistenceError, true);
+  assert.equal(recovered.result, checkpoint.result);
+  assert.equal(storage.records.size, 0);
+});
+
+test("printed partial reports clearly retain interruption reasons", () => {
+  const result = reportResult();
+  result.incompleteReason = "Interrupted after <timeout>; fetched pages retained.";
+  const report = exportsModule().buildClusterReport(result);
+  assert.ok(report.includes("Interrupted after &lt;timeout&gt;; fetched pages retained."));
+  assert.ok(report.includes("INCOMPLETE SCAN"));
 });
 
 test("SVG exports full graph coordinates, directional edges, labels, highlights and address key", () => {

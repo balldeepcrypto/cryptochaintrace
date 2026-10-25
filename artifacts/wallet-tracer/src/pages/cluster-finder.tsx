@@ -14,9 +14,12 @@ import {
   type ClusterChain,
   type ClusterFinderResult,
   type ClusterProgress,
+  type ClusterFlow,
 } from "@/lib/cluster-finder-engine";
 import { getKnownInfo, getNormalizedAddress } from "@/pages/wallet-detail";
 import { printClusterReport } from "@/lib/cluster-finder-exports";
+import { useAuth } from "@/lib/auth-context";
+import { beginClusterCheckpoint, clearClusterCheckpoint, loadClusterCheckpoint, saveClusterCheckpoint, type ClusterCheckpoint } from "@/lib/cluster-finder-storage";
 
 type ScanState = "idle" | "running" | "cancelled" | "failed" | "complete";
 
@@ -49,6 +52,8 @@ function addressIdentity(address: string, chain: string) {
 }
 
 export default function ClusterFinder() {
+  const { user } = useAuth();
+  const owner = user?.id;
   const [chain, setChain] = useState<ClusterChain>("ethereum");
   const [addressText, setAddressText] = useState("");
   const [primaryAddress, setPrimaryAddress] = useState("");
@@ -58,8 +63,56 @@ export default function ClusterFinder() {
   const [scanError, setScanError] = useState("");
   const [selectedInput, setSelectedInput] = useState<string | null>(null);
   const controllerRef = useRef<AbortController | null>(null);
+  const mountedRef = useRef(false);
+  const activeRunRef = useRef<string | null>(null);
+  const [checkpointReady, setCheckpointReady] = useState(false);
+  const [storageWarning, setStorageWarning] = useState("");
+  const [savedAt, setSavedAt] = useState<string | null>(null);
 
-  useEffect(() => () => controllerRef.current?.abort(), []);
+  useEffect(() => {
+    mountedRef.current = true;
+    let disposed = false;
+    setCheckpointReady(false);
+    setResult(null);
+    setProgress(null);
+    setScanState("idle");
+    setSavedAt(null);
+    setStorageWarning("");
+    setScanError("");
+    setAddressText("");
+    setPrimaryAddress("");
+    setSelectedInput(null);
+    if (owner) {
+      void loadClusterCheckpoint(owner).then((checkpoint) => {
+        if (disposed || !checkpoint) return;
+        setChain(checkpoint.chain);
+        setAddressText(checkpoint.addressText);
+        setPrimaryAddress(checkpoint.primaryAddress);
+        setProgress(checkpoint.progress);
+        setSavedAt(checkpoint.persistenceError ? null : checkpoint.savedAt);
+        if (checkpoint.persistenceError) setStorageWarning("Recovered results from this tab's memory, but browser saving failed. Print or export before reloading.");
+        const interrupted = checkpoint.state === "running";
+        const restored = interrupted && checkpoint.result
+          ? { ...checkpoint.result, complete: false, incompleteReason: "Scan interrupted by leaving or reloading the page. This saved checkpoint contains fetched pages only; it has not resumed automatically." }
+          : checkpoint.result;
+        setResult(restored);
+        setScanState(interrupted ? "cancelled" : checkpoint.state);
+        setScanError(checkpoint.error);
+      }).catch(() => {
+        if (!disposed) setStorageWarning("Saved results could not be loaded. Browser storage may be unavailable. New results remain visible in this page, but may not survive a reload.");
+      }).finally(() => { if (!disposed) setCheckpointReady(true); });
+    } else {
+      setCheckpointReady(true);
+    }
+    return () => {
+      disposed = true;
+      mountedRef.current = false;
+      activeRunRef.current = null;
+      // Stop requests on navigation/logout, but the engine returns its fetched
+      // pages and the captured account's checkpoint is still saved below.
+      controllerRef.current?.abort();
+    };
+  }, [owner]);
 
   const enteredAddresses = useMemo(() => {
     const parsed = addressText.split(/[\n,\t; ]+/).map((address) => address.trim()).filter(Boolean);
@@ -80,18 +133,14 @@ export default function ClusterFinder() {
   const inputCount = enteredAddresses.filter((address) =>
     addressIdentity(address, chain) !== addressIdentity(primaryAddress.trim(), chain),
   ).length;
-  const progressPercent = progress
-    ? progress.phase === "building"
-      ? 96
-      : Math.min(92, Math.max(4, progress.totalInputs > 0
-        ? (progress.connectedInputs / progress.totalInputs) * 70 + Math.min(progress.scannedWallets / (progress.totalInputs + progress.queuedWallets + 1), 1) * 22
-        : 12))
-    : 0;
+  // Recursive fan-out is unknown until fetched. A percentage of total work
+  // would be misleading; show the actual BFS hop and queue instead.
+  const hopProgress = ((progress?.currentHop ?? 0) / 6) * 100;
   const activeSelection = result?.connections.find((connection) => connection.inputAddress === selectedInput) ?? result?.connections[0];
-  const selectedPath = activeSelection?.nodes ?? [];
+  const selectedPath = useMemo(() => activeSelection?.nodes ?? [], [activeSelection]);
 
   const startScan = async () => {
-    if (scanState === "running" || !primaryAddress.trim() || !hasPrimary) return;
+    if (scanState === "running" || !primaryAddress.trim() || !hasPrimary || !checkpointReady || !owner) return;
     const controller = new AbortController();
     controllerRef.current = controller;
     setResult(null);
@@ -99,25 +148,61 @@ export default function ClusterFinder() {
     setScanError("");
     setSelectedInput(null);
     setScanState("running");
+    setSavedAt(null);
+    const runId = beginClusterCheckpoint(owner);
+    activeRunRef.current = runId;
+    const isCurrentRun = () => mountedRef.current && activeRunRef.current === runId;
+    let latestResult: ClusterFinderResult | null = null;
+    let latestProgress: ClusterProgress | null = null;
+    const checkpoint = (state: ClusterCheckpoint["state"], error = "") => {
+      const saved: ClusterCheckpoint = {
+        version: 1, runId, savedAt: new Date().toISOString(),
+        chain, addressText, primaryAddress: primaryAddress.trim(),
+        state, result: latestResult, progress: latestProgress, error,
+      };
+      void saveClusterCheckpoint(owner, saved).then((written) => {
+        if (written && mountedRef.current && activeRunRef.current === runId) { setSavedAt(saved.savedAt); setStorageWarning(""); }
+      }).catch(() => {
+        if (mountedRef.current && activeRunRef.current === runId) setStorageWarning("Could not save this checkpoint to browser storage. Keep this page open and print/export any partial results before leaving. In-page results are still available.");
+      });
+    };
     try {
       const output = await runClusterFinder({
         addresses: enteredAddresses,
         primaryAddress: primaryAddress.trim(),
         chain,
         signal: controller.signal,
-        onProgress: setProgress,
+        onProgress: (next) => {
+          latestProgress = next;
+          if (isCurrentRun()) setProgress(next);
+        },
+        onSnapshot: (snapshot) => {
+          latestResult = snapshot;
+          if (isCurrentRun()) setResult(snapshot);
+          checkpoint("running");
+        },
         getKnownInfo,
         normalizeAddress: getNormalizedAddress,
       });
-      setResult(output);
-      setScanState("complete");
-      setSelectedInput(output.connections[0]?.inputAddress ?? null);
+      latestResult = output;
+      checkpoint(controller.signal.aborted ? "cancelled" : "complete");
+      if (isCurrentRun()) {
+        setResult(output);
+        setScanState(controller.signal.aborted ? "cancelled" : "complete");
+        setSelectedInput(output.connections[0]?.inputAddress ?? null);
+      }
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (latestResult) {
+        latestResult = { ...latestResult, complete: false, incompleteReason: `Scan interrupted: ${message}. Fetched pages retained.` };
+        if (isCurrentRun()) setResult(latestResult);
+      }
       if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-        setScanState("cancelled");
+        checkpoint("cancelled");
+        if (isCurrentRun()) setScanState("cancelled");
       } else {
-        setScanError(error instanceof Error ? error.message : String(error));
-        setScanState("failed");
+        checkpoint("failed", message);
+        if (isCurrentRun()) { setScanError(message); setScanState("failed"); }
       }
     } finally {
       if (controllerRef.current === controller) controllerRef.current = null;
@@ -135,11 +220,19 @@ export default function ClusterFinder() {
     setScanError("");
     setSelectedInput(null);
     setScanState("idle");
+    setSavedAt(null);
+    activeRunRef.current = null;
+    if (owner) void clearClusterCheckpoint(owner).catch(() => {
+      setStorageWarning("Results were cleared in this page, but the saved browser checkpoint could not be deleted.");
+    });
   };
 
   return (
     <div className="min-h-[100dvh] bg-background px-4 py-6 text-foreground sm:px-6 lg:px-8" data-testid="page-cluster-finder">
       <div className="mx-auto max-w-[1500px] space-y-6">
+        {!checkpointReady && <p role="status" className="text-sm text-muted-foreground">Loading the latest saved Cluster Finder checkpoint…</p>}
+        {storageWarning && <p role="alert" className="border border-amber-200/30 p-3 text-xs text-amber-100" data-testid="status-cluster-storage-warning">{storageWarning}</p>}
+        {savedAt && <p className="text-xs text-muted-foreground" data-testid="status-cluster-checkpoint">Latest checkpoint saved in this browser: {formatTimestamp(savedAt)}. Leaving this page stops the scan. Reload restores the last saved checkpoint; the most recent unsaved pages may be absent. Scans do not resume automatically.</p>}
         <header className="relative overflow-hidden border border-border/80 bg-card/70 px-5 py-6 sm:px-7">
           <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-[42%] opacity-50 md:block" aria-hidden="true">
             <div className="absolute right-12 top-8 h-28 w-28 rounded-full border border-cyan-300/15" />
@@ -225,7 +318,7 @@ export default function ClusterFinder() {
                     <Square className="h-3.5 w-3.5 fill-current" /> Cancel scan
                   </Button>
                 ) : (
-                  <Button onClick={startScan} disabled={!hasPrimary} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
+                  <Button onClick={startScan} disabled={!hasPrimary || !checkpointReady || !owner} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
                     <Play className="h-3.5 w-3.5 fill-current" /> Run cluster scan
                   </Button>
                 )}
@@ -255,12 +348,13 @@ export default function ClusterFinder() {
                       <LoaderCircle className="h-4 w-4 animate-spin text-cyan-200" />
                       <div>
                         <div className="font-mono text-xs uppercase tracking-[0.13em] text-foreground">{progress?.phase === "building" ? "Building private paths" : "Scanning wallet history"}</div>
-                        <div className="mt-1 font-mono text-[10px] text-muted-foreground">{progress?.activeAddress ? shortAddress(progress.activeAddress) : "Following incoming flows toward lead"}</div>
+                        <div className="mt-1 font-mono text-[10px] text-muted-foreground">{progress?.activeAddress ? shortAddress(progress.activeAddress) : "Expanding unique IN/OUT histories"}</div>
                       </div>
                     </div>
-                    <span className="font-mono text-xs tabular-nums text-cyan-100">{Math.round(progressPercent)}%</span>
+                    <span className="font-mono text-xs tabular-nums text-cyan-100" data-testid="status-cluster-hop">Hop {progress?.currentHop ?? 0} / 6</span>
                   </div>
-                  <Progress value={progressPercent} className="h-1 rounded-none bg-muted [&>div]:bg-cyan-200" aria-label="Cluster scan progress" />
+                  <Progress value={hopProgress} className="h-1 rounded-none bg-muted [&>div]:bg-cyan-200" aria-label="Expansion hop, not percentage of total work" />
+                  <p className="text-xs text-muted-foreground">The total work is unknown until links are discovered. Hop 6 is the final layer, not a guarantee that all histories are finished.</p>
                   {progress?.requestStatus && (
                     <p className="border border-amber-200/20 bg-amber-200/5 p-3 text-xs leading-5 text-amber-100" data-testid="status-cluster-retry">
                       {progress.requestStatus}
@@ -270,9 +364,10 @@ export default function ClusterFinder() {
                     <Metric label="Wallets scanned" value={progress?.scannedWallets ?? 0} />
                     <Metric label="Transactions" value={progress?.transactionCount ?? 0} />
                     <Metric label="Queue remaining" value={progress?.queuedWallets ?? 0} />
-                    <Metric label="Inputs connected" value={`${progress?.connectedInputs ?? 0} / ${progress?.totalInputs ?? inputCount}`} />
+                    <Metric label="Pages fetched" value={progress?.pagesFetched ?? 0} />
                   </div>
-                  <p className="text-xs leading-5 text-muted-foreground">IN/OUT history expands breadth-first from all starting wallets through six hops, without re-scanning wallets. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Extensive histories can take time; you can cancel during a cooldown.</p>
+                  <p className="font-mono text-xs text-muted-foreground">Discovered {progress?.discoveredWallets ?? 0} · Active {progress?.activeWallets ?? 0} · Directed inputs connected {result?.connections.length ?? 0} / {inputCount}</p>
+                  <p className="text-xs leading-5 text-muted-foreground">IN/OUT history expands breadth-first from all starting wallets through six hops, without re-scanning wallets. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Six-hop branching can discover many wallets and take hours. Partial results below update about every five seconds as pages arrive; stopping the scan retains fetched data.</p>
                 </div>
               ) : scanState === "idle" ? (
                 <div className="flex min-h-[175px] items-center gap-4">
@@ -294,7 +389,7 @@ export default function ClusterFinder() {
               ) : scanState === "cancelled" ? (
                 <div className="flex min-h-[175px] items-start gap-3 border border-amber-200/20 bg-amber-200/[0.04] p-4" role="status" data-testid="status-cluster-cancelled">
                   <OctagonX className="mt-0.5 h-4 w-4 shrink-0 text-amber-100/80" />
-                  <div><p className="font-mono text-[10px] uppercase tracking-[0.15em] text-amber-100">Scan cancelled</p><p className="mt-2 text-xs leading-5 text-muted-foreground">The engine stopped the active scan. No partial path result is presented as a completed connection.</p></div>
+                  <div><p className="font-mono text-[10px] uppercase tracking-[0.15em] text-amber-100">Scan stopped — partial data retained</p><p className="mt-2 text-xs leading-5 text-muted-foreground">Fetched transactions and observed trails remain below and can be printed or exported. Unscanned histories may contain additional paths.</p><Button onClick={clearScan} variant="outline" className="mt-3" data-testid="button-clear-stopped-cluster-results">Clear results</Button></div>
                 </div>
               ) : (
                 <div className="space-y-4" role="status" data-testid="status-cluster-scan-complete">
@@ -322,6 +417,7 @@ export default function ClusterFinder() {
 
         {result && (
           <section className="space-y-5" aria-label="Cluster scan results" data-testid="section-cluster-results">
+            {!result.complete && <p role="status" className="border border-amber-200/30 bg-amber-200/5 p-3 text-xs text-amber-100" data-testid="status-cluster-partial-results">{result.incompleteReason ?? "Partial / incomplete history: some histories failed or reached the 25,000 transaction limit. Observed results remain available."}</p>}
             <div className="flex justify-end">
               <Button type="button" variant="outline" onClick={() => printClusterReport(result)} data-testid="button-print-cluster-report">
                 <Printer className="mr-2 h-4 w-4" /> Print Report
@@ -374,19 +470,7 @@ export default function ClusterFinder() {
                   <h3 className="text-sm font-medium">Complete recursive trail</h3>
                   <p className="mt-1 mb-3 text-xs text-muted-foreground">Discovery hops are minimum expansion depth from any starting wallet, not chronological transfer order. Expand a flow for all unique transactions.</p>
                   {result.flows.map((flow) => (
-                    <details key={flow.id} className="border-t border-border/60 py-3">
-                      <summary className="cursor-pointer break-all font-mono text-[11px]">
-                        Discovery hop {flow.discoveryHop ?? "—"} · {flow.from} → {flow.to} · {flow.transactions.length} TX
-                      </summary>
-                      {flow.transactions.map((tx, index) => (
-                        <div key={`${tx.hash}-${index}`} className="mt-3 space-y-1 break-all border-l border-border pl-3 text-xs">
-                          <p><strong>Direction:</strong> {flow.from} → {flow.to}</p>
-                          <p><strong>Exact amount:</strong> {tx.value} {tx.tokenSymbol}</p>
-                          <p><strong>Date/time:</strong> {formatTimestamp(tx.timestamp)}</p>
-                          <p className="font-mono"><strong>TX hash:</strong> {tx.hash}</p>
-                        </div>
-                      ))}
-                    </details>
+                    <RecursiveFlowDetails key={`${flow.from}-${flow.to}`} flow={flow} />
                   ))}
                   {!result.flows.length && <p className="text-xs text-muted-foreground">No eligible transfers were observed.</p>}
                 </div>
@@ -465,6 +549,25 @@ export default function ClusterFinder() {
         )}
       </div>
     </div>
+  );
+}
+
+function RecursiveFlowDetails({ flow }: { flow: ClusterFlow }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="border-t border-border/60 py-3" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="cursor-pointer break-all font-mono text-[11px]">
+        Discovery hop {flow.discoveryHop ?? "—"} · {flow.from} → {flow.to} · {flow.transactions.length} TX
+      </summary>
+      {open && flow.transactions.map((tx, index) => (
+        <div key={`${tx.hash}-${index}`} className="mt-3 space-y-1 break-all border-l border-border pl-3 text-xs">
+          <p><strong>Direction:</strong> {flow.from} → {flow.to}</p>
+          <p><strong>Exact amount:</strong> {tx.value} {tx.tokenSymbol}</p>
+          <p><strong>Date/time:</strong> {formatTimestamp(tx.timestamp)}</p>
+          <p className="font-mono"><strong>TX hash:</strong> {tx.hash}</p>
+        </div>
+      ))}
+    </details>
   );
 }
 

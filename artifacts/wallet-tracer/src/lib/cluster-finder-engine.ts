@@ -64,6 +64,10 @@ export interface ClusterProgress {
   queuedWallets: number;
   connectedInputs: number;
   totalInputs: number;
+  discoveredWallets: number;
+  activeWallets: number;
+  currentHop: number;
+  pagesFetched: number;
 }
 
 export interface ClusterFinderResult {
@@ -81,6 +85,7 @@ export interface ClusterFinderResult {
   scannedWallets: number;
   scannedTransactions: number;
   complete: boolean;
+  incompleteReason?: string;
 }
 
 export interface ClusterFinderOptions {
@@ -89,6 +94,7 @@ export interface ClusterFinderOptions {
   chain: ClusterChain;
   signal: AbortSignal;
   onProgress?: (progress: ClusterProgress) => void;
+  onSnapshot?: (result: ClusterFinderResult) => void;
   getKnownInfo: (address: string, chain: string) => { label: string; type: string } | null;
   normalizeAddress: (address: string, chain: string) => string;
 }
@@ -174,6 +180,7 @@ export async function runClusterFinder(
     chain,
     signal,
     onProgress,
+    onSnapshot,
     getKnownInfo,
     normalizeAddress,
   } = options;
@@ -233,6 +240,10 @@ export async function runClusterFinder(
   let scannedWallets = 0;
   let scannedTransactions = 0;
   let connectedInputs = 0;
+  let pagesFetched = 0;
+  let currentHop = 0;
+  let lastSnapshotAt = 0;
+  const activeKeys = new Set<string>();
   const truncatedKeys = new Set<string>();
   const fetchErrors: Array<{ address: string; message: string }> = [];
   const usExchangeTransactions = new Map<string, ClusterUsExchangeTransaction>();
@@ -247,49 +258,60 @@ export async function runClusterFinder(
       queuedWallets: Math.max(0, queue.length - queueIndex),
       connectedInputs,
       totalInputs: inputKeys.length,
+      discoveredWallets: queue.length,
+      activeWallets: activeKeys.size,
+      currentHop,
+      pagesFetched,
     });
   };
 
   const scanHistory = async (address: string): Promise<Transaction[]> => {
-    const transactions: Transaction[] = [];
+    let fetchedCount = 0;
     let page = 1;
     let cursor: string | undefined;
     const seenCursors = new Set<string>();
     let hasMore = true;
 
-    while (hasMore && transactions.length < MAX_CLUSTER_HISTORY_PER_WALLET) {
+    while (hasMore && fetchedCount < MAX_CLUSTER_HISTORY_PER_WALLET) {
       if (signal.aborted) throw abortError();
       const limit = Math.min(
         PAGE_SIZE[chain],
-        MAX_CLUSTER_HISTORY_PER_WALLET - transactions.length,
+        MAX_CLUSTER_HISTORY_PER_WALLET - fetchedCount,
       );
       let response;
       try {
         response = await clusterRequest(
-          () => getWalletTransactions(address, { chain, page, limit, cursor }, { signal }),
+          (requestSignal) => getWalletTransactions(address, { chain, page, limit, cursor }, { signal: requestSignal }),
           signal,
           (message) => reportProgress("scanning", address, message),
         );
       } catch (error) {
-        if (signal.aborted) throw abortError();
+        if (signal.aborted) return [];
         fetchErrors.push({
           address,
-          message: `${error instanceof Error ? error.message : String(error)} (${transactions.length.toLocaleString()} fetched transactions retained; history incomplete.)`,
+          message: `${error instanceof Error ? error.message : String(error)} (${fetchedCount.toLocaleString()} fetched transactions retained; history incomplete.)`,
         });
-        return transactions;
+        publishSnapshot(true);
+        return [];
       }
       reportProgress("scanning", address);
       const pageTransactions = response.transactions.slice(0, limit);
-      transactions.push(...pageTransactions);
+      fetchedCount += pageTransactions.length;
       scannedTransactions += pageTransactions.length;
+      pagesFetched += 1;
+      // Incorporate every page immediately, before waiting for the next one.
+      processHistory(canonicalize(address), pageTransactions);
+      publishSnapshot(pagesFetched === 1);
       hasMore = response.hasMore;
 
       if (!hasMore) break;
       if (!response.nextCursor) {
-        throw new Error("The transaction service reported another page without a cursor.");
+        fetchErrors.push({ address, message: `The transaction service reported another page without a cursor. ${fetchedCount} fetched transactions retained; history incomplete.` });
+        break;
       }
       if (seenCursors.has(response.nextCursor)) {
-        throw new Error("The transaction service repeated a pagination cursor.");
+        fetchErrors.push({ address, message: `The transaction service repeated a pagination cursor. ${fetchedCount} fetched transactions retained; history incomplete.` });
+        break;
       }
       seenCursors.add(response.nextCursor);
       cursor = response.nextCursor;
@@ -297,34 +319,14 @@ export async function runClusterFinder(
       reportProgress("scanning", address);
     }
 
-    if (hasMore && transactions.length >= MAX_CLUSTER_HISTORY_PER_WALLET) {
+    if (hasMore && fetchedCount >= MAX_CLUSTER_HISTORY_PER_WALLET) {
       truncatedKeys.add(canonicalize(address));
     }
-    return transactions;
+    return [];
   };
 
-  const worker = async (levelEnd: number) => {
-    while (queueIndex < levelEnd) {
-      if (signal.aborted) throw abortError();
-      const currentKey = queue[queueIndex++];
+  const processHistory = (currentKey: string, history: Transaction[]) => {
       const currentAddress = addressByKey.get(currentKey) ?? currentKey;
-      reportProgress("scanning", currentAddress);
-
-      let history: Transaction[];
-      try {
-        history = await scanHistory(currentAddress);
-      } catch (error) {
-        if (signal.aborted) throw abortError();
-        fetchErrors.push({
-          address: currentAddress,
-          message: error instanceof Error ? error.message : String(error),
-        });
-        scannedWallets += 1;
-        reportProgress("scanning", null);
-        continue;
-      }
-      scannedWallets += 1;
-
       for (const tx of history) {
         if (tx.status !== "success" || !tx.from || !tx.to || tx.from === tx.to) continue;
         const fromKey = rememberAddress(tx.from);
@@ -380,19 +382,30 @@ export async function runClusterFinder(
         }
         bucket.transactions.set(transactionKey(compactTx, fromKey, toKey), compactTx);
       }
-      reportProgress("scanning", null);
+  };
+  const worker = async (levelEnd: number) => {
+    while (queueIndex < levelEnd && !signal.aborted) {
+      const currentKey = queue[queueIndex++];
+      const currentAddress = addressByKey.get(currentKey) ?? currentKey;
+      activeKeys.add(currentKey);
+      reportProgress("scanning", currentAddress);
+      try {
+        await scanHistory(currentAddress);
+        if (!signal.aborted) scannedWallets += 1;
+      } catch (error) {
+        if (!signal.aborted) {
+          fetchErrors.push({ address: currentAddress, message: error instanceof Error ? error.message : String(error) });
+          scannedWallets += 1;
+        }
+      } finally {
+        activeKeys.delete(currentKey);
+        publishSnapshot();
+        reportProgress("scanning", null);
+      }
     }
   };
 
-  // Finish a whole breadth-first layer before starting the next. This keeps
-  // shortest discovery depths stable even when histories finish out of order.
-  while (queueIndex < queue.length) {
-    const levelEnd = queue.length;
-    await Promise.all(Array.from({ length: 3 }, () => worker(levelEnd)));
-  }
-  if (signal.aborted) throw abortError();
-
-  reportProgress("building", null);
+  function buildResult(finished: boolean, incompleteReason?: string): ClusterFinderResult {
   const flowList: ClusterFlow[] = [...flowBuckets.values()]
     // A depth-six history may expose a depth-seven neighbor. Retain a flow
     // only if both ends were discovered inside the six-hop scan boundary.
@@ -473,7 +486,6 @@ export async function runClusterFinder(
     .filter((key) => !connections.some((connection) => canonicalize(connection.inputAddress) === key))
     .map((key) => addressByKey.get(key) ?? key);
 
-  reportProgress("building", null);
   return {
     chain,
     primaryAddress: addressByKey.get(primaryKey) ?? primaryAddress,
@@ -493,9 +505,31 @@ export async function runClusterFinder(
     disconnectedAddresses,
     excludedAddresses,
     truncatedAddresses,
-    fetchErrors,
+    fetchErrors: [...fetchErrors],
     scannedWallets,
     scannedTransactions,
-    complete: fetchErrors.length === 0 && truncatedAddresses.length === 0,
+    complete: finished && fetchErrors.length === 0 && truncatedAddresses.length === 0,
+    incompleteReason,
   };
+  }
+
+  function publishSnapshot(force = false) {
+    if (!onSnapshot || (!force && Date.now() - lastSnapshotAt < 5_000)) return;
+    lastSnapshotAt = Date.now();
+    onSnapshot(buildResult(false, "Scan in progress. Results reflect fetched pages only; queued and active histories may be incomplete."));
+  }
+
+  publishSnapshot(true);
+  // Keep layer barriers: streaming pages must not start a deeper layer early.
+  while (queueIndex < queue.length && !signal.aborted) {
+    currentHop = depthByKey.get(queue[queueIndex]) ?? 0;
+    const levelEnd = queue.length;
+    await Promise.all(Array.from({ length: 3 }, () => worker(levelEnd)));
+  }
+  reportProgress("building", null);
+  const result = buildResult(!signal.aborted, signal.aborted
+    ? "Scan stopped before all discovered wallets were scanned. Fetched transactions are retained."
+    : undefined);
+  onSnapshot?.(result);
+  return result;
 }

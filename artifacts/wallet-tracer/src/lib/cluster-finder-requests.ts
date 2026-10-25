@@ -2,6 +2,35 @@
 // tab) from independently spending the API's per-IP request allowance.
 const REQUEST_INTERVAL_MS = 1_250; // At most 48 starts/minute; leave headroom.
 const MAX_RETRIES = 6;
+export const CLUSTER_REQUEST_TIMEOUT_MS = 45_000;
+
+/** Settle even if a provider ignores abort, so it cannot block the shared queue. */
+export function clusterTimedRequest<T>(
+  request: (signal: AbortSignal) => Promise<T>,
+  signal: AbortSignal,
+  timeoutMs = CLUSTER_REQUEST_TIMEOUT_MS,
+): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const controller = new AbortController();
+    const onAbort = () => {
+      controller.abort();
+      reject(new DOMException("Cluster scan cancelled", "AbortError"));
+    };
+    if (signal.aborted) { onAbort(); return; }
+    const timer = setTimeout(() => {
+      controller.abort();
+      reject(new TypeError(`History request timed out after ${Math.ceil(timeoutMs / 1000)} seconds`));
+    }, timeoutMs);
+    signal.addEventListener("abort", onAbort, { once: true });
+    Promise.resolve().then(() => request(controller.signal)).then(resolve, reject).finally(() => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    });
+    // Cleanup must not depend on the underlying fetch honoring its abort.
+    const cleanup = () => { clearTimeout(timer); signal.removeEventListener("abort", onAbort); };
+    controller.signal.addEventListener("abort", cleanup, { once: true });
+  });
+}
 
 export function clusterDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -58,7 +87,7 @@ let tail: Promise<unknown> = Promise.resolve();
 let nextRequestAt = 0;
 
 export function clusterRequest<T>(
-  request: () => Promise<T>,
+  request: (signal: AbortSignal) => Promise<T>,
   signal: AbortSignal,
   onRetry?: (message: string) => void,
 ): Promise<T> {
@@ -67,7 +96,7 @@ export function clusterRequest<T>(
       await clusterDelay(nextRequestAt - Date.now(), signal);
       nextRequestAt = Date.now() + REQUEST_INTERVAL_MS;
       try {
-        return await request();
+        return await clusterTimedRequest(request, signal);
       } catch (error) {
         if (signal.aborted) throw new DOMException("Cluster scan cancelled", "AbortError");
         const delay = clusterRetryDelay(error, attempt);

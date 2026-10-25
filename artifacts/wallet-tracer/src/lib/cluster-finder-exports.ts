@@ -24,6 +24,24 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       }).join("")}
       </tbody></table>
     `).join("")}</section>`).join("");
+  const exchangeTransactions = result.usExchangeTransactions ?? [];
+  const exchangeSection = `<section><h2>US exchange IN/OUT transactions</h2>
+    <p>Observed in the fetched histories of scanned eligible wallets, including wallets without an observed connection to the lead.
+    Uses the application's existing US-exchange reporting classification and known wallet labels, not a live verification of exchange headquarters.
+    Exchange wallets are excluded from path traversal and the graph; no additional histories are fetched.</p>
+    <p><strong>Direction is relative to the listed wallet:</strong> IN = exchange → wallet; OUT = wallet → exchange.
+    Successful transfers only. The scan's incomplete-history warnings also apply to this section.</p>
+    ${exchangeTransactions.length ? `<table class="exchange-table"><thead><tr>
+      <th>Wallet address</th><th>Exchange name / address</th><th>Exact amount</th><th>TX hash</th><th>Date/time (UTC)</th><th>Direction</th>
+    </tr></thead><tbody>${exchangeTransactions.map((entry) => {
+      const tx = entry.transaction;
+      const date = new Date(tx.timestamp);
+      return `<tr><td class="hash">${text(entry.walletAddress)}</td>
+        <td>${text(entry.exchangeName)}<br><span class="hash">${text(entry.exchangeAddress)}</span></td>
+        <td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td class="hash">${text(tx.hash)}</td>
+        <td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td><td>${text(entry.direction)}</td></tr>`;
+    }).join("")}</tbody></table>` : "<p>No US-exchange transactions were observed in the fetched histories. This is not proof that none exist.</p>"}
+    </section>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Cluster Finder Report</title>
     <style>
       @page { size: landscape; margin: 14mm; }
@@ -33,6 +51,10 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       table { width:100%; border-collapse:collapse; table-layout:fixed; margin-bottom:18px; }
       th,td { border:1px solid #bac5cf; padding:8px; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
       th:first-child { width:48%; } thead { display:table-header-group; } tr { break-inside:avoid; }
+      .exchange-table th:first-child { width:20%; }
+      .exchange-table th:nth-child(2),.exchange-table th:nth-child(3) { width:12%; }
+      .exchange-table th:nth-child(4) { width:28%; } .exchange-table th:nth-child(5) { width:18%; }
+      .exchange-table th:nth-child(6) { width:10%; }
       h2,h3,.address { break-after:avoid; } .hash,.address { font-family:monospace; }
       .warning { border:1px solid #96722e; padding:10px; background:#fff9e9; }
       @media print { body { margin:0; } }
@@ -42,7 +64,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     <p class="address"><strong>Lead wallet:</strong> ${text(result.primaryAddress)}</p>
     <p>${result.scannedWallets} wallets scanned · ${result.scannedTransactions} transactions scanned · ${result.connections.length} connected inputs</p>
     <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? "Scan complete within the configured history cap." : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
-    <p>Only observed successful private-wallet transfers are shown. Arrows indicate sender → recipient.
+    <p>Hop-by-hop paths show only observed successful transfers between unlabeled wallets or wallets labeled Treasury, Stardust Collective, or Team Foundation. Arrows indicate sender → recipient.
     Hop numbers are minimum distance from each input; branches and cycles are listed as observed flows, not proof of a single chronological path or common ownership.
     Histories are limited to 25,000 transactions per wallet; traversal has no artificial hop limit.</p>
     ${list("Input wallets", result.inputAddresses)}
@@ -51,6 +73,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     ${list("Histories that reached the 25,000 transaction cap", result.truncatedAddresses)}
     ${result.fetchErrors.length ? `<h3>Incomplete history warnings</h3><ul>${result.fetchErrors.map((error) => `<li>${text(error.address)}: ${text(error.message)}</li>`).join("")}</ul>` : ""}
     ${sections || "<p>No connecting private-wallet paths were observed in this scan.</p>"}
+    ${exchangeSection}
     </body></html>`;
 }
 

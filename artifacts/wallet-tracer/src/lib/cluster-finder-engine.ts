@@ -46,6 +46,14 @@ export interface ClusterConnectionFlow extends ClusterFlow {
   hop: number;
 }
 
+export interface ClusterUsExchangeTransaction {
+  walletAddress: string;
+  exchangeAddress: string;
+  exchangeName: string;
+  direction: "IN" | "OUT";
+  transaction: ClusterTransaction;
+}
+
 export interface ClusterProgress {
   phase: "scanning" | "building";
   requestStatus?: string;
@@ -64,6 +72,7 @@ export interface ClusterFinderResult {
   nodes: ClusterNode[];
   flows: ClusterFlow[];
   connections: ClusterConnection[];
+  usExchangeTransactions: ClusterUsExchangeTransaction[];
   disconnectedAddresses: string[];
   excludedAddresses: string[];
   truncatedAddresses: string[];
@@ -86,8 +95,13 @@ export interface ClusterFinderOptions {
 export const MAX_CLUSTER_HISTORY_PER_WALLET = 25_000;
 
 const INFRASTRUCTURE_TYPES = new Set(["exchange", "bridge", "genesis"]);
-const LABELED_INFRASTRUCTURE_TYPES = new Set(["official", "dag-team", "defi"]);
-const PRIVATE_ENTITY_LABEL = /\bteam\s+(?:foundation|fdn)\b|\bstardust\s+collective\b/i;
+const PRIVATE_ENTITY_LABEL = /\btreasury\b|\bteam\s+(?:foundation|fdn)\b|\bstardust\s+collective\b/i;
+// Match the existing wallet-detail report's US_REGULATED classification.
+// Keep this Cluster Finder-only; other reports and shared labels are unchanged.
+const US_EXCHANGE_NAMES = new Map([
+  "Coinbase", "Kraken", "Gemini", "Bitstamp", "Uphold",
+  "Robinhood", "Binance.US", "Bittrex", "eToro",
+].map((name) => [name.toLowerCase(), name]));
 const PAGE_SIZE: Record<ClusterChain, number> = {
   bitcoin: 25,
   dag: 250,
@@ -174,10 +188,9 @@ export async function runClusterFinder(
     const type = info.type.toLowerCase();
     // Exchange/bridge/genesis classifications take precedence over any label.
     if (INFRASTRUCTURE_TYPES.has(type)) return false;
-    // Include Team Foundation and Stardust Collective, including legacy Fdn
-    // labels, without admitting other official, reward, or METAGRAPH wallets.
-    if (PRIVATE_ENTITY_LABEL.test(info.label)) return true;
-    return !LABELED_INFRASTRUCTURE_TYPES.has(type);
+    // Only the named entity labels are allowed; every other known label is
+    // excluded, regardless of type. Legacy Foundation/Fdn labels still match.
+    return PRIVATE_ENTITY_LABEL.test(info.label);
   };
 
   const primaryKey = canonicalize(primaryAddress);
@@ -219,6 +232,7 @@ export async function runClusterFinder(
   let connectedInputs = 0;
   const truncatedKeys = new Set<string>();
   const fetchErrors: Array<{ address: string; message: string }> = [];
+  const usExchangeTransactions = new Map<string, ClusterUsExchangeTransaction>();
 
   const reportProgress = (phase: ClusterProgress["phase"], activeAddress: string | null, requestStatus?: string) => {
     onProgress?.({
@@ -312,14 +326,8 @@ export async function runClusterFinder(
         if (tx.status !== "success" || !tx.from || !tx.to || tx.from === tx.to) continue;
         const fromKey = rememberAddress(tx.from);
         const toKey = rememberAddress(tx.to);
-        if (!fromKey || !toKey || !isPrivate(tx.from) || !isPrivate(tx.to)) continue;
+        if (!fromKey || !toKey) continue;
 
-        const bucketKey = `${fromKey}\u0000${toKey}`;
-        let bucket = flowBuckets.get(bucketKey);
-        if (!bucket) {
-          bucket = { fromKey, toKey, transactions: new Map() };
-          flowBuckets.set(bucketKey, bucket);
-        }
         const compactTx: ClusterTransaction = {
           hash: tx.hash,
           from: tx.from,
@@ -330,6 +338,34 @@ export async function runClusterFinder(
           tokenSymbol: tx.tokenSymbol,
           status: tx.status,
         };
+        // Record exchange touches from this eligible wallet's already-fetched
+        // history only. Exchanges never become traversal nodes or graph edges.
+        const direction = fromKey === currentKey ? "OUT" : toKey === currentKey ? "IN" : null;
+        if (direction) {
+          const exchangeAddress = direction === "OUT" ? tx.to : tx.from;
+          const exchange = knownInfo(exchangeAddress);
+          const exchangeName = exchange?.type.toLowerCase() === "exchange"
+            ? US_EXCHANGE_NAMES.get(exchange.label.trim().split(/\s+/)[0].toLowerCase())
+            : undefined;
+          if (exchangeName) {
+            const key = `${currentKey}|${direction}|${transactionKey(compactTx, fromKey, toKey)}`;
+            usExchangeTransactions.set(key, {
+              walletAddress: currentAddress,
+              exchangeAddress: addressByKey.get(direction === "OUT" ? toKey : fromKey) ?? exchangeAddress,
+              exchangeName,
+              direction,
+              transaction: compactTx,
+            });
+          }
+        }
+        if (!isPrivate(tx.from) || !isPrivate(tx.to)) continue;
+
+        const bucketKey = `${fromKey}\u0000${toKey}`;
+        let bucket = flowBuckets.get(bucketKey);
+        if (!bucket) {
+          bucket = { fromKey, toKey, transactions: new Map() };
+          flowBuckets.set(bucketKey, bucket);
+        }
         bucket.transactions.set(transactionKey(compactTx, fromKey, toKey), compactTx);
 
         // The transaction response is for the current wallet. Follow only
@@ -459,6 +495,11 @@ export async function runClusterFinder(
       to: addressByKey.get(flow.to) ?? flow.to,
     })),
     connections,
+    usExchangeTransactions: [...usExchangeTransactions.values()].sort(
+      (a, b) => Date.parse(a.transaction.timestamp) - Date.parse(b.transaction.timestamp)
+        || a.walletAddress.localeCompare(b.walletAddress)
+        || a.transaction.hash.localeCompare(b.transaction.hash),
+    ),
     disconnectedAddresses,
     excludedAddresses,
     truncatedAddresses,

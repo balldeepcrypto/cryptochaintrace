@@ -154,7 +154,7 @@ export default function ClusterFinder() {
               </div>
               <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">Cluster Finder</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Trace private-wallet routes that converge on a lead. Infrastructure entities are excluded from paths; incomplete history stays visibly incomplete.
+                Trace private-wallet routes that converge on a lead. Unlabeled wallets and Treasury, Stardust Collective, or Team Foundation labels are allowed; other labeled wallets are excluded. Incomplete history stays visibly incomplete.
               </p>
             </div>
             <div className="flex items-center gap-2 border-t border-border/60 pt-4 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground md:border-l md:border-t-0 md:pl-5 md:pt-0">
@@ -351,7 +351,7 @@ export default function ClusterFinder() {
             {(result.disconnectedAddresses.length > 0 || result.excludedAddresses.length > 0 || result.truncatedAddresses.length > 0) && (
               <div className="grid gap-3 lg:grid-cols-3" data-testid="panel-scan-qualifiers">
                 {result.disconnectedAddresses.length > 0 && <Qualifier title="No observed connection" icon={<Unplug className="h-3.5 w-3.5" />} addresses={result.disconnectedAddresses} tone="amber" testId="panel-disconnected-addresses" note="No private-wallet path to the lead was found in the scanned history. This is not proof that no relationship exists." />}
-                {result.excludedAddresses.length > 0 && <Qualifier title="Known infrastructure excluded" icon={<ShieldCheck className="h-3.5 w-3.5" />} addresses={result.excludedAddresses} tone="slate" testId="panel-excluded-addresses" note="Recognized exchange, bridge, or genesis wallets are excluded from private-wallet path analysis." />}
+                {result.excludedAddresses.length > 0 && <Qualifier title="Known infrastructure excluded" icon={<ShieldCheck className="h-3.5 w-3.5" />} addresses={result.excludedAddresses} tone="slate" testId="panel-excluded-addresses" note="All labeled wallets are excluded except Treasury, Stardust Collective, and Team Foundation. Exchanges, bridges, and genesis wallets remain excluded regardless of label." />}
                 {result.truncatedAddresses.length > 0 && <Qualifier title="History truncated" icon={<AlertCircle className="h-3.5 w-3.5" />} addresses={result.truncatedAddresses} tone="rose" testId="panel-truncated-addresses" note={`Wallet history reached the ${MAX_CLUSTER_HISTORY_PER_WALLET.toLocaleString()} transaction cap. Paths may be incomplete.`} />}
               </div>
             )}

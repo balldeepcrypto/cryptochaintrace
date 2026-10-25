@@ -1,8 +1,10 @@
-import { memo, useState } from "react";
+import { memo, useMemo, useRef, useState } from "react";
 import ReactFlow, { Background, BackgroundVariant, Controls, MarkerType, Position, type Edge, type Node, type ReactFlowInstance } from "reactflow";
 import "reactflow/dist/style.css";
 import type { ClusterFlow, ClusterNode } from "@/lib/cluster-finder-engine";
 import { buildClusterGraphSvg, downloadClusterGraph } from "@/lib/cluster-finder-exports";
+import { filterClusterGraph } from "@/lib/cluster-finder-display";
+import { downloadClusterGraphPng } from "@/lib/cluster-finder-image";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 
@@ -16,8 +18,28 @@ function shorten(address: string) {
   return address.length > 24 ? `${address.slice(0, 10)}…${address.slice(-8)}` : address;
 }
 
-export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: clusterNodes, flows, selectedPath = [] }: ClusterFinderGraphProps) {
+export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allNodes, flows: allFlows, selectedPath = [] }: ClusterFinderGraphProps) {
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
+  const [showAll, setShowAll] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
+  const graphRef = useRef<HTMLDivElement>(null);
+  const { nodes: clusterNodes, flows } = useMemo(
+    () => showAll ? { nodes: allNodes, flows: allFlows } : filterClusterGraph(allNodes, allFlows),
+    [allNodes, allFlows, showAll],
+  );
+  const exportPng = async () => {
+    if (!graphRef.current) return;
+    setExporting(true);
+    setExportError("");
+    try {
+      await downloadClusterGraphPng(graphRef.current);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "PNG export failed. Try SVG export instead.");
+    } finally {
+      setExporting(false);
+    }
+  };
   const depth = new Map<string, number>();
   const primary = clusterNodes.find((node) => node.role === "primary")?.address;
   if (primary) depth.set(primary, 0);
@@ -111,20 +133,36 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: clus
   const height = Math.max(380, Math.max(1, ...[...levels.values()].map((items) => items.length)) * 128 + 100);
 
   return (
-    <div className="relative h-[420px] w-full overflow-hidden border border-border/70 bg-[#0b1118] sm:h-[500px]" data-testid="graph-private-flows" aria-label="Private wallet flow graph">
+    <div>
+      <div className="mb-3 flex flex-wrap items-center gap-2">
+        <label className="mr-auto flex items-center gap-2 text-xs text-muted-foreground">
+          <input type="checkbox" checked={showAll} onChange={(event) => setShowAll(event.target.checked)} data-testid="toggle-cluster-all-trails" />
+          Show all trails
+        </label>
       {nodes.length > 0 && (
+        <>
+        <Button type="button" variant="outline" size="sm" disabled={exporting}
+          data-testid="button-export-cluster-png" title="Capture the current graph view, zoom and pan as PNG"
+          onClick={exportPng}>
+          <Download className="mr-2 h-3.5 w-3.5" /> {exporting ? "Exporting…" : "Download View (PNG)"}
+        </Button>
         <Button
           type="button"
           variant="outline"
           size="sm"
-          className="absolute right-3 top-3 z-10 bg-background"
+          className="bg-background"
           data-testid="button-export-cluster-graph"
           title="Download the entire graph as an SVG image, including highlighted routes and a full wallet address key"
           onClick={() => downloadClusterGraph(buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows, selectedPath))}
         >
           <Download className="mr-2 h-3.5 w-3.5" /> Download Graph (SVG)
         </Button>
+        </>
       )}
+      </div>
+      <p className="mb-3 text-xs text-muted-foreground">Default: trails reaching 3+ hops from the nearest starting wallet, plus shorter connections between entered wallets. Display only; scan data and printed reports are unchanged. PNG captures the current viewport; SVG includes the full displayed graph.</p>
+      {exportError && <p role="alert" className="mb-3 text-xs text-red-400">{exportError}</p>}
+      <div ref={graphRef} className="relative h-[420px] w-full overflow-hidden border border-border/70 bg-[#0b1118] sm:h-[500px]" data-testid="graph-private-flows" aria-label="Private wallet flow graph">
       {nodes.length ? (
         <ReactFlow
           onInit={setInstance}
@@ -156,6 +194,7 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: clus
         </div>
       )}
       <span className="sr-only">Graph canvas height {height}px</span>
+      </div>
     </div>
   );
 });

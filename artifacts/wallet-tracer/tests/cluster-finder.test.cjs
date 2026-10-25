@@ -729,6 +729,86 @@ test("SVG exports full graph coordinates, directional edges, labels, highlights 
   assert.ok(!svg.includes("foreignObject"));
 });
 
+test("graph display hides short branches, retains 3+ hop trails and short search-set links without changing data", () => {
+  const { filterClusterGraph } = load("cluster-finder-display");
+  const nodes = ["lead", "a", "b", "c", "short1", "short2", "input", "connector"].map((address) => ({
+    address, label: null, role: address === "lead" ? "primary" : address === "input" ? "input" : "proxy",
+  }));
+  const flows = [
+    ["lead", "a"], ["a", "b"], ["b", "c"],
+    ["lead", "short1"], ["short1", "short2"],
+    ["input", "connector"], ["connector", "lead"],
+  ].map(([from, to], index) => ({ id: `flow-${index}`, from, to, transactions: [tx(from, to)] }));
+  const before = JSON.stringify({ nodes, flows });
+  const filtered = filterClusterGraph(nodes, flows);
+  assert.equal(filtered.nodes.length, 6);
+  assert.equal(filtered.flows.length, 5);
+  assert.ok(!filtered.nodes.some((node) => node.address.startsWith("short")));
+  assert.ok(filtered.nodes.some((node) => node.address === "connector"));
+  assert.equal(filtered.flows[0], flows[0]);
+  assert.equal(JSON.stringify({ nodes, flows }), before);
+});
+
+test("graph filtering keeps both directions, alternate qualifying routes and direct entered-wallet links", () => {
+  const { filterClusterGraph } = load("cluster-finder-display");
+  const makeNodes = (addresses) => addresses.map((address) => ({
+    address, label: null, role: address === "lead" ? "primary" : address === "input" ? "input" : "proxy",
+  }));
+  const flows = [
+    ["a", "lead"], ["b", "a"], ["c", "b"], ["lead", "alt"], ["alt", "b"],
+    ["input", "lead"], ["lead", "input"],
+  ].map(([from, to], index) => ({ id: String(index), from, to, transactions: [tx(from, to)] }));
+  const result = filterClusterGraph(makeNodes(["lead", "input", "a", "b", "c", "alt"]), flows);
+  assert.equal(result.flows.length, flows.length);
+  const shortOnly = filterClusterGraph(makeNodes(["lead", "a", "b"]), flows.slice(0, 2));
+  assert.deepEqual(Array.from(shortOnly.nodes, (node) => node.address), ["lead"]);
+  assert.equal(shortOnly.flows.length, 0);
+  assert.equal(filterClusterGraph([], []).nodes.length, 0);
+});
+
+test("PNG export captures the actual graph element at current viewport, excludes controls and downloads locally", async () => {
+  const element = {};
+  let captureOptions;
+  let clicked = false;
+  let removed = false;
+  let revoked = false;
+  const link = { click: () => { clicked = true; }, remove: () => { removed = true; } };
+  class FakeElement {
+    constructor(name) { this.classList = { contains: (value) => value === name }; }
+  }
+  const imageBlob = new Blob(["png"], { type: "image/png" });
+  const api = load("cluster-finder-image", {
+    "html-to-image": { toBlob: async (target, options) => {
+      assert.equal(target, element);
+      captureOptions = options;
+      return imageBlob;
+    } },
+  }, {
+    Element: FakeElement,
+    URL: {
+      createObjectURL: (blob) => { assert.equal(blob, imageBlob); return "blob:graph"; },
+      revokeObjectURL: (url) => { assert.equal(url, "blob:graph"); revoked = true; },
+    },
+    document: {
+      createElement: (tag) => { assert.equal(tag, "a"); return link; },
+      body: { appendChild: (target) => assert.equal(target, link) },
+    },
+    window: { setTimeout: (callback) => callback() },
+  });
+  await api.downloadClusterGraphPng(element);
+  assert.equal(captureOptions.pixelRatio, 2);
+  assert.equal(captureOptions.backgroundColor, "#0b1118");
+  assert.equal(captureOptions.filter(new FakeElement("react-flow__controls")), false);
+  assert.equal(captureOptions.filter(new FakeElement("react-flow__attribution")), false);
+  for (const name of ["react-flow__node", "react-flow__edge", "react-flow__edgelabel-renderer"]) {
+    assert.equal(captureOptions.filter(new FakeElement(name)), true);
+  }
+  assert.equal(clicked && removed && revoked, true);
+  assert.match(link.download, /^cluster-finder-view-.*\.png$/);
+  const failed = load("cluster-finder-image", { "html-to-image": { toBlob: async () => null } });
+  await assert.rejects(failed.downloadClusterGraphPng(element), /could not be created/);
+});
+
 test("print and download actions create a local print document and SVG download", () => {
   const created = [];
   const appended = [];

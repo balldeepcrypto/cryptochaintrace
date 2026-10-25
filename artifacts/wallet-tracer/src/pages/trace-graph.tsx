@@ -172,6 +172,10 @@ const GRAPH_KNOWN_LABELS: Record<string, string> = {
   "DAG5hKjytwENhcx2vmC5qWyWSgnqWmYq7cUvGLDG": "Node Staking Reward Wallet",
   "DAG85WHJvW9yVfVj1CYshjAg5zrptbNHrhVEbh6o": "Dor Enterprise Reward Wallet",
   "DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1": "Upsider Reward METAGRAPH Wallet",
+  "DAG27s6jC8uacvosfzF1x8DwaefKmm8gCXtpeAeW": "Treasury",
+  "DAG8BSw4tGn269vbF9wor4FGd4yt9XGdJuiMb6uS": "Data Pool Distribution",
+  "DAG3Sycgyv3UHQM3JDuGguoF5776ceR8GiwpdFJ9": "Historical Treasury (2023 Transition)",
+  "DAG0kib4L4YYZCWrch6eBYeQkYCywTCuEZX58vTp": "Historical Treasury (2023 Transition)",
 };
 
 interface NodeStyle {

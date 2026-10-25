@@ -801,6 +801,10 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG3tC21XtXvoUD8hTMQzHm7T21MHahuFPVrPBtR: { label: "[DAG Treasury]",            type: "dag-team" },
   DAG1nw5WkZdQf96Df3PkrjLxeHj2EV3oLkWPZQcD: { label: "[DAG Treasury 2]",          type: "dag-team" },
   DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV: { label: "Lattice Treasury",         type: "dag-team" },
+  DAG27s6jC8uacvosfzF1x8DwaefKmm8gCXtpeAeW: { label: "Treasury", type: "dag-team" },
+  DAG8BSw4tGn269vbF9wor4FGd4yt9XGdJuiMb6uS: { label: "Data Pool Distribution", type: "dag-team" },
+  DAG3Sycgyv3UHQM3JDuGguoF5776ceR8GiwpdFJ9: { label: "Historical Treasury (2023 Transition)", type: "dag-team" },
+  DAG0kib4L4YYZCWrch6eBYeQkYCywTCuEZX58vTp: { label: "Historical Treasury (2023 Transition)", type: "dag-team" },
   // Bridge / Infrastructure (DAG only)
   DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Official Bridge / Base Wallet", type: "official" },
   DAG7R9cHuBgWS7w2tybcJHrTHFxtMdNB6523JAMQ: { label: "Constellation Official Bridge / Base Wallet", type: "official" },

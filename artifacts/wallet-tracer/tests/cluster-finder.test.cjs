@@ -152,6 +152,7 @@ function engine(getWalletTransactions) {
 
 function options(overrides = {}) {
   return {
+    maxHops: 6,
     addresses: ["input", "lead"], primaryAddress: "lead", chain: "dag",
     signal: new AbortController().signal,
     getKnownInfo: () => null, normalizeAddress: (address) => address,
@@ -235,6 +236,65 @@ test("invalid and repeated pagination cursors retain fetched pages with explicit
     assert.equal(result.flows[0].transactions.length, repeat ? 2 : 1);
     assert.match(result.fetchErrors[0].message, /retained.*incomplete/);
   }
+});
+
+test("selected 3, 4 and 6 hop boundaries scan each wallet once and retain boundary histories only", async () => {
+  for (const maxHops of [3, 4, 6]) {
+    const transfers = Array.from({ length: 7 }, (_, index) => tx(
+      index === 0 ? "lead" : `wallet-${index}`, `wallet-${index + 1}`, `hop-${index + 1}`,
+    ));
+    // Repeated transactions and cycles must not cause duplicate wallet scans.
+    transfers.push(tx("wallet-2", "wallet-1", "cycle"));
+    const scanned = [];
+    const snapshots = [];
+    const api = engine(async (address) => {
+      scanned.push(address);
+      const transactions = transfers.filter((item) => item.from === address || item.to === address);
+      return { transactions: [...transactions, ...transactions], hasMore: false };
+    });
+    const result = await api.runClusterFinder(options({
+      addresses: ["lead"], maxHops, onSnapshot: (snapshot) => snapshots.push(snapshot),
+    }));
+    assert.equal(result.maxHops, maxHops);
+    assert.equal(result.complete, true);
+    assert.equal(scanned.length, maxHops + 1);
+    assert.equal(new Set(scanned).size, scanned.length);
+    assert.ok(scanned.includes(`wallet-${maxHops}`));
+    assert.ok(!scanned.includes(`wallet-${maxHops + 1}`));
+    assert.ok(!result.nodes.some((node) => node.address === `wallet-${maxHops + 1}`));
+    assert.ok(result.flows.every((flow) => flow.discoveryHop <= maxHops));
+    assert.ok(result.flows.every((flow) => flow.transactions.length === 1));
+    assert.ok(snapshots.every((snapshot) => snapshot.maxHops === maxHops));
+    const report = exportsModule().buildClusterReport(result);
+    const name = { 3: "three", 4: "four", 6: "six" }[maxHops];
+    assert.ok(report.includes(`within the ${name}-hop boundary`));
+    assert.ok(report.includes(`Wallets at hop ${name} are scanned`));
+  }
+});
+
+test("the default scan boundary is four hops and invalid depths fail before fetching", async () => {
+  let requests = 0;
+  const api = engine(async () => { requests++; return { transactions: [], hasMore: false }; });
+  const withoutDepth = options();
+  delete withoutDepth.maxHops;
+  assert.equal((await api.runClusterFinder(withoutDepth)).maxHops, 4);
+  const before = requests;
+  for (const maxHops of [0, 2, 5, 7, "4", NaN]) {
+    await assert.rejects(api.runClusterFinder(options({ maxHops })), /hop depth of 3, 4, or 6/);
+  }
+  assert.equal(requests, before);
+});
+
+test("hop selector passes and checkpoints its setting while the existing graph toggle stays default-off", () => {
+  const page = fs.readFileSync(path.join(__dirname, "../src/pages/cluster-finder.tsx"), "utf8");
+  const graph = fs.readFileSync(path.join(__dirname, "../src/components/cluster-finder-graph.tsx"), "utf8");
+  assert.match(page, /useState<ClusterHopDepth>\(DEFAULT_CLUSTER_HOPS\)/);
+  assert.match(page, /\[3, 4, 6\]\.map/);
+  assert.match(page, /value=\{String\(maxHops\)\}.*disabled=\{scanState === "running"\}/);
+  assert.match(page, /chain, maxHops, addressText/);
+  assert.match(page, /checkpoint\.maxHops \?\? checkpoint\.result\?\.maxHops \?\? 6/);
+  assert.match(graph, /\[showAll, setShowAll\] = useState\(false\)/);
+  assert.match(graph, /toggle-cluster-all-trails/);
 });
 
 test("six-hop expansion from both starting wallets joins their trails without re-scanning", async () => {

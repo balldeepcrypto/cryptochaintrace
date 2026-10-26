@@ -1,10 +1,11 @@
-import type { ClusterChain, ClusterFinderResult, ClusterProgress } from "./cluster-finder-engine";
+import type { ClusterChain, ClusterFinderResult, ClusterProgress, ClusterHopDepth } from "./cluster-finder-engine";
 
 export interface ClusterCheckpoint {
   version: 1;
   runId: string;
   savedAt: string;
   chain: ClusterChain;
+  maxHops?: ClusterHopDepth;
   addressText: string;
   primaryAddress: string;
   state: "running" | "complete" | "cancelled" | "failed";

@@ -9,6 +9,7 @@ function escapeMarkup(value: unknown): string {
 
 export function buildClusterReport(result: ClusterFinderResult): string {
   const text = escapeMarkup;
+  const hopName = ({ 3: "three", 4: "four", 6: "six" } as const)[result.maxHops ?? 6];
   const list = (title: string, addresses: string[]) => addresses.length
     ? `<h3>${title}</h3><ul>${addresses.map((address) => `<li>${text(address)}</li>`).join("")}</ul>`
     : "";
@@ -25,7 +26,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       </tbody></table>
     `).join("")}</section>`).join("");
   const trailSection = `<section><h2>Complete recursive IN/OUT trail</h2>
-    <p>Expansion follows both transfer directions up to six hops from the lead and additional starting wallets (hop 0).
+    <p>Expansion follows both transfer directions up to ${hopName} hops from the lead and additional starting wallets (hop 0).
     Each wallet is scanned once. Discovery hops indicate minimum expansion depth from any starting wallet, not chronological transfer order.
     Separate starting-wallet components are shown without implying a connection between them.</p>
     ${result.flows.map((flow) => `<h3>Discovery hop ${text(flow.discoveryHop ?? "—")} — ${flow.transactions.length} observed transaction(s)</h3>
@@ -74,12 +75,12 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     <p>Generated: ${text(new Date().toISOString())} · Chain: ${text(result.chain)}</p>
     <p class="address"><strong>Lead wallet:</strong> ${text(result.primaryAddress)}</p>
     <p>${result.scannedWallets} wallets scanned · ${result.scannedTransactions} transactions scanned · ${result.connections.length} connected inputs</p>
-    <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? "Scan complete within the six-hop boundary and configured history cap." : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
+    <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? `Scan complete within the ${hopName}-hop boundary and configured history cap.` : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
     ${result.incompleteReason ? `<p class="warning">${text(result.incompleteReason)}</p>` : ""}
     <p>Hop-by-hop paths show only observed successful transfers between unlabeled wallets or wallets labeled Treasury, Stardust Collective, or Team Foundation. Arrows indicate sender → recipient.
     Hop numbers are minimum distance from each input; branches and cycles are listed as observed flows, not proof of a single chronological path or common ownership.
-    Histories are limited to 25,000 transactions per wallet; recursive IN/OUT expansion stops at six hops from any starting wallet.
-    Wallets at hop six are scanned, but links to wallets beyond the boundary are not followed.</p>
+    Histories are limited to 25,000 transactions per wallet; recursive IN/OUT expansion stops at ${hopName} hops from any starting wallet.
+    Wallets at hop ${hopName} are scanned, but links to wallets beyond the boundary are not followed.</p>
     ${list("Input wallets", result.inputAddresses)}
     ${list("No directed input-to-lead path within scanned boundary (IN/OUT links may still exist)", result.disconnectedAddresses)}
     ${list("Known infrastructure excluded", result.excludedAddresses)}

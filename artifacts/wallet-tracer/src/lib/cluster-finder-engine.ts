@@ -72,6 +72,7 @@ export interface ClusterProgress {
 
 export interface ClusterFinderResult {
   chain: ClusterChain;
+  maxHops?: ClusterHopDepth;
   primaryAddress: string;
   inputAddresses: string[];
   nodes: ClusterNode[];
@@ -92,6 +93,7 @@ export interface ClusterFinderOptions {
   addresses: string[];
   primaryAddress: string;
   chain: ClusterChain;
+  maxHops?: ClusterHopDepth;
   signal: AbortSignal;
   onProgress?: (progress: ClusterProgress) => void;
   onSnapshot?: (result: ClusterFinderResult) => void;
@@ -101,6 +103,8 @@ export interface ClusterFinderOptions {
 
 export const MAX_CLUSTER_HISTORY_PER_WALLET = 25_000;
 export const MAX_CLUSTER_HOPS = 6;
+export const DEFAULT_CLUSTER_HOPS = 4;
+export type ClusterHopDepth = 3 | 4 | 6;
 
 const INFRASTRUCTURE_TYPES = new Set(["exchange", "bridge", "genesis"]);
 const PRIVATE_ENTITY_LABEL = /\btreasury\b|\bteam\s+(?:foundation|fdn)\b|\bstardust\s+collective\b/i;
@@ -168,7 +172,7 @@ function buildConnectionFlows(
 
 /**
  * Breadth-first expansion in both transfer directions from every starting
- * wallet. Starting wallets are depth zero; wallets through depth six are
+ * wallet. Starting wallets are depth zero; wallets through the selected depth are
  * scanned once. Histories retain the existing 25,000 transaction cap.
  */
 export async function runClusterFinder(
@@ -184,6 +188,8 @@ export async function runClusterFinder(
     getKnownInfo,
     normalizeAddress,
   } = options;
+  const maxHops = options.maxHops ?? DEFAULT_CLUSTER_HOPS;
+  if (![3, 4, 6].includes(maxHops)) throw new Error("Choose a maximum hop depth of 3, 4, or 6.");
   const evmChains = new Set(["ethereum", "polygon", "bsc"]);
 
   const canonicalize = (address: string): string => {
@@ -370,7 +376,7 @@ export async function runClusterFinder(
 
         const neighborKey = fromKey === currentKey ? toKey : fromKey;
         const depth = depthByKey.get(currentKey)!;
-        if (!enqueued.has(neighborKey) && depth < MAX_CLUSTER_HOPS) {
+        if (!enqueued.has(neighborKey) && depth < maxHops) {
           enqueued.add(neighborKey);
           depthByKey.set(neighborKey, depth + 1);
           queue.push(neighborKey);
@@ -408,8 +414,8 @@ export async function runClusterFinder(
 
   function buildResult(finished: boolean, incompleteReason?: string): ClusterFinderResult {
   const flowList: ClusterFlow[] = [...flowBuckets.values()]
-    // A depth-six history may expose a depth-seven neighbor. Retain a flow
-    // only if both ends were discovered inside the six-hop scan boundary.
+    // A boundary history may expose a neighbor beyond the selected depth.
+    // Retain a flow only if both ends were discovered inside the scan boundary.
     .filter((bucket) => depthByKey.has(bucket.fromKey) && depthByKey.has(bucket.toKey))
     .sort((a, b) => a.fromKey.localeCompare(b.fromKey) || a.toKey.localeCompare(b.toKey))
     .map((bucket, index) => ({
@@ -489,6 +495,7 @@ export async function runClusterFinder(
 
   return {
     chain,
+    maxHops,
     primaryAddress: addressByKey.get(primaryKey) ?? primaryAddress,
     inputAddresses,
     nodes,

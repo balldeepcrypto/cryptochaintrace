@@ -189,7 +189,7 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
           <div>
             <div className="mx-auto mb-3 h-px w-12 bg-amber-300/50" />
             <p className="font-mono text-xs uppercase tracking-[0.18em] text-muted-foreground">No connecting private-wallet flows</p>
-            <p className="mt-2 max-w-sm text-xs leading-5 text-muted-foreground/70">Eligible wallets and observed IN/OUT flows within six hops of the starting wallets appear here.</p>
+            <p className="mt-2 max-w-sm text-xs leading-5 text-muted-foreground/70">Eligible wallets and observed IN/OUT flows within the selected hop depth appear here.</p>
           </div>
         </div>
       )}

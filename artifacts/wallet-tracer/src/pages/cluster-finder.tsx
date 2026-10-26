@@ -11,6 +11,8 @@ import {
   CLUSTER_CHAIN_OPTIONS,
   MAX_CLUSTER_HISTORY_PER_WALLET,
   runClusterFinder,
+  DEFAULT_CLUSTER_HOPS,
+  type ClusterHopDepth,
   type ClusterChain,
   type ClusterFinderResult,
   type ClusterProgress,
@@ -55,6 +57,7 @@ export default function ClusterFinder() {
   const { user } = useAuth();
   const owner = user?.id;
   const [chain, setChain] = useState<ClusterChain>("ethereum");
+  const [maxHops, setMaxHops] = useState<ClusterHopDepth>(DEFAULT_CLUSTER_HOPS);
   const [addressText, setAddressText] = useState("");
   const [primaryAddress, setPrimaryAddress] = useState("");
   const [scanState, setScanState] = useState<ScanState>("idle");
@@ -81,11 +84,14 @@ export default function ClusterFinder() {
     setScanError("");
     setAddressText("");
     setPrimaryAddress("");
+    setMaxHops(DEFAULT_CLUSTER_HOPS);
     setSelectedInput(null);
     if (owner) {
       void loadClusterCheckpoint(owner).then((checkpoint) => {
         if (disposed || !checkpoint) return;
         setChain(checkpoint.chain);
+        // Checkpoints created before the selector always used six hops.
+        setMaxHops(checkpoint.maxHops ?? checkpoint.result?.maxHops ?? 6);
         setAddressText(checkpoint.addressText);
         setPrimaryAddress(checkpoint.primaryAddress);
         setProgress(checkpoint.progress);
@@ -135,7 +141,8 @@ export default function ClusterFinder() {
   ).length;
   // Recursive fan-out is unknown until fetched. A percentage of total work
   // would be misleading; show the actual BFS hop and queue instead.
-  const hopProgress = ((progress?.currentHop ?? 0) / 6) * 100;
+  const scannedHopLimit = result?.maxHops ?? maxHops;
+  const hopProgress = ((progress?.currentHop ?? 0) / scannedHopLimit) * 100;
   const activeSelection = result?.connections.find((connection) => connection.inputAddress === selectedInput) ?? result?.connections[0];
   const selectedPath = useMemo(() => activeSelection?.nodes ?? [], [activeSelection]);
 
@@ -157,7 +164,7 @@ export default function ClusterFinder() {
     const checkpoint = (state: ClusterCheckpoint["state"], error = "") => {
       const saved: ClusterCheckpoint = {
         version: 1, runId, savedAt: new Date().toISOString(),
-        chain, addressText, primaryAddress: primaryAddress.trim(),
+        chain, maxHops, addressText, primaryAddress: primaryAddress.trim(),
         state, result: latestResult, progress: latestProgress, error,
       };
       void saveClusterCheckpoint(owner, saved).then((written) => {
@@ -171,6 +178,7 @@ export default function ClusterFinder() {
         addresses: enteredAddresses,
         primaryAddress: primaryAddress.trim(),
         chain,
+        maxHops,
         signal: controller.signal,
         onProgress: (next) => {
           latestProgress = next;
@@ -247,7 +255,7 @@ export default function ClusterFinder() {
               </div>
               <h1 className="text-3xl font-semibold tracking-[-0.04em] text-foreground sm:text-4xl">Cluster Finder</h1>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-                Expand unique IN/OUT trails up to six hops from the lead and any additional starting wallets. Unlabeled wallets and Treasury, Stardust Collective, or Team Foundation labels are allowed; other labeled wallets are excluded. Incomplete history stays visibly incomplete.
+                Expand unique IN/OUT trails to your selected depth from the lead and any additional starting wallets. Unlabeled wallets and Treasury, Stardust Collective, or Team Foundation labels are allowed; other labeled wallets are excluded. Incomplete history stays visibly incomplete.
               </p>
             </div>
             <div className="flex items-center gap-2 border-t border-border/60 pt-4 font-mono text-[10px] uppercase tracking-[0.14em] text-muted-foreground md:border-l md:border-t-0 md:pl-5 md:pt-0">
@@ -268,6 +276,15 @@ export default function ClusterFinder() {
               <h2 className="mt-1 text-base font-medium">Define the wallet set</h2>
             </div>
             <div className="space-y-5 p-5">
+              <div>
+                <label htmlFor="cluster-hop-depth" className="mb-2 block font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Maximum hop depth</label>
+                <Select value={String(maxHops)} onValueChange={(value) => setMaxHops(Number(value) as ClusterHopDepth)} disabled={scanState === "running"}>
+                  <SelectTrigger id="cluster-hop-depth" data-testid="select-cluster-hop-depth"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {[3, 4, 6].map((depth) => <SelectItem key={depth} value={String(depth)}>{depth} hops</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
               <div>
                 <label htmlFor="cluster-chain" className="mb-2 block font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Network</label>
                 <Select value={chain} onValueChange={(value) => setChain(value as ClusterChain)} disabled={scanState === "running"}>
@@ -351,10 +368,10 @@ export default function ClusterFinder() {
                         <div className="mt-1 font-mono text-[10px] text-muted-foreground">{progress?.activeAddress ? shortAddress(progress.activeAddress) : "Expanding unique IN/OUT histories"}</div>
                       </div>
                     </div>
-                    <span className="font-mono text-xs tabular-nums text-cyan-100" data-testid="status-cluster-hop">Hop {progress?.currentHop ?? 0} / 6</span>
+                    <span className="font-mono text-xs tabular-nums text-cyan-100" data-testid="status-cluster-hop">Hop {progress?.currentHop ?? 0} / {scannedHopLimit}</span>
                   </div>
                   <Progress value={hopProgress} className="h-1 rounded-none bg-muted [&>div]:bg-cyan-200" aria-label="Expansion hop, not percentage of total work" />
-                  <p className="text-xs text-muted-foreground">The total work is unknown until links are discovered. Hop 6 is the final layer, not a guarantee that all histories are finished.</p>
+                  <p className="text-xs text-muted-foreground">The total work is unknown until links are discovered. Hop {scannedHopLimit} is the final layer, not a guarantee that all histories are finished.</p>
                   {progress?.requestStatus && (
                     <p className="border border-amber-200/20 bg-amber-200/5 p-3 text-xs leading-5 text-amber-100" data-testid="status-cluster-retry">
                       {progress.requestStatus}
@@ -367,7 +384,7 @@ export default function ClusterFinder() {
                     <Metric label="Pages fetched" value={progress?.pagesFetched ?? 0} />
                   </div>
                   <p className="font-mono text-xs text-muted-foreground">Discovered {progress?.discoveredWallets ?? 0} · Active {progress?.activeWallets ?? 0} · Directed inputs connected {result?.connections.length ?? 0} / {inputCount}</p>
-                  <p className="text-xs leading-5 text-muted-foreground">IN/OUT history expands breadth-first from all starting wallets through six hops, without re-scanning wallets. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Six-hop branching can discover many wallets and take hours. Partial results below update about every five seconds as pages arrive; stopping the scan retains fetched data.</p>
+                  <p className="text-xs leading-5 text-muted-foreground">IN/OUT history expands breadth-first from all starting wallets through {scannedHopLimit} hops, without re-scanning wallets. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Recursive branching can discover many wallets and take hours. Partial results below update about every five seconds as pages arrive; stopping the scan retains fetched data.</p>
                 </div>
               ) : scanState === "idle" ? (
                 <div className="flex min-h-[175px] items-center gap-4">
@@ -446,7 +463,7 @@ export default function ClusterFinder() {
 
             {(result.disconnectedAddresses.length > 0 || result.excludedAddresses.length > 0 || result.truncatedAddresses.length > 0) && (
               <div className="grid gap-3 lg:grid-cols-3" data-testid="panel-scan-qualifiers">
-                {result.disconnectedAddresses.length > 0 && <Qualifier title="No directed path to lead" icon={<Unplug className="h-3.5 w-3.5" />} addresses={result.disconnectedAddresses} tone="amber" testId="panel-disconnected-addresses" note="No directed private-wallet path toward the lead was found within the scanned six-hop boundary. These wallets may still have IN/OUT links in the full graph. This is not proof that no relationship exists." />}
+                {result.disconnectedAddresses.length > 0 && <Qualifier title="No directed path to lead" icon={<Unplug className="h-3.5 w-3.5" />} addresses={result.disconnectedAddresses} tone="amber" testId="panel-disconnected-addresses" note={`No directed private-wallet path toward the lead was found within the scanned ${result.maxHops ?? 6}-hop boundary. These wallets may still have IN/OUT links in the full graph. This is not proof that no relationship exists.`} />}
                 {result.excludedAddresses.length > 0 && <Qualifier title="Known infrastructure excluded" icon={<ShieldCheck className="h-3.5 w-3.5" />} addresses={result.excludedAddresses} tone="slate" testId="panel-excluded-addresses" note="All labeled wallets are excluded except Treasury, Stardust Collective, and Team Foundation. Exchanges, bridges, and genesis wallets remain excluded regardless of label." />}
                 {result.truncatedAddresses.length > 0 && <Qualifier title="History truncated" icon={<AlertCircle className="h-3.5 w-3.5" />} addresses={result.truncatedAddresses} tone="rose" testId="panel-truncated-addresses" note={`Wallet history reached the ${MAX_CLUSTER_HISTORY_PER_WALLET.toLocaleString()} transaction cap. Paths may be incomplete.`} />}
               </div>
@@ -465,7 +482,7 @@ export default function ClusterFinder() {
                   </div>
                 </div>
                 <ClusterFinderGraph nodes={result.nodes} flows={result.flows} selectedPath={selectedPath} />
-                <div className="border-t border-border/60 px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/65">All eligible IN/OUT links within six hops · arrows show sender → recipient · separate components do not imply a connection.</div>
+                <div className="border-t border-border/60 px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/65">Scanned boundary: {result.maxHops ?? 6} hops · arrows show sender → recipient · separate components do not imply a connection.</div>
                 <div className="border-t border-border/60 p-4" data-testid="panel-recursive-trail">
                   <h3 className="text-sm font-medium">Complete recursive trail</h3>
                   <p className="mt-1 mb-3 text-xs text-muted-foreground">Discovery hops are minimum expansion depth from any starting wallet, not chronological transfer order. Expand a flow for all unique transactions.</p>

@@ -6,6 +6,7 @@ export interface ClusterCheckpoint {
   savedAt: string;
   chain: ClusterChain;
   maxHops?: ClusterHopDepth;
+  focusText?: string;
   addressText: string;
   primaryAddress: string;
   state: "running" | "complete" | "cancelled" | "failed";

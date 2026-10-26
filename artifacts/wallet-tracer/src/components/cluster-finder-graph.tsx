@@ -1,10 +1,12 @@
-import { memo, useMemo, useRef, useState } from "react";
-import ReactFlow, { Background, BackgroundVariant, Controls, MarkerType, Position, type Edge, type Node, type ReactFlowInstance } from "reactflow";
+import { memo, useMemo, useRef, useState, type ReactNode } from "react";
+import ReactFlow, { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "reactflow";
 import "reactflow/dist/style.css";
 import type { ClusterFlow, ClusterNode } from "@/lib/cluster-finder-engine";
-import { buildClusterGraphSvg, downloadClusterGraph } from "@/lib/cluster-finder-exports";
+import { buildClusterGraphSvg, clusterGraphHandleSides, downloadClusterGraph } from "@/lib/cluster-finder-exports";
 import { filterClusterGraph } from "@/lib/cluster-finder-display";
 import { downloadClusterGraphPng } from "@/lib/cluster-finder-image";
+import { triggerClusterDownload, type ClusterDownload } from "@/lib/cluster-finder-download";
+import { ClusterFinderDownloadLinks } from "./cluster-finder-download-links";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
 
@@ -12,32 +14,74 @@ interface ClusterFinderGraphProps {
   nodes: ClusterNode[];
   flows: ClusterFlow[];
   selectedPath?: string[];
+  focusAddresses?: string[];
+  focusFlowIds?: string[];
 }
 
 function shorten(address: string) {
   return address.length > 24 ? `${address.slice(0, 10)}…${address.slice(-8)}` : address;
 }
 
-export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allNodes, flows: allFlows, selectedPath = [] }: ClusterFinderGraphProps) {
+function ClusterWalletNode({ data }: NodeProps<{ label: ReactNode }>) {
+  return <>
+    {data.label}
+    {[Position.Left, Position.Right, Position.Top, Position.Bottom].map((position) => <span key={position}>
+      <Handle id={`${position}-out`} type="source" position={position} isConnectable={false} style={{ opacity: 0 }} />
+      <Handle id={`${position}-in`} type="target" position={position} isConnectable={false} style={{ opacity: 0 }} />
+    </span>)}
+  </>;
+}
+const nodeTypes = { clusterWallet: ClusterWalletNode };
+
+export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allNodes, flows: allFlows, selectedPath = [], focusAddresses = [], focusFlowIds = [] }: ClusterFinderGraphProps) {
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
   const [showAll, setShowAll] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState("");
+  const [pngFile, setPngFile] = useState<ClusterDownload | null>(null);
+  const [svgFile, setSvgFile] = useState<ClusterDownload | null>(null);
   const graphRef = useRef<HTMLDivElement>(null);
+  const focusIds = useMemo(() => new Set(focusFlowIds), [focusFlowIds]);
+  const focusNodes = useMemo(() => new Set([
+    ...focusAddresses, ...allFlows.filter((flow) => focusIds.has(flow.id)).flatMap((flow) => [flow.from, flow.to]),
+  ]), [focusAddresses, allFlows, focusIds]);
   const { nodes: clusterNodes, flows } = useMemo(
-    () => showAll ? { nodes: allNodes, flows: allFlows } : filterClusterGraph(allNodes, allFlows),
-    [allNodes, allFlows, showAll],
+    () => {
+      if (showAll) return { nodes: allNodes, flows: allFlows };
+      if (!focusAddresses.length) return filterClusterGraph(allNodes, allFlows);
+      const ids = new Set(focusFlowIds);
+      const flows = allFlows.filter((flow) => ids.has(flow.id));
+      const visible = new Set([...focusAddresses, ...flows.flatMap((flow) => [flow.from, flow.to])]);
+      return { nodes: allNodes.filter((node) => node.role === "primary" || visible.has(node.address)), flows };
+    },
+    [allNodes, allFlows, showAll, focusAddresses, focusFlowIds],
   );
   const exportPng = async () => {
     if (!graphRef.current) return;
     setExporting(true);
     setExportError("");
     try {
-      await downloadClusterGraphPng(graphRef.current);
+      const { width, height } = graphRef.current.getBoundingClientRect();
+      const svg = buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows,
+        [...new Set([...selectedPath, ...focusNodes])],
+        { ...(instance?.getViewport() ?? { x: 0, y: 0, zoom: 1 }), width, height, focusAddresses });
+      const file = await downloadClusterGraphPng(svg, width, height);
+      setPngFile(file);
+      triggerClusterDownload(file);
     } catch (error) {
       setExportError(error instanceof Error ? error.message : "PNG export failed. Try SVG export instead.");
     } finally {
       setExporting(false);
+    }
+  };
+  const exportSvg = () => {
+    setExportError("");
+    try {
+      const file = downloadClusterGraph(buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows, [...new Set([...selectedPath, ...focusNodes])]));
+      setSvgFile(file);
+      triggerClusterDownload(file);
+    } catch (error) {
+      setExportError(error instanceof Error ? error.message : "SVG export failed. Please try again.");
     }
   };
   const depth = new Map<string, number>();
@@ -86,11 +130,12 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
 
   const nodes: Node[] = clusterNodes.map((node) => {
     const isPrimary = node.role === "primary";
-    const selected = selectedPath.includes(node.address);
+    const selected = selectedPath.includes(node.address) || focusNodes.has(node.address);
     const color = isPrimary ? "#f0b85b" : node.role === "input" ? "#71c4bd" : "#91a8c5";
-    const title = node.label ?? (isPrimary ? "LEAD WALLET" : node.role === "input" ? "INPUT WALLET" : "PRIVATE WALLET");
+    const title = focusAddresses.includes(node.address) ? `FOCUS · ${node.label ?? "WALLET"}` : node.label ?? (isPrimary ? "LEAD WALLET" : node.role === "input" ? "INPUT WALLET" : "PRIVATE WALLET");
     return {
       id: node.address,
+      type: "clusterWallet",
       position: positions.get(node.address) ?? { x: 70, y: 54 },
       sourcePosition: Position.Left,
       targetPosition: Position.Right,
@@ -115,12 +160,16 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
   });
 
   const edges: Edge[] = flows.map((flow) => {
-    const selected = selectedPath.includes(flow.from) && selectedPath.includes(flow.to);
+    const selected = focusIds.has(flow.id) || (selectedPath.includes(flow.from) && selectedPath.includes(flow.to));
     const count = flow.transactions.length;
+    const { sourcePosition, targetPosition } = clusterGraphHandleSides(
+      positions.get(flow.from) ?? { x: 0, y: 0 }, positions.get(flow.to) ?? { x: 0, y: 0 });
     return {
       id: flow.id,
       source: flow.from,
       target: flow.to,
+      sourceHandle: `${sourcePosition}-out`,
+      targetHandle: `${targetPosition}-in`,
       type: "smoothstep",
       animated: selected,
       label: `${count} ${count === 1 ? "TX" : "TXS"}`,
@@ -153,20 +202,23 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
           className="bg-background"
           data-testid="button-export-cluster-graph"
           title="Download the entire graph as an SVG image, including highlighted routes and a full wallet address key"
-          onClick={() => downloadClusterGraph(buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows, selectedPath))}
+          onClick={exportSvg}
         >
           <Download className="mr-2 h-3.5 w-3.5" /> Download Graph (SVG)
         </Button>
         </>
       )}
       </div>
-      <p className="mb-3 text-xs text-muted-foreground">Default: trails reaching 3+ hops from the nearest starting wallet, plus shorter connections between entered wallets. Display only; scan data and printed reports are unchanged. PNG captures the current viewport; SVG includes the full displayed graph.</p>
+      <p className="mb-3 text-xs text-muted-foreground">{focusAddresses.length ? "Focus view: observed shortest lead-to-focus routes within the selected hop depth. Show all trails to see the rest of the scan." : "Default: trails reaching 3+ hops from the nearest starting wallet, plus shorter connections between entered wallets. Display only; scan data and printed reports are unchanged."} PNG captures the current viewport; SVG includes the full displayed graph.</p>
       {exportError && <p role="alert" className="mb-3 text-xs text-red-400">{exportError}</p>}
+      {pngFile && <ClusterFinderDownloadLinks file={pngFile} label="PNG graph" />}
+      {svgFile && <ClusterFinderDownloadLinks file={svgFile} label="SVG graph" />}
       <div ref={graphRef} className="relative h-[420px] w-full overflow-hidden border border-border/70 bg-[#0b1118] sm:h-[500px]" data-testid="graph-private-flows" aria-label="Private wallet flow graph">
       {nodes.length ? (
         <ReactFlow
           onInit={setInstance}
           nodes={nodes}
+          nodeTypes={nodeTypes}
           edges={edges}
           fitView
           fitViewOptions={{ padding: 0.2, minZoom: 0.25 }}

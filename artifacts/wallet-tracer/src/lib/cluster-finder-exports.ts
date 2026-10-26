@@ -1,5 +1,6 @@
 import { getSmoothStepPath, Position, type Node } from "reactflow";
 import type { ClusterFinderResult, ClusterFlow, ClusterNode } from "./cluster-finder-engine";
+import { createClusterDownload, type ClusterDownload } from "./cluster-finder-download";
 
 function escapeMarkup(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -25,6 +26,17 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       }).join("")}
       </tbody></table>
     `).join("")}</section>`).join("");
+  const focusSection = result.focusAddresses?.length ? `<section><h2>Focus wallet connections</h2>
+    <p>Observed shortest IN/OUT routes between the lead and focus wallets, within ${text(result.maxHops ?? 6)} transfers. Arrows retain the actual sender → recipient direction; these are connectivity paths, not proof of chronological flow or ownership.</p>
+    ${result.focusAddresses.map((address) => {
+      const connection = result.focusConnections?.find((item) => item.focusAddress === address);
+      return `<h3>Focus wallet: <span class="address">${text(address)}</span></h3>${connection
+        ? `<p>${connection.hopCount} hop(s) from lead. Alternate shortest routes are grouped by hop.</p>
+          ${connection.flows.map((flow) => `<h4>Hop ${flow.hop}: <span class="address">${text(flow.from)} → ${text(flow.to)}</span></h4>
+          <table><thead><tr><th>TX hash</th><th>Exact amount</th><th>Date/time (UTC)</th><th>Direction</th></tr></thead><tbody>
+          ${flow.transactions.map((tx) => `<tr><td class="hash">${text(tx.hash)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(Date.parse(tx.timestamp)) ? tx.timestamp : new Date(tx.timestamp).toISOString())}</td><td class="address">${text(flow.from)} → ${text(flow.to)}</td></tr>`).join("")}</tbody></table>`).join("")}`
+        : `<p class="warning">${result.excludedAddresses.includes(address) ? "Excluded by existing allowed-wallet rules." : "No connection observed within the selected lead-to-focus hop depth. Incomplete histories may hide paths."}</p>`}`;
+    }).join("")}</section>` : "";
   const trailSection = `<section><h2>Complete recursive IN/OUT trail</h2>
     <p>Expansion follows both transfer directions up to ${hopName} hops from the lead and additional starting wallets (hop 0).
     Each wallet is scanned once. Discovery hops indicate minimum expansion depth from any starting wallet, not chronological transfer order.
@@ -86,6 +98,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     ${list("Known infrastructure excluded", result.excludedAddresses)}
     ${list("Histories that reached the 25,000 transaction cap", result.truncatedAddresses)}
     ${result.fetchErrors.length ? `<h3>Incomplete history warnings</h3><ul>${result.fetchErrors.map((error) => `<li>${text(error.address)}: ${text(error.message)}</li>`).join("")}</ul>` : ""}
+    ${focusSection}
     ${trailSection}
     <h2>Directed input-to-lead paths</h2>
     ${sections || "<p>No directed input-to-lead paths were observed in this scan.</p>"}
@@ -93,27 +106,24 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     </body></html>`;
 }
 
-export function printClusterReport(result: ClusterFinderResult): void {
-  // A separate print document avoids application chrome, scroll clipping, and
-  // popup blockers. No wallet data is sent to a third-party export service.
-  const frame = document.createElement("iframe");
-  frame.title = "Cluster Finder print report";
-  frame.style.cssText = "position:fixed;width:0;height:0;border:0;left:-10000px;top:0";
-  let cleanupTimer: ReturnType<typeof setTimeout>;
-  const cleanup = () => {
-    clearTimeout(cleanupTimer);
-    frame.remove();
-  };
-  frame.onload = () => {
-    const target = frame.contentWindow;
-    if (!target) { cleanup(); return; }
-    target.addEventListener("afterprint", cleanup, { once: true });
-    cleanupTimer = setTimeout(cleanup, 300_000);
-    target.focus();
-    target.print();
-  };
-  frame.srcdoc = buildClusterReport(result);
-  document.body.appendChild(frame);
+export function printClusterReport(result: ClusterFinderResult): ClusterDownload {
+  // A real printable HTML file avoids hidden-iframe print restrictions.
+  // The caller also exposes persistent links if automatic downloads are blocked.
+  return createClusterDownload(
+    new Blob([buildClusterReport(result)], { type: "text/html;charset=utf-8" }),
+    `cluster-finder-report-${new Date().toISOString().replace(/[:.]/g, "-")}.html`,
+  );
+}
+
+export function clusterGraphHandleSides(source: { x: number; y: number }, target: { x: number; y: number }) {
+  if (source.x === target.x) {
+    return target.y >= source.y
+      ? { sourcePosition: Position.Bottom, targetPosition: Position.Top }
+      : { sourcePosition: Position.Top, targetPosition: Position.Bottom };
+  }
+  return target.x > source.x
+    ? { sourcePosition: Position.Right, targetPosition: Position.Left }
+    : { sourcePosition: Position.Left, targetPosition: Position.Right };
 }
 
 export function buildClusterGraphSvg(
@@ -121,6 +131,7 @@ export function buildClusterGraphSvg(
   wallets: ClusterNode[],
   flows: ClusterFlow[],
   selectedPath: string[],
+  view?: { x: number; y: number; zoom: number; width: number; height: number; focusAddresses?: string[] },
 ): string {
   const byId = new Map(nodes.map((node) => [node.id, node]));
   const minX = Math.min(...nodes.map((node) => node.position.x)) - 35;
@@ -135,10 +146,17 @@ export function buildClusterGraphSvg(
     const source = byId.get(flow.from);
     const target = byId.get(flow.to);
     if (!source || !target) return "";
+    const { sourcePosition, targetPosition } = clusterGraphHandleSides(source.position, target.position);
+    const port = (node: Node, side: Position) => ({
+      x: node.position.x + (side === Position.Right ? (node.width ?? 202) : side === Position.Left ? 0 : (node.width ?? 202) / 2),
+      y: node.position.y + (side === Position.Bottom ? (node.height ?? 100) : side === Position.Top ? 0 : (node.height ?? 100) / 2),
+    });
+    const start = port(source, sourcePosition);
+    const end = port(target, targetPosition);
     const [path, x, y] = getSmoothStepPath({
-      sourceX: source.position.x, sourceY: source.position.y + (source.height ?? 100) / 2,
-      targetX: target.position.x + (target.width ?? 202), targetY: target.position.y + (target.height ?? 100) / 2,
-      sourcePosition: Position.Left, targetPosition: Position.Right,
+      sourceX: start.x, sourceY: start.y,
+      targetX: end.x, targetY: end.y,
+      sourcePosition, targetPosition,
     });
     const selected = selectedPath.includes(flow.from) && selectedPath.includes(flow.to);
     return `<path d="${escapeMarkup(path)}" fill="none" stroke="${selected ? "#e4b568" : "#8493a3"}" stroke-width="${selected ? 2 : 1.35}" marker-end="url(#arrow)"/>
@@ -148,31 +166,33 @@ export function buildClusterGraphSvg(
     const node = byId.get(wallet.address);
     if (!node) return "";
     const color = wallet.role === "primary" ? "#f0b85b" : wallet.role === "input" ? "#71c4bd" : "#91a8c5";
+    const background = wallet.role === "primary" ? "#29251e" : wallet.role === "input" ? "#182b2c" : "#1b2532";
     const short = wallet.address.length > 24 ? `${wallet.address.slice(0, 10)}…${wallet.address.slice(-8)}` : wallet.address;
+    const title = view?.focusAddresses?.includes(wallet.address) ? `FOCUS · ${wallet.label ?? "WALLET"}` : wallet.label ?? (wallet.role === "primary" ? "LEAD WALLET" : wallet.role === "input" ? "INPUT WALLET" : "PRIVATE WALLET");
     return `<g transform="translate(${node.position.x},${node.position.y})">
       <title>${escapeMarkup(wallet.address)}</title>
-      <rect width="${node.width ?? 202}" height="${node.height ?? 100}" rx="3" fill="#1b2532" stroke="${color}" stroke-width="${selectedPath.includes(wallet.address) ? 2 : 1}"/>
-      <text x="13" y="25" fill="${color}" font-size="10">${index + 1}. ${escapeMarkup(wallet.role.toUpperCase())} WALLET</text>
+      <rect width="${node.width ?? 202}" height="${node.height ?? 100}" rx="3" fill="${background}" stroke="${color}" stroke-opacity="${selectedPath.includes(wallet.address) ? 1 : 0.45}" stroke-width="${selectedPath.includes(wallet.address) ? 2 : 1}"/>
+      <clipPath id="node-label-${index}"><rect x="12" y="0" width="${(node.width ?? 202) - 24}" height="${node.height ?? 100}"/></clipPath>
+      <g clip-path="url(#node-label-${index})">
+      <text x="13" y="25" fill="${color}" font-size="9" font-weight="700" letter-spacing="1.2">${escapeMarkup(view ? title.toUpperCase() : `${index + 1}. ${wallet.role.toUpperCase()} WALLET`)}</text>
       <text x="13" y="48" fill="#d8e1ec" font-size="10">${escapeMarkup(short)}</text>
-      <text x="13" y="70" fill="${color}" font-size="9">${escapeMarkup(wallet.label ?? "")}</text>
-      </g>`;
+      <text x="13" y="70" fill="${view ? "#697b8f" : color}" font-size="${view ? 8 : 9}">${escapeMarkup(view ? `${wallet.role.toUpperCase()} NODE` : wallet.label ?? "")}</text>
+      </g></g>`;
   }).join("");
   const key = wallets.map((wallet, index) => `<text x="${minX + 15}" y="${maxY + 40 + index * 24}" fill="#d8e1ec" font-size="11">${index + 1}. ${escapeMarkup(wallet.address)}${wallet.label ? ` — ${escapeMarkup(wallet.label)}` : ""}</text>`).join("");
-  return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="${minX} ${minY} ${width} ${height}" font-family="monospace">
+  const bounds = view ? { x: -view.x / view.zoom, y: -view.y / view.zoom, width: view.width / view.zoom, height: view.height / view.zoom } : { x: minX, y: minY, width, height };
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="${view?.width ?? width}" height="${view?.height ?? height}" viewBox="${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}" font-family="monospace">
     <title>Cluster Finder — Observed private-wallet flows</title>
-    <rect x="${minX}" y="${minY}" width="${width}" height="${height}" fill="#0b1118"/>
+    <rect x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="#0b1118"/>
+    ${view ? `<defs><pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="0" cy="0" r="0.5" fill="#334151"/></pattern></defs><rect x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="url(#grid)"/>` : ""}
     <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#dce8ef"/></marker></defs>
-    <text x="${minX + 15}" y="${minY + 25}" fill="#dce8ef" font-size="14">Cluster Finder · Observed private-wallet flows · Sender → recipient</text>
-    ${paths}${boxes}${key}</svg>`;
+    ${view ? "" : `<text x="${minX + 15}" y="${minY + 25}" fill="#dce8ef" font-size="14">Cluster Finder · Observed private-wallet flows · Sender → recipient</text>`}
+    ${paths}${boxes}${view ? "" : key}</svg>`;
 }
 
-export function downloadClusterGraph(svg: string): void {
-  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = `cluster-finder-graph-${new Date().toISOString().replace(/[:.]/g, "-")}.svg`;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 10_000);
+export function downloadClusterGraph(svg: string): ClusterDownload {
+  return createClusterDownload(
+    new Blob([svg], { type: "image/svg+xml;charset=utf-8" }),
+    `cluster-finder-graph-${new Date().toISOString().replace(/[:.]/g, "-")}.svg`,
+  );
 }

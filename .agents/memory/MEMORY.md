@@ -1,2 +1,3 @@
 - [Git push tracking-ref locks](github-push-tracking-ref-locks.md) — A local remote-tracking lock warning can occur after GitHub accepted a push; verify the actual remote branch.
 - [Cluster completion semantics](cluster-completion-semantics.md) — Recursive fan-out has no predictable total; interrupted checkpoints must remain explicitly incomplete.
+- [Graph export integrity](graph-export-integrity.md) — Validate visible graph content, not just PNG headers; keep explicit download/open links for generated reports.

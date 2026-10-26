@@ -1,3 +1,4 @@
+import { findClusterFocusPaths, type ClusterFocusConnection } from "./cluster-finder-focus";
 import {
   getWalletTransactions,
   type Transaction,
@@ -73,6 +74,8 @@ export interface ClusterProgress {
 export interface ClusterFinderResult {
   chain: ClusterChain;
   maxHops?: ClusterHopDepth;
+  focusAddresses?: string[];
+  focusConnections?: ClusterFocusConnection[];
   primaryAddress: string;
   inputAddresses: string[];
   nodes: ClusterNode[];
@@ -94,6 +97,7 @@ export interface ClusterFinderOptions {
   primaryAddress: string;
   chain: ClusterChain;
   maxHops?: ClusterHopDepth;
+  focusAddresses?: string[];
   signal: AbortSignal;
   onProgress?: (progress: ClusterProgress) => void;
   onSnapshot?: (result: ClusterFinderResult) => void;
@@ -217,7 +221,8 @@ export async function runClusterFinder(
     return key;
   };
 
-  const requestedKeys = [...new Set([...addresses, primaryAddress].map(rememberAddress).filter(Boolean))];
+  const requestedFocusKeys = [...new Set((options.focusAddresses ?? []).map(rememberAddress).filter((key) => key && key !== primaryKey))];
+  const requestedKeys = [...new Set([...addresses, primaryAddress, ...requestedFocusKeys].map(rememberAddress).filter(Boolean))];
   if (!primaryKey) {
     throw new Error("Enter a primary wallet.");
   }
@@ -234,13 +239,14 @@ export async function runClusterFinder(
   );
   const inputKeySet = new Set(inputKeys);
   const inputAddresses = inputKeys.map((key) => addressByKey.get(key) ?? key);
+  const focusKeys = requestedFocusKeys.filter((key) => inputKeySet.has(key));
 
   const flowBuckets = new Map<string, {
     fromKey: string;
     toKey: string;
     transactions: Map<string, ClusterTransaction>;
   }>();
-  const queue = [primaryKey, ...inputKeys];
+  const queue = [...new Set([primaryKey, ...focusKeys, ...inputKeys])];
   const enqueued = new Set(queue);
   const depthByKey = new Map(queue.map((key) => [key, 0]));
   let queueIndex = 0;
@@ -496,6 +502,15 @@ export async function runClusterFinder(
   return {
     chain,
     maxHops,
+    focusAddresses: requestedFocusKeys.map((key) => addressByKey.get(key) ?? key),
+    focusConnections: findClusterFocusPaths(primaryKey, focusKeys, relevantFlows, maxHops).map((connection) => ({
+      ...connection,
+      focusAddress: addressByKey.get(connection.focusAddress) ?? connection.focusAddress,
+      nodes: connection.nodes.map((key) => addressByKey.get(key) ?? key),
+      flows: connection.flows.map((flow) => ({
+        ...flow, from: addressByKey.get(flow.from) ?? flow.from, to: addressByKey.get(flow.to) ?? flow.to,
+      })),
+    })),
     primaryAddress: addressByKey.get(primaryKey) ?? primaryAddress,
     inputAddresses,
     nodes,

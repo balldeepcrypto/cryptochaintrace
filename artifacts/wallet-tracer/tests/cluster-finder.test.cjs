@@ -147,6 +147,7 @@ function engine(getWalletTransactions) {
   return load("cluster-finder-engine", {
     "@workspace/api-client-react": { getWalletTransactions },
     "./cluster-finder-requests": requests,
+    "./cluster-finder-focus": load("cluster-finder-focus"),
   });
 }
 
@@ -236,6 +237,71 @@ test("invalid and repeated pagination cursors retain fetched pages with explicit
     assert.equal(result.flows[0].transactions.length, repeat ? 2 : 1);
     assert.match(result.fetchErrors[0].message, /retained.*incomplete/);
   }
+});
+
+test("focus wallets are prioritized, deduplicated and connected within the selected lead-to-focus hop depth", async () => {
+  const transfers = [
+    tx("lead", "proxy", "lead-proxy"), tx("focus", "proxy", "focus-proxy"),
+    tx("other", "lead", "other-lead"),
+  ];
+  const scanned = [];
+  const api = engine(async (address) => {
+    scanned.push(address);
+    return { transactions: transfers.filter((item) => item.from === address || item.to === address), hasMore: false };
+  });
+  const result = await api.runClusterFinder(options({
+    addresses: ["other", "lead"], focusAddresses: ["focus", "focus", "lead"], maxHops: 3,
+  }));
+  assert.deepEqual(scanned.slice(0, 3), ["lead", "focus", "other"]);
+  assert.equal(new Set(scanned).size, scanned.length);
+  assert.deepEqual(Array.from(result.focusAddresses), ["focus"]);
+  assert.equal(result.focusConnections.length, 1);
+  const connection = result.focusConnections[0];
+  assert.equal(connection.hopCount, 2);
+  assert.deepEqual(Array.from(connection.nodes), ["lead", "proxy", "focus"]);
+  assert.equal(connection.flows[1].from, "focus");
+  assert.equal(connection.flows[1].to, "proxy");
+  assert.equal(connection.flows[1].transactions[0].hash, "focus-proxy");
+  assert.ok(result.flows.some((flow) => flow.from === "other"));
+  const report = exportsModule().buildClusterReport(result);
+  for (const text of ["Focus wallet connections", "lead-proxy", "focus-proxy", "2 hop(s)", "IN/OUT", "US exchange"]) {
+    assert.ok(report.includes(text), text);
+  }
+});
+
+test("focus matching retains alternate shortest paths, actual directions and excludes routes beyond selected depth", () => {
+  const { findClusterFocusPaths } = load("cluster-finder-focus");
+  const flows = [
+    ["lead", "a"], ["a", "focus"], ["b", "lead"], ["focus", "b"],
+    ["focus", "far1"], ["far1", "far2"],
+  ].map(([from, to], index) => ({ id: String(index), from, to, transactions: [tx(from, to)] }));
+  const found = findClusterFocusPaths("lead", ["focus", "far2", "missing", "lead"], flows, 3);
+  assert.equal(found.length, 1);
+  assert.equal(found[0].focusAddress, "focus");
+  assert.equal(found[0].flows.length, 4);
+  assert.equal(found[0].hopCount, 2);
+  assert.ok(found[0].flows.some((flow) => flow.from === "focus" && flow.to === "b"));
+});
+
+test("focus wallets obey existing exclusions and canonical deduplication; blank focus preserves the normal scan", async () => {
+  const lattice = "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV";
+  const scanned = [];
+  const api = engine(async (address) => { scanned.push(address); return { transactions: [], hasMore: false }; });
+  const result = await api.runClusterFinder(options({
+    addresses: ["lead"], focusAddresses: [lattice, "exchange"], getKnownInfo: (address) =>
+      address === "exchange" ? { type: "exchange", label: "Coinbase" } : null,
+  }));
+  assert.deepEqual(scanned, ["lead"]);
+  assert.equal(result.excludedAddresses.length, 2);
+  assert.equal(result.focusConnections.length, 0);
+  assert.ok(exportsModule().buildClusterReport(result).includes("Excluded by existing allowed-wallet rules"));
+  const canonical = await api.runClusterFinder(options({
+    chain: "ethereum", addresses: ["lead"], focusAddresses: ["FOCUS", "focus", "LEAD"],
+  }));
+  assert.equal(canonical.focusAddresses.length, 1);
+  const ordinary = await api.runClusterFinder(options());
+  const blank = await api.runClusterFinder(options({ focusAddresses: [] }));
+  assert.equal(JSON.stringify(ordinary), JSON.stringify(blank));
 });
 
 test("selected 3, 4 and 6 hop boundaries scan each wallet once and retain boundary histories only", async () => {
@@ -605,7 +671,10 @@ test("pagination still enforces the existing 25k per-wallet history cap", async 
 });
 
 function exportsModule(globals = {}) {
-  return load("cluster-finder-exports", { reactflow }, globals);
+  return load("cluster-finder-exports", {
+    reactflow,
+    "./cluster-finder-download": load("cluster-finder-download", {}, globals),
+  }, globals);
 }
 
 function reportResult() {
@@ -826,57 +895,73 @@ test("graph filtering keeps both directions, alternate qualifying routes and dir
   assert.equal(filterClusterGraph([], []).nodes.length, 0);
 });
 
-test("PNG export captures the actual graph element at current viewport, excludes controls and downloads locally", async () => {
-  const element = {};
-  let captureOptions;
-  let clicked = false;
-  let removed = false;
-  let revoked = false;
-  const link = { click: () => { clicked = true; }, remove: () => { removed = true; } };
-  class FakeElement {
-    constructor(name) { this.classList = { contains: (value) => value === name }; }
-  }
-  const imageBlob = new Blob(["png"], { type: "image/png" });
-  const api = load("cluster-finder-image", {
-    "html-to-image": { toBlob: async (target, options) => {
-      assert.equal(target, element);
-      captureOptions = options;
-      return imageBlob;
-    } },
-  }, {
-    Element: FakeElement,
-    URL: {
-      createObjectURL: (blob) => { assert.equal(blob, imageBlob); return "blob:graph"; },
-      revokeObjectURL: (url) => { assert.equal(url, "blob:graph"); revoked = true; },
-    },
-    document: {
-      createElement: (tag) => { assert.equal(tag, "a"); return link; },
-      body: { appendChild: (target) => assert.equal(target, link) },
-    },
-    window: { setTimeout: (callback) => callback() },
+test("PNG rasterizes self-contained graph SVG at viewport size without foreignObject or DOM capture", async () => {
+  const result = reportResult();
+  const svg = exportsModule().buildClusterGraphSvg([
+    { id: "input", position: { x: 300, y: 40 }, width: 202, height: 90 },
+    { id: "lead", position: { x: 70, y: 40 }, width: 202, height: 90 },
+  ], result.nodes, result.flows, ["input", "lead"], {
+    x: 10, y: 20, zoom: 0.5, width: 200, height: 150, focusAddresses: ["input"],
   });
-  await api.downloadClusterGraphPng(element);
-  assert.equal(captureOptions.pixelRatio, 2);
-  assert.equal(captureOptions.backgroundColor, "#0b1118");
-  assert.equal(captureOptions.filter(new FakeElement("react-flow__controls")), false);
-  assert.equal(captureOptions.filter(new FakeElement("react-flow__attribution")), false);
-  for (const name of ["react-flow__node", "react-flow__edge", "react-flow__edgelabel-renderer"]) {
-    assert.equal(captureOptions.filter(new FakeElement(name)), true);
-  }
-  assert.equal(clicked && removed && revoked, true);
-  assert.match(link.download, /^cluster-finder-view-.*\.png$/);
-  const failed = load("cluster-finder-image", { "html-to-image": { toBlob: async () => null } });
-  await assert.rejects(failed.downloadClusterGraphPng(element), /could not be created/);
+  assert.match(svg, /viewBox="-20 -40 400 300"/);
+  assert.match(svg, /FOCUS · WALLET/);
+  assert.match(svg, /#29251e/);
+  assert.match(svg, /marker-end/);
+  assert.ok(!svg.includes("foreignObject"));
+  const created = [];
+  const revoked = [];
+  let drawn = false;
+  const canvas = {
+    getContext: () => ({ drawImage: (_image, x, y, width, height) => {
+      assert.equal(x + y, 0);
+      assert.equal(width, 400);
+      assert.equal(height, 300);
+      drawn = true;
+    } }),
+    toBlob: (callback, type) => callback(new Blob(["png"], { type })),
+  };
+  const globals = {
+    Blob,
+    Image: class { set src(value) { assert.equal(value, "blob:0"); queueMicrotask(() => this.onload()); } },
+    URL: {
+      createObjectURL: (blob) => { created.push(blob); return `blob:${created.length - 1}`; },
+      revokeObjectURL: (url) => revoked.push(url),
+    },
+    document: { createElement: (tag) => { assert.equal(tag, "canvas"); return canvas; } },
+  };
+  const api = load("cluster-finder-image", {
+    "./cluster-finder-download": load("cluster-finder-download", {}, globals),
+  }, globals);
+  const file = await api.downloadClusterGraphPng(svg, 200, 150);
+  assert.equal(drawn, true);
+  assert.equal(await created[0].text(), svg);
+  assert.equal(created[1].type, "image/png");
+  assert.equal(file.url, "blob:1");
+  assert.deepEqual(revoked, ["blob:0"]);
+  assert.match(file.filename, /\.png$/);
+  await assert.rejects(api.downloadClusterGraphPng(svg, 0, 150), /no visible size/);
 });
 
-test("print and download actions create a local print document and SVG download", () => {
+test("graph connectors attach to facing card edges so sender and recipient arrows are not hidden", () => {
+  const { clusterGraphHandleSides } = exportsModule();
+  for (const [source, target, from, to] of [
+    [{ x: 0, y: 0 }, { x: 245, y: 0 }, "right", "left"],
+    [{ x: 245, y: 0 }, { x: 0, y: 0 }, "left", "right"],
+    [{ x: 0, y: 0 }, { x: 0, y: 128 }, "bottom", "top"],
+    [{ x: 0, y: 128 }, { x: 0, y: 0 }, "top", "bottom"],
+  ]) {
+    const sides = clusterGraphHandleSides(source, target);
+    assert.equal(sides.sourcePosition, from);
+    assert.equal(sides.targetPosition, to);
+  }
+});
+
+test("report and SVG exports create real files with persistent links instead of hidden print iframes", async () => {
   const created = [];
   const appended = [];
-  let printed = false;
   let clicked = false;
-  let afterPrint;
   let downloadedBlob;
-  const api = exportsModule({
+  const globals = {
     Blob,
     setTimeout: () => 1, clearTimeout: () => {},
     URL: { createObjectURL: (blob) => { downloadedBlob = blob; return "blob:local"; }, revokeObjectURL: () => {} },
@@ -885,27 +970,50 @@ test("print and download actions create a local print document and SVG download"
         const element = {
           tag, style: {}, remove() { this.removed = true; },
           click() { clicked = true; },
-          contentWindow: {
-            addEventListener: (event, callback) => { assert.equal(event, "afterprint"); afterPrint = callback; },
-            focus: () => {}, print: () => { printed = true; },
-          },
         };
         created.push(element);
         return element;
       },
       body: { appendChild: (element) => appended.push(element) },
     },
-  });
-  api.printClusterReport(reportResult());
-  assert.equal(created[0].tag, "iframe");
-  assert.match(created[0].srcdoc, /Cluster Finder Report/);
-  created[0].onload();
-  assert.equal(printed, true);
-  afterPrint();
-  assert.equal(created[0].removed, true);
-  api.downloadClusterGraph("<svg/>");
+  };
+  const api = exportsModule(globals);
+  const download = load("cluster-finder-download", {}, globals);
+  const report = api.printClusterReport(reportResult());
+  assert.equal(downloadedBlob.type, "text/html;charset=utf-8");
+  assert.match(await downloadedBlob.text(), /Cluster Finder Report/);
+  assert.match(report.filename, /\.html$/);
+  assert.equal(created.length, 0);
+  download.triggerClusterDownload(report);
+  assert.equal(created[0].tag, "a");
+  assert.equal(created[0].target, "_blank");
+  const graph = api.downloadClusterGraph("<svg/>");
+  download.triggerClusterDownload(graph);
   assert.equal(clicked, true);
   assert.match(created[1].download, /^cluster-finder-graph-.*\.svg$/);
   assert.equal(downloadedBlob.type, "image/svg+xml;charset=utf-8");
   assert.equal(appended.length, 2);
+  assert.equal(created[0].removed && created[1].removed, true);
+  assert.throws(() => download.createClusterDownload(new Blob([]), "empty.svg"), /empty/);
+});
+
+test("PNG capture failures and hangs fail explicitly; ready links stay available for user-click downloads", async () => {
+  const imports = {
+    "./cluster-finder-download": load("cluster-finder-download"),
+  };
+  const api = load("cluster-finder-image", imports, {
+    Blob,
+    URL: { createObjectURL: () => "blob:pending", revokeObjectURL: () => {} },
+    Image: class {},
+    setTimeout: (callback) => { queueMicrotask(callback); return 1; },
+    clearTimeout: () => {},
+  });
+  await assert.rejects(api.downloadClusterGraphPng("<svg/>", 200, 150), /timed out/);
+  const links = fs.readFileSync(path.join(__dirname, "../src/components/cluster-finder-download-links.tsx"), "utf8");
+  assert.match(links, /download=\{file\.filename\}/);
+  assert.match(links, /target="_blank"/);
+  assert.match(links, /revokeObjectURL\(file\.url\)/);
+  const page = fs.readFileSync(path.join(__dirname, "../src/pages/cluster-finder.tsx"), "utf8");
+  assert.match(page, /setReportFile\(file\);[\s\S]*?triggerClusterDownload\(file\)/);
+  assert.match(page, /setFocusText\(checkpoint\.focusText \?\? ""\)/);
 });

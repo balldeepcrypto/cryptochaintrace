@@ -20,6 +20,8 @@ import {
 } from "@/lib/cluster-finder-engine";
 import { getKnownInfo, getNormalizedAddress } from "@/pages/wallet-detail";
 import { printClusterReport } from "@/lib/cluster-finder-exports";
+import { triggerClusterDownload, type ClusterDownload } from "@/lib/cluster-finder-download";
+import { ClusterFinderDownloadLinks } from "@/components/cluster-finder-download-links";
 import { useAuth } from "@/lib/auth-context";
 import { beginClusterCheckpoint, clearClusterCheckpoint, loadClusterCheckpoint, saveClusterCheckpoint, type ClusterCheckpoint } from "@/lib/cluster-finder-storage";
 
@@ -59,6 +61,9 @@ export default function ClusterFinder() {
   const [chain, setChain] = useState<ClusterChain>("ethereum");
   const [maxHops, setMaxHops] = useState<ClusterHopDepth>(DEFAULT_CLUSTER_HOPS);
   const [addressText, setAddressText] = useState("");
+  const [focusText, setFocusText] = useState("");
+  const [reportFile, setReportFile] = useState<ClusterDownload | null>(null);
+  const [reportError, setReportError] = useState("");
   const [primaryAddress, setPrimaryAddress] = useState("");
   const [scanState, setScanState] = useState<ScanState>("idle");
   const [progress, setProgress] = useState<ClusterProgress | null>(null);
@@ -83,6 +88,9 @@ export default function ClusterFinder() {
     setStorageWarning("");
     setScanError("");
     setAddressText("");
+    setFocusText("");
+    setReportFile(null);
+    setReportError("");
     setPrimaryAddress("");
     setMaxHops(DEFAULT_CLUSTER_HOPS);
     setSelectedInput(null);
@@ -93,6 +101,7 @@ export default function ClusterFinder() {
         // Checkpoints created before the selector always used six hops.
         setMaxHops(checkpoint.maxHops ?? checkpoint.result?.maxHops ?? 6);
         setAddressText(checkpoint.addressText);
+        setFocusText(checkpoint.focusText ?? "");
         setPrimaryAddress(checkpoint.primaryAddress);
         setProgress(checkpoint.progress);
         setSavedAt(checkpoint.persistenceError ? null : checkpoint.savedAt);
@@ -136,20 +145,44 @@ export default function ClusterFinder() {
   const hasPrimary = Boolean(primaryAddress.trim()) && enteredAddresses.some(
     (address) => addressIdentity(address, chain) === addressIdentity(primaryAddress.trim(), chain),
   );
-  const inputCount = enteredAddresses.filter((address) =>
-    addressIdentity(address, chain) !== addressIdentity(primaryAddress.trim(), chain),
-  ).length;
+  const focusAddresses = useMemo(() => {
+    const seen = new Set<string>([addressIdentity(primaryAddress.trim(), chain)]);
+    return focusText.split(/[\n,\t; ]+/).filter(Boolean).filter((address) => {
+      const key = addressIdentity(address, chain);
+      if (!key || seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [focusText, primaryAddress, chain]);
+  const inputCount = new Set([...enteredAddresses, ...focusAddresses]
+    .map((address) => addressIdentity(address, chain))
+    .filter((address) => address !== addressIdentity(primaryAddress.trim(), chain))).size;
   // Recursive fan-out is unknown until fetched. A percentage of total work
   // would be misleading; show the actual BFS hop and queue instead.
   const scannedHopLimit = result?.maxHops ?? maxHops;
   const hopProgress = ((progress?.currentHop ?? 0) / scannedHopLimit) * 100;
   const activeSelection = result?.connections.find((connection) => connection.inputAddress === selectedInput) ?? result?.connections[0];
   const selectedPath = useMemo(() => activeSelection?.nodes ?? [], [activeSelection]);
+  const focusFlowIds = useMemo(() => [...new Set(result?.focusConnections?.flatMap((connection) => connection.flows.map((flow) => flow.id)) ?? [])], [result?.focusConnections]);
+
+  const exportReport = () => {
+    if (!result) return;
+    setReportError("");
+    try {
+      const file = printClusterReport(result);
+      setReportFile(file);
+      triggerClusterDownload(file);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "Report export failed. Please try again.");
+    }
+  };
 
   const startScan = async () => {
     if (scanState === "running" || !primaryAddress.trim() || !hasPrimary || !checkpointReady || !owner) return;
     const controller = new AbortController();
     controllerRef.current = controller;
+    setReportFile(null);
+    setReportError("");
     setResult(null);
     setProgress(null);
     setScanError("");
@@ -164,7 +197,7 @@ export default function ClusterFinder() {
     const checkpoint = (state: ClusterCheckpoint["state"], error = "") => {
       const saved: ClusterCheckpoint = {
         version: 1, runId, savedAt: new Date().toISOString(),
-        chain, maxHops, addressText, primaryAddress: primaryAddress.trim(),
+        chain, maxHops, addressText, focusText, primaryAddress: primaryAddress.trim(),
         state, result: latestResult, progress: latestProgress, error,
       };
       void saveClusterCheckpoint(owner, saved).then((written) => {
@@ -179,6 +212,7 @@ export default function ClusterFinder() {
         primaryAddress: primaryAddress.trim(),
         chain,
         maxHops,
+        focusAddresses,
         signal: controller.signal,
         onProgress: (next) => {
           latestProgress = next;
@@ -223,6 +257,8 @@ export default function ClusterFinder() {
 
   const clearScan = () => {
     if (scanState === "running") return;
+    setReportFile(null);
+    setReportError("");
     setResult(null);
     setProgress(null);
     setScanError("");
@@ -324,11 +360,18 @@ export default function ClusterFinder() {
                   data-testid="input-cluster-primary"
                   aria-label="Primary lead wallet address"
                 />
-                <p className="mt-2 text-[11px] leading-5 text-muted-foreground/70">The lead is automatically included. Additional starting wallets are optional. Starting wallets are hop 0; each eligible wallet through hop 6 is scanned once.</p>
+                <p className="mt-2 text-[11px] leading-5 text-muted-foreground/70">The lead is automatically included. Additional starting wallets are optional. Starting wallets are hop 0; each eligible wallet through the selected depth is scanned once.</p>
+              </div>
+              <div>
+                <label htmlFor="cluster-focus-wallets" className="mb-2 block font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Focus Wallets (optional)</label>
+                <Textarea id="cluster-focus-wallets" value={focusText} onChange={(event) => setFocusText(event.target.value)}
+                  disabled={scanState === "running"} placeholder="One or more focus addresses, separated by commas or new lines"
+                  className="min-h-[80px] font-mono text-xs" data-testid="input-cluster-focus-wallets" />
+                <p className="mt-2 text-[11px] leading-5 text-muted-foreground/70">Lead and focus wallets are scanned before other starting wallets. Observed shortest IN/OUT connections within the selected lead-to-focus hop depth are highlighted. Existing wallet exclusions still apply. Leave blank for the normal scan.</p>
               </div>
               <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pt-4">
                 <div className="font-mono text-[10px] uppercase tracking-[0.13em] text-muted-foreground" data-testid="text-scan-input-count">
-                  {inputCount} comparison {inputCount === 1 ? "wallet" : "wallets"} <span className="text-border">/</span> {enteredAddresses.length} total
+                  {inputCount} comparison {inputCount === 1 ? "wallet" : "wallets"} <span className="text-border">/</span> {inputCount + (primaryAddress.trim() ? 1 : 0)} total
                 </div>
                 {scanState === "running" ? (
                   <Button onClick={cancelScan} variant="outline" className="h-10 rounded-none border-rose-300/30 bg-rose-300/[0.04] font-mono text-[10px] uppercase tracking-[0.15em] text-rose-200 hover:bg-rose-300/10" data-testid="button-cancel-cluster-scan">
@@ -436,7 +479,7 @@ export default function ClusterFinder() {
           <section className="space-y-5" aria-label="Cluster scan results" data-testid="section-cluster-results">
             {!result.complete && <p role="status" className="border border-amber-200/30 bg-amber-200/5 p-3 text-xs text-amber-100" data-testid="status-cluster-partial-results">{result.incompleteReason ?? "Partial / incomplete history: some histories failed or reached the 25,000 transaction limit. Observed results remain available."}</p>}
             <div className="flex justify-end">
-              <Button type="button" variant="outline" onClick={() => printClusterReport(result)} data-testid="button-print-cluster-report">
+              <Button type="button" variant="outline" onClick={exportReport} data-testid="button-print-cluster-report">
                 <Printer className="mr-2 h-4 w-4" /> Print Report
               </Button>
             </div>
@@ -461,6 +504,20 @@ export default function ClusterFinder() {
               </div>
             )}
 
+            {reportError && <p role="alert" className="text-sm text-red-400">{reportError}</p>}
+            {reportFile && <ClusterFinderDownloadLinks file={reportFile} label="Report" />}
+            {!!result.focusAddresses?.length && <div className="border border-cyan-200/30 bg-cyan-200/5 p-4" data-testid="panel-cluster-focus-results">
+              <h2 className="text-sm font-semibold text-cyan-100">Focus wallet connections</h2>
+              <p className="mt-1 text-xs text-muted-foreground">Shortest observed lead-to-focus IN/OUT routes within {result.maxHops ?? 6} hops. Arrows show actual transfer direction; alternate shortest routes can branch. All scanned data remains available below and in the report.</p>
+              {result.focusAddresses.map((address) => {
+                const connection = result.focusConnections?.find((item) => item.focusAddress === address);
+                return <div key={address} className="mt-3 text-xs">
+                  <code className="break-all">{address}</code>
+                  <p className="mt-1 text-muted-foreground">{connection ? `${connection.hopCount} hop(s) from lead · ${connection.flows.length} observed link(s), highlighted on graph.` : result.excludedAddresses.includes(address) ? "Excluded by existing wallet rules." : "No connecting path observed within the selected depth. Partial histories may hide paths."}</p>
+                  {connection && <ol className="mt-2 space-y-1">{connection.flows.map((flow) => <li key={flow.id} className="break-all font-mono">Hop {flow.hop}: {flow.from} → {flow.to} · {flow.transactions.length} TX</li>)}</ol>}
+                </div>;
+              })}
+            </div>}
             {(result.disconnectedAddresses.length > 0 || result.excludedAddresses.length > 0 || result.truncatedAddresses.length > 0) && (
               <div className="grid gap-3 lg:grid-cols-3" data-testid="panel-scan-qualifiers">
                 {result.disconnectedAddresses.length > 0 && <Qualifier title="No directed path to lead" icon={<Unplug className="h-3.5 w-3.5" />} addresses={result.disconnectedAddresses} tone="amber" testId="panel-disconnected-addresses" note={`No directed private-wallet path toward the lead was found within the scanned ${result.maxHops ?? 6}-hop boundary. These wallets may still have IN/OUT links in the full graph. This is not proof that no relationship exists.`} />}
@@ -481,7 +538,7 @@ export default function ClusterFinder() {
                     <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-teal-200" /> Input</span>
                   </div>
                 </div>
-                <ClusterFinderGraph nodes={result.nodes} flows={result.flows} selectedPath={selectedPath} />
+                <ClusterFinderGraph nodes={result.nodes} flows={result.flows} selectedPath={selectedPath} focusAddresses={result.focusAddresses} focusFlowIds={focusFlowIds} />
                 <div className="border-t border-border/60 px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/65">Scanned boundary: {result.maxHops ?? 6} hops · arrows show sender → recipient · separate components do not imply a connection.</div>
                 <div className="border-t border-border/60 p-4" data-testid="panel-recursive-trail">
                   <h3 className="text-sm font-medium">Complete recursive trail</h3>

@@ -1,5 +1,5 @@
 import { getSmoothStepPath, Position, type Node } from "reactflow";
-import type { ClusterFinderResult, ClusterFlow, ClusterNode } from "./cluster-finder-engine";
+import type { ClusterConnection, ClusterFinderResult, ClusterFlow, ClusterNode } from "./cluster-finder-engine";
 import { createClusterDownload, type ClusterDownload } from "./cluster-finder-download";
 
 function escapeMarkup(value: unknown): string {
@@ -8,14 +8,10 @@ function escapeMarkup(value: unknown): string {
   })[character]!);
 }
 
-export function buildClusterReport(result: ClusterFinderResult): string {
+function directedTrailDetails(connection: ClusterConnection, title: string): string {
   const text = escapeMarkup;
-  const hopName = ({ 3: "three", 4: "four", 6: "six" } as const)[result.maxHops ?? 6];
-  const list = (title: string, addresses: string[]) => addresses.length
-    ? `<h3>${title}</h3><ul>${addresses.map((address) => `<li>${text(address)}</li>`).join("")}</ul>`
-    : "";
-  const sections = result.connections.map((connection, index) => `
-    <section><h2>Input ${index + 1}: ${text(connection.inputAddress)}</h2>
+  return `<section><h2>${text(title)}: ${text(connection.inputAddress)}</h2>
+    <p>${connection.flows.length} relevant flow(s) · ${connection.nodes.length} nodes</p>
     ${connection.flows.map((flow) => `
       <h3>Hop ${flow.hop} — ${flow.transactions.length} observed transaction(s)</h3>
       <p class="address"><strong>Direction:</strong> ${text(flow.from)} → ${text(flow.to)}</p>
@@ -25,7 +21,22 @@ export function buildClusterReport(result: ClusterFinderResult): string {
         return `<tr><td class="hash">${text(tx.hash)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td></tr>`;
       }).join("")}
       </tbody></table>
-    `).join("")}</section>`).join("");
+    `).join("")}</section>`;
+}
+
+export function buildClusterReport(result: ClusterFinderResult): string {
+  const text = escapeMarkup;
+  const hopName = ({ 3: "three", 4: "four", 6: "six" } as const)[result.maxHops ?? 6];
+  const list = (title: string, addresses: string[]) => addresses.length
+    ? `<h3>${title}</h3><ul>${addresses.map((address) => `<li>${text(address)}</li>`).join("")}</ul>`
+    : "";
+  const sections = result.connections.map((connection, index) =>
+    directedTrailDetails(connection, `Input ${index + 1}`)).join("");
+  const directedIndex = `<section><h2>Directed Input-to-Lead Index</h2>
+    <p>${result.connections.length} observed path(s) · Lead: <span class="address">${text(result.primaryAddress)}</span></p>
+    ${result.connections.length ? `<table><thead><tr><th>Input wallet</th><th>Relevant flows</th><th>Nodes</th></tr></thead><tbody>
+      ${result.connections.map((connection) => `<tr><td class="address">${text(connection.inputAddress)}</td><td>${connection.flows.length}</td><td>${connection.nodes.length}</td></tr>`).join("")}
+    </tbody></table>` : "<p>No input wallet has a confirmed private-wallet path to the lead in the scanned history.</p>"}</section>`;
   const focusSection = result.focusAddresses?.length ? `<section><h2>Focus wallet connections</h2>
     <p>Observed shortest IN/OUT routes between the lead and focus wallets, within ${text(result.maxHops ?? 6)} transfers. Arrows retain the actual sender → recipient direction; these are connectivity paths, not proof of chronological flow or ownership.</p>
     ${result.focusAddresses.map((address) => {
@@ -100,6 +111,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     ${result.fetchErrors.length ? `<h3>Incomplete history warnings</h3><ul>${result.fetchErrors.map((error) => `<li>${text(error.address)}: ${text(error.message)}</li>`).join("")}</ul>` : ""}
     ${focusSection}
     ${trailSection}
+    ${directedIndex}
     <h2>Directed input-to-lead paths</h2>
     ${sections || "<p>No directed input-to-lead paths were observed in this scan.</p>"}
     ${exchangeSection}
@@ -112,6 +124,42 @@ export function printClusterReport(result: ClusterFinderResult): ClusterDownload
   return createClusterDownload(
     new Blob([buildClusterReport(result)], { type: "text/html;charset=utf-8" }),
     `cluster-finder-report-${new Date().toISOString().replace(/[:.]/g, "-")}.html`,
+  );
+}
+
+export function buildClusterSelectedTrailReport(result: ClusterFinderResult, inputAddress: string): string {
+  const connection = result.connections.find((item) => item.inputAddress === inputAddress);
+  if (!connection) throw new Error("The selected trail is no longer available. Select a trail and try again.");
+  const text = escapeMarkup;
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Cluster Finder Selected Trail Report</title>
+    <style>
+      @page { size: landscape; margin:14mm; }
+      body { font:12px/1.5 Arial,sans-serif; color:#17212c; margin:24px; }
+      h1 { font-size:24px; } h2 { font-size:16px; } h3 { font-size:13px; }
+      .address,.hash { font-family:monospace; overflow-wrap:anywhere; }
+      table { width:100%; border-collapse:collapse; table-layout:fixed; margin-bottom:18px; }
+      th,td { border:1px solid #bac5cf; padding:8px; text-align:left; vertical-align:top; overflow-wrap:anywhere; }
+      th:first-child { width:48%; } thead { display:table-header-group; } tr { break-inside:avoid; }
+      .warning { border:1px solid #96722e; padding:10px; background:#fff9e9; }
+      @media print { body { margin:0; } }
+    </style></head><body>
+    <h1>Cluster Finder — Selected Directed Input-to-Lead Trail</h1>
+    <p>Generated: ${text(new Date().toISOString())} · Chain: ${text(result.chain)}</p>
+    <p class="address"><strong>Lead wallet:</strong> ${text(result.primaryAddress)}</p>
+    <p><strong>${result.complete ? "Scan complete within the selected hop boundary and configured history cap." : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
+    ${result.incompleteReason ? `<p class="warning">${text(result.incompleteReason)}</p>` : ""}
+    <p>Only the selected input's observed routes toward the lead are included. Every observed flow that can continue toward the lead is listed.
+    Hop numbers show minimum distance from this input; branches and cycles are not proof of a single chronological path or common ownership.
+    Arrows indicate actual sender → recipient. Dates are UTC and amounts are exact.
+    Histories are limited to 25,000 transactions per wallet.</p>
+    ${directedTrailDetails(connection, "Selected input")}
+    </body></html>`;
+}
+
+export function printClusterSelectedTrail(result: ClusterFinderResult, inputAddress: string): ClusterDownload {
+  return createClusterDownload(
+    new Blob([buildClusterSelectedTrailReport(result, inputAddress)], { type: "text/html;charset=utf-8" }),
+    `cluster-finder-selected-trail-${new Date().toISOString().replace(/[:.]/g, "-")}.html`,
   );
 }
 

@@ -701,6 +701,77 @@ test("report includes exact amounts, every hop/hash/direction, UTC and incomplet
   assert.match(report, /table-header-group/);
 });
 
+test("full report includes the on-screen Directed Input-to-Lead Index and its counts", () => {
+  const result = reportResult();
+  result.connections.push({
+    inputAddress: '<second&input>', nodes: ["second", "proxy", "lead"],
+    flows: [result.connections[0].flows[0], { ...result.connections[0].flows[0], id: "second-flow", hop: 2 }],
+  });
+  const before = JSON.stringify(result);
+  const report = exportsModule().buildClusterReport(result);
+  const index = report.slice(report.indexOf("<section><h2>Directed Input-to-Lead Index"), report.indexOf("<h2>Directed input-to-lead paths"));
+  assert.match(index, /2 observed path\(s\)/);
+  assert.match(index, /input<\/td><td>1<\/td><td>2<\/td>/);
+  assert.match(index, /&lt;second&amp;input&gt;<\/td><td>2<\/td><td>3<\/td>/);
+  assert.match(report, /Complete recursive IN\/OUT trail/);
+  assert.match(report, /US exchange IN\/OUT transactions/);
+  assert.equal(JSON.stringify(result), before);
+  result.connections = [];
+  assert.match(exportsModule().buildClusterReport(result), /No input wallet has a confirmed private-wallet path/);
+});
+
+test("selected-trail report contains only the selected input's flows and exact transaction details", () => {
+  const result = reportResult();
+  const selected = result.connections[0];
+  selected.flows.push({
+    id: "selected-second", from: "proxy", to: "lead", hop: 2,
+    transactions: [{ ...selected.flows[0].transactions[0], hash: "selected-hop-two", value: "123.000000000000000007" }],
+  });
+  result.connections.push({
+    inputAddress: "UNRELATED-INPUT", nodes: ["UNRELATED-INPUT", "lead"],
+    flows: [{ ...selected.flows[0], id: "unrelated", transactions: [{ ...selected.flows[0].transactions[0], hash: "UNRELATED-HASH" }] }],
+  });
+  result.flows.push({ ...selected.flows[0], id: "other-scan", transactions: [{ ...selected.flows[0].transactions[0], hash: "UNRELATED-SCAN-HASH" }] });
+  result.focusAddresses = ["UNRELATED-FOCUS"];
+  result.incompleteReason = "Interrupted <timeout>";
+  const before = JSON.stringify(result);
+  const api = exportsModule();
+  const report = api.buildClusterSelectedTrailReport(result, "input");
+  for (const text of ["Selected Directed Input-to-Lead Trail", "Hop 1", "Hop 2", "input → lead", "proxy → lead",
+    "0.000000000000000001 DAG", "123.000000000000000007 DAG", "2026-10-24T10:20:30.123Z",
+    "selected-hop-two", "&lt;unsafe&amp;&quot;hash&gt;", "INCOMPLETE SCAN", "Interrupted &lt;timeout&gt;"]) {
+    assert.ok(report.includes(text), text);
+  }
+  for (const text of ["UNRELATED", "Complete recursive IN/OUT trail", "US exchange IN/OUT transactions", "Focus wallet connections"]) {
+    assert.ok(!report.includes(text), text);
+  }
+  assert.match(report, /table-header-group/);
+  assert.match(report, /branches and cycles/);
+  assert.equal(JSON.stringify(result), before);
+  assert.throws(() => api.buildClusterSelectedTrailReport(result, "missing"), /selected trail is no longer available/);
+  result.complete = true;
+  result.incompleteReason = undefined;
+  assert.match(api.buildClusterSelectedTrailReport(result, "input"), /Scan complete within the selected hop boundary/);
+});
+
+test("selected trail downloads printable HTML and the button uses the active index selection", async () => {
+  let blob;
+  const api = exportsModule({
+    Blob,
+    URL: { createObjectURL(value) { blob = value; return "blob:selected"; } },
+  });
+  const file = api.printClusterSelectedTrail(reportResult(), "input");
+  assert.equal(file.url, "blob:selected");
+  assert.match(file.filename, /^cluster-finder-selected-trail-.*\.html$/);
+  assert.equal(blob.type, "text/html;charset=utf-8");
+  assert.match(await blob.text(), /Selected Directed Input-to-Lead Trail/);
+  const page = fs.readFileSync(path.join(__dirname, "../src/pages/cluster-finder.tsx"), "utf8");
+  assert.match(page, /printClusterSelectedTrail\(result, activeSelection\.inputAddress\)/);
+  assert.match(page, /onClick=\{exportSelectedTrail\} data-testid="button-print-selected-trail"/);
+  assert.match(page, /\{activeSelection && \(/);
+  assert.match(page, /const file = printClusterReport\(result\)/);
+});
+
 test("full recursive report preserves outgoing-only flows with no directed input-to-lead connection", () => {
   const result = reportResult();
   result.connections = [];

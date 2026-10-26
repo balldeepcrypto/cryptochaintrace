@@ -19,7 +19,7 @@ import {
   type ClusterFlow,
 } from "@/lib/cluster-finder-engine";
 import { getKnownInfo, getNormalizedAddress } from "@/pages/wallet-detail";
-import { printClusterReport } from "@/lib/cluster-finder-exports";
+import { printClusterReport, printClusterSelectedTrail } from "@/lib/cluster-finder-exports";
 import { triggerClusterDownload, type ClusterDownload } from "@/lib/cluster-finder-download";
 import { ClusterFinderDownloadLinks } from "@/components/cluster-finder-download-links";
 import { useAuth } from "@/lib/auth-context";
@@ -174,6 +174,18 @@ export default function ClusterFinder() {
       triggerClusterDownload(file);
     } catch (error) {
       setReportError(error instanceof Error ? error.message : "Report export failed. Please try again.");
+    }
+  };
+
+  const exportSelectedTrail = () => {
+    if (!result || !activeSelection) return;
+    setReportError("");
+    try {
+      const file = printClusterSelectedTrail(result, activeSelection.inputAddress);
+      setReportFile(file);
+      triggerClusterDownload(file);
+    } catch (error) {
+      setReportError(error instanceof Error ? error.message : "Selected trail export failed. Please try again.");
     }
   };
 
@@ -583,6 +595,9 @@ export default function ClusterFinder() {
                       <div className="font-mono text-[10px] uppercase tracking-[0.16em] text-muted-foreground">Selected input routes</div>
                       <p className="mt-1 break-all font-mono text-[11px] text-cyan-100/90">{shortAddress(activeSelection.inputAddress)} <ArrowRight className="mx-1 inline h-3 w-3" /> lead</p>
                       <p className="mt-1 text-[10px] leading-4 text-muted-foreground">Every observed flow that can continue toward the lead is listed; hop numbers show minimum distance from this input.</p>
+                      <Button type="button" variant="outline" size="sm" className="mt-3" onClick={exportSelectedTrail} data-testid="button-print-selected-trail">
+                        <Printer className="mr-2 h-4 w-4" /> Print Selected Trail
+                      </Button>
                     </div>
                     <div className="max-h-[560px] space-y-0 overflow-y-auto">
                       {activeSelection.flows.map((flow, flowIndex) => (

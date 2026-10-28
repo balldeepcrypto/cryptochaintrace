@@ -148,6 +148,7 @@ function engine(getWalletTransactions) {
     "@workspace/api-client-react": { getWalletTransactions },
     "./cluster-finder-requests": requests,
     "./cluster-finder-focus": load("cluster-finder-focus"),
+    "./cluster-finder-history-cache": load("cluster-finder-history-cache"),
   });
 }
 
@@ -160,6 +161,81 @@ function options(overrides = {}) {
     ...overrides,
   };
 }
+
+test("history cache shares in-flight and completed full histories by canonical wallet", async () => {
+  const { createClusterHistoryCache } = load("cluster-finder-history-cache");
+  let calls = 0;
+  let finish;
+  const history = [tx("input", "lead", "page-one"), tx("input", "proxy", "page-two")];
+  const cached = createClusterHistoryCache((address) => address.trim().toLowerCase(), async () => {
+    calls += 1;
+    return new Promise((resolve) => { finish = resolve; });
+  });
+  const first = cached(" INPUT ");
+  const concurrent = cached("input");
+  assert.equal(first, concurrent);
+  await Promise.resolve();
+  assert.equal(calls, 1);
+  finish(history);
+  assert.equal(await first, history);
+  assert.equal(await cached("Input"), history);
+  assert.equal(calls, 1);
+});
+
+test("history caches are run-scoped and retain empty, partial and failed fetch outcomes without extra retries", async () => {
+  const { createClusterHistoryCache } = load("cluster-finder-history-cache");
+  let calls = 0;
+  const fetch = async (address) => {
+    calls += 1;
+    if (address === "failed") throw new Error("loader exhausted retries");
+    return address === "empty" ? [] : [tx(address, "lead", `run-${calls}`)];
+  };
+  const firstRun = createClusterHistoryCache((address) => address, fetch);
+  const empty = await firstRun("empty");
+  assert.equal(await firstRun("empty"), empty);
+  const partial = await firstRun("partial");
+  assert.equal(await firstRun("partial"), partial);
+  await assert.rejects(firstRun("failed"), /exhausted retries/);
+  await assert.rejects(firstRun("failed"), /exhausted retries/);
+  assert.equal(calls, 3);
+  const secondRun = createClusterHistoryCache((address) => address, fetch);
+  assert.notEqual(await secondRun("partial"), partial);
+  assert.equal(calls, 4);
+});
+
+test("shared paginated wallets scan fully once and still expand every private branch; new runs fetch afresh", async () => {
+  const transfers = [
+    tx("lead", "left"), tx("lead", "right"),
+    tx("left", "shared", "left-shared"), tx("right", "shared", "right-shared"),
+    tx("shared", "next-a", "shared-a"), tx("shared", "next-b", "shared-b"),
+  ];
+  const calls = [];
+  const api = engine(async (address, params) => {
+    const key = address.toLowerCase();
+    calls.push(`${key}:${params.cursor ?? "first"}`);
+    const history = transfers.filter((item) => item.from === key || item.to === key);
+    if (key === "shared" && !params.cursor) {
+      return { transactions: history.slice(0, 2), hasMore: true, nextCursor: "second" };
+    }
+    return { transactions: key === "shared" ? history.slice(2) : history, hasMore: false };
+  });
+  const config = () => options({
+    addresses: ["LEAD", "lead"], primaryAddress: "lead", chain: "ethereum", maxHops: 3,
+  });
+  const first = await api.runClusterFinder(config());
+  for (const key of ["lead:first", "left:first", "right:first", "shared:first", "shared:second", "next-a:first", "next-b:first"]) {
+    assert.equal(calls.filter((call) => call === key).length, 1, key);
+  }
+  assert.equal(calls.length, 7);
+  assert.equal(first.scannedWallets, 6);
+  assert.equal(first.complete, true);
+  for (const transfer of transfers) {
+    assert.ok(first.flows.some((flow) => flow.transactions.some((item) => item.hash === transfer.hash)), transfer.hash);
+  }
+  const second = await api.runClusterFinder(config());
+  assert.equal(calls.length, 14, "no history is shared between runs");
+  assert.equal(JSON.stringify(second), JSON.stringify(first));
+});
 
 test("page retries keep the exact cursor and do not duplicate or lose history", async () => {
   let attempts = 0;

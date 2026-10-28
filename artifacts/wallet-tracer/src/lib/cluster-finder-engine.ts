@@ -4,6 +4,7 @@ import {
   type Transaction,
 } from "@workspace/api-client-react";
 import { clusterRequest } from "./cluster-finder-requests";
+import { createClusterHistoryCache } from "./cluster-finder-history-cache";
 
 // Cluster Finder deployment refresh.
 export const CLUSTER_CHAIN_OPTIONS = [
@@ -279,6 +280,7 @@ export async function runClusterFinder(
   };
 
   const scanHistory = async (address: string): Promise<Transaction[]> => {
+    const history: Transaction[] = [];
     let fetchedCount = 0;
     let page = 1;
     let cursor: string | undefined;
@@ -299,16 +301,17 @@ export async function runClusterFinder(
           (message) => reportProgress("scanning", address, message),
         );
       } catch (error) {
-        if (signal.aborted) return [];
+        if (signal.aborted) return history;
         fetchErrors.push({
           address,
           message: `${error instanceof Error ? error.message : String(error)} (${fetchedCount.toLocaleString()} fetched transactions retained; history incomplete.)`,
         });
         publishSnapshot(true);
-        return [];
+        return history;
       }
       reportProgress("scanning", address);
       const pageTransactions = response.transactions.slice(0, limit);
+      history.push(...pageTransactions);
       fetchedCount += pageTransactions.length;
       scannedTransactions += pageTransactions.length;
       pagesFetched += 1;
@@ -335,8 +338,11 @@ export async function runClusterFinder(
     if (hasMore && fetchedCount >= MAX_CLUSTER_HISTORY_PER_WALLET) {
       truncatedKeys.add(canonicalize(address));
     }
-    return [];
+    return history;
   };
+  // One cache per run, never shared across scans or chains. Page ingestion
+  // still happens immediately in scanHistory, not again on a cache hit.
+  const getHistory = createClusterHistoryCache(canonicalize, scanHistory);
 
   const processHistory = (currentKey: string, history: Transaction[]) => {
       const currentAddress = addressByKey.get(currentKey) ?? currentKey;
@@ -403,7 +409,7 @@ export async function runClusterFinder(
       activeKeys.add(currentKey);
       reportProgress("scanning", currentAddress);
       try {
-        await scanHistory(currentAddress);
+        await getHistory(currentAddress);
         if (!signal.aborted) scannedWallets += 1;
       } catch (error) {
         if (!signal.aborted) {

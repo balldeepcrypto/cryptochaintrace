@@ -8,3 +8,9 @@ Recursive wallet expansion has an unknown total until discovery finishes. Fetche
 **Why:** Six-hop expansion can branch broadly under a fixed request budget. A connection-based percentage can appear stalled despite active fetching, and interruptions can leave valid observations without a complete investigation.
 
 **How to apply:** Keep incomplete status explicit across live results, recovered checkpoints, and printed reports. Do not imply a saved browser checkpoint continues execution or automatically resumes a scan unless durable execution or cursor-level recovery is actually implemented.
+
+A resumable checkpoint must save an internally consistent fetched-page boundary: observations, the next pagination cursor, discovered wallet depths, and completed versus unfinished histories. Resuming must retain the original inputs, focus wallets, chain and hop limit.
+
+**Why:** A saved graph or transaction count cannot identify unfinished pages or restore the breadth-first frontier. Restoring only those results can repeat expensive histories or silently omit branches.
+
+**How to apply:** Persist page state before advancing to another page, preserve partial-history warnings until recovery succeeds, and distinguish browser-local Resume from an actual server background worker. Do not claim continued execution while a tab is closed.

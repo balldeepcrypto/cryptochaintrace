@@ -102,8 +102,45 @@ export interface ClusterFinderOptions {
   signal: AbortSignal;
   onProgress?: (progress: ClusterProgress) => void;
   onSnapshot?: (result: ClusterFinderResult) => void;
+  resumeFrom?: ClusterScanCheckpoint;
+  onCheckpoint?: (checkpoint: ClusterScanCheckpoint) => void | Promise<void>;
   getKnownInfo: (address: string, chain: string) => { label: string; type: string } | null;
   normalizeAddress: (address: string, chain: string) => string;
+}
+
+interface ClusterWalletHistory {
+  key: string;
+  transactions: Transaction[];
+  page: number;
+  cursor?: string;
+  seenCursors: string[];
+  hasMore: boolean;
+  finished: boolean;
+  attempted: boolean;
+  truncated: boolean;
+  error?: string;
+}
+
+/** Serializable traversal state; partial results alone cannot resume a scan. */
+export interface ClusterScanCheckpoint {
+  version: 1;
+  chain: ClusterChain;
+  maxHops: ClusterHopDepth;
+  primaryKey: string;
+  inputKeys: string[];
+  focusKeys: string[];
+  addresses: Array<[string, string]>;
+  queue: string[];
+  depths: Array<[string, number]>;
+  histories: ClusterWalletHistory[];
+  pagesFetched: number;
+  scannedTransactions: number;
+}
+
+export function canResumeClusterScan(checkpoint?: ClusterScanCheckpoint): boolean {
+  if (!checkpoint) return false;
+  const finished = new Set(checkpoint.histories.filter((history) => history.finished).map((history) => history.key));
+  return checkpoint.queue.some((key) => !finished.has(key));
 }
 
 export const MAX_CLUSTER_HISTORY_PER_WALLET = 25_000;
@@ -250,6 +287,7 @@ export async function runClusterFinder(
   const queue = [...new Set([primaryKey, ...focusKeys, ...inputKeys])];
   const enqueued = new Set(queue);
   const depthByKey = new Map(queue.map((key) => [key, 0]));
+  const histories = new Map<string, ClusterWalletHistory>();
   let queueIndex = 0;
   let scannedWallets = 0;
   let scannedTransactions = 0;
@@ -261,6 +299,61 @@ export async function runClusterFinder(
   const truncatedKeys = new Set<string>();
   const fetchErrors: Array<{ address: string; message: string }> = [];
   const usExchangeTransactions = new Map<string, ClusterUsExchangeTransaction>();
+
+  const saved = options.resumeFrom;
+  if (saved) {
+    // Never apply a checkpoint to different inputs, focus wallets or limits.
+    if (saved.version !== 1 || saved.chain !== chain || saved.maxHops !== maxHops
+      || saved.primaryKey !== primaryKey
+      || JSON.stringify(saved.inputKeys) !== JSON.stringify(inputKeys)
+      || JSON.stringify(saved.focusKeys) !== JSON.stringify(focusKeys)
+      || !Array.isArray(saved.queue) || !Array.isArray(saved.depths)
+      || !Array.isArray(saved.histories) || !Array.isArray(saved.addresses)) {
+      throw new Error("This checkpoint does not match the scan settings. Restore its original settings to resume.");
+    }
+    const savedDepths = new Map(saved.depths);
+    if (new Set(saved.queue).size !== saved.queue.length || !saved.queue.includes(primaryKey)
+      || saved.queue.some((key, index) => {
+        const depth = savedDepths.get(key);
+        return !Number.isInteger(depth) || depth! < 0 || depth! > maxHops
+          || (index > 0 && depth! < savedDepths.get(saved.queue[index - 1])!);
+      })
+      || saved.histories.some((history) => !savedDepths.has(history.key)
+        || !Array.isArray(history.transactions) || history.transactions.length > MAX_CLUSTER_HISTORY_PER_WALLET
+        || !Array.isArray(history.seenCursors) || !Number.isInteger(history.page) || history.page < 1)
+      || !Number.isInteger(saved.pagesFetched) || saved.pagesFetched < 0
+      || !Number.isInteger(saved.scannedTransactions) || saved.scannedTransactions < 0) {
+      throw new Error("Saved scan traversal state is invalid. Existing partial results have not been changed.");
+    }
+    for (const [key, address] of saved.addresses) addressByKey.set(key, address);
+    queue.splice(0, queue.length, ...saved.queue);
+    enqueued.clear();
+    depthByKey.clear();
+    for (const key of queue) { enqueued.add(key); depthByKey.set(key, savedDepths.get(key)!); }
+    for (const history of saved.histories) {
+      const restored = { ...history, transactions: history.transactions.slice(), seenCursors: history.seenCursors.slice() };
+      histories.set(restored.key, restored);
+      if (restored.attempted) scannedWallets += 1;
+      if (restored.truncated) truncatedKeys.add(restored.key);
+      if (restored.finished && restored.error) {
+        fetchErrors.push({ address: addressByKey.get(restored.key) ?? restored.key, message: restored.error });
+      }
+    }
+    pagesFetched = saved.pagesFetched;
+    scannedTransactions = saved.scannedTransactions;
+  }
+
+  const publishCheckpoint = async () => {
+    if (!options.onCheckpoint) return;
+    await options.onCheckpoint({
+      version: 1, chain, maxHops, primaryKey, inputKeys: inputKeys.slice(), focusKeys: focusKeys.slice(),
+      addresses: [...addressByKey], queue: queue.slice(), depths: [...depthByKey],
+      histories: [...histories.values()].map((history) => ({
+        ...history, transactions: history.transactions.slice(), seenCursors: history.seenCursors.slice(),
+      })),
+      pagesFetched, scannedTransactions,
+    });
+  };
 
   const reportProgress = (phase: ClusterProgress["phase"], activeAddress: string | null, requestStatus?: string) => {
     onProgress?.({
@@ -280,12 +373,18 @@ export async function runClusterFinder(
   };
 
   const scanHistory = async (address: string): Promise<Transaction[]> => {
-    const history: Transaction[] = [];
-    let fetchedCount = 0;
-    let page = 1;
-    let cursor: string | undefined;
-    const seenCursors = new Set<string>();
-    let hasMore = true;
+    const key = canonicalize(address);
+    let state = histories.get(key);
+    if (!state) {
+      state = { key, transactions: [], page: 1, seenCursors: [], hasMore: true, finished: false, attempted: false, truncated: false };
+      histories.set(key, state);
+    }
+    const history = state.transactions;
+    if (state.finished) return history;
+    let fetchedCount = history.length;
+    let { page, cursor, hasMore } = state;
+    const seenCursors = new Set(state.seenCursors);
+    state.error = undefined;
 
     while (hasMore && fetchedCount < MAX_CLUSTER_HISTORY_PER_WALLET) {
       if (signal.aborted) throw abortError();
@@ -302,11 +401,10 @@ export async function runClusterFinder(
         );
       } catch (error) {
         if (signal.aborted) return history;
-        fetchErrors.push({
-          address,
-          message: `${error instanceof Error ? error.message : String(error)} (${fetchedCount.toLocaleString()} fetched transactions retained; history incomplete.)`,
-        });
+        state.error = `${error instanceof Error ? error.message : String(error)} (${fetchedCount.toLocaleString()} fetched transactions retained; history incomplete.)`;
+        fetchErrors.push({ address, message: state.error });
         publishSnapshot(true);
+        await publishCheckpoint();
         return history;
       }
       reportProgress("scanning", address);
@@ -317,21 +415,32 @@ export async function runClusterFinder(
       pagesFetched += 1;
       // Incorporate every page immediately, before waiting for the next one.
       processHistory(canonicalize(address), pageTransactions);
-      publishSnapshot(pagesFetched === 1);
       hasMore = response.hasMore;
+      state.hasMore = hasMore;
 
-      if (!hasMore) break;
-      if (!response.nextCursor) {
-        fetchErrors.push({ address, message: `The transaction service reported another page without a cursor. ${fetchedCount} fetched transactions retained; history incomplete.` });
-        break;
+      if (hasMore && !response.nextCursor) {
+        state.error = `The transaction service reported another page without a cursor. ${fetchedCount} fetched transactions retained; history incomplete.`;
+      } else if (hasMore && seenCursors.has(response.nextCursor!)) {
+        state.error = `The transaction service repeated a pagination cursor. ${fetchedCount} fetched transactions retained; history incomplete.`;
+      } else if (hasMore) {
+        seenCursors.add(response.nextCursor!);
+        cursor = response.nextCursor!;
+        page += 1;
+        state.cursor = cursor;
+        state.page = page;
+        state.seenCursors = [...seenCursors];
       }
-      if (seenCursors.has(response.nextCursor)) {
-        fetchErrors.push({ address, message: `The transaction service repeated a pagination cursor. ${fetchedCount} fetched transactions retained; history incomplete.` });
-        break;
+      if (hasMore && fetchedCount >= MAX_CLUSTER_HISTORY_PER_WALLET) {
+        truncatedKeys.add(key);
+        state.truncated = true;
       }
-      seenCursors.add(response.nextCursor);
-      cursor = response.nextCursor;
-      page += 1;
+      state.finished = !hasMore || Boolean(state.error) || state.truncated;
+      if (state.error) fetchErrors.push({ address, message: state.error });
+      publishSnapshot(pagesFetched === 1);
+      // Persist the NEXT page cursor together with its already-ingested history,
+      // before starting another page. Reloading never has to restart page one.
+      await publishCheckpoint();
+      if (state.finished) break;
       reportProgress("scanning", address);
     }
 
@@ -406,19 +515,28 @@ export async function runClusterFinder(
     while (queueIndex < levelEnd && !signal.aborted) {
       const currentKey = queue[queueIndex++];
       const currentAddress = addressByKey.get(currentKey) ?? currentKey;
+      const alreadyAttempted = histories.get(currentKey)?.attempted;
       activeKeys.add(currentKey);
       reportProgress("scanning", currentAddress);
       try {
         await getHistory(currentAddress);
-        if (!signal.aborted) scannedWallets += 1;
+        if (!signal.aborted && !alreadyAttempted) {
+          scannedWallets += 1;
+          histories.get(currentKey)!.attempted = true;
+        }
       } catch (error) {
         if (!signal.aborted) {
           fetchErrors.push({ address: currentAddress, message: error instanceof Error ? error.message : String(error) });
-          scannedWallets += 1;
+          if (!alreadyAttempted) {
+            scannedWallets += 1;
+            const history = histories.get(currentKey);
+            if (history) history.attempted = true;
+          }
         }
       } finally {
         activeKeys.delete(currentKey);
         publishSnapshot();
+        await publishCheckpoint();
         reportProgress("scanning", null);
       }
     }
@@ -543,16 +661,23 @@ export async function runClusterFinder(
   }
 
   function publishSnapshot(force = false) {
-    if (!onSnapshot || (!force && Date.now() - lastSnapshotAt < 5_000)) return;
+    if (!onSnapshot || (!force && Date.now() - lastSnapshotAt < 2_000)) return;
     lastSnapshotAt = Date.now();
     onSnapshot(buildResult(false, "Scan in progress. Results reflect fetched pages only; queued and active histories may be incomplete."));
   }
 
+  // Rebuild observations from saved pages without refetching them. Queue/depth
+  // restoration preserves all branches, including unfinished concurrent wallets.
+  if (saved) {
+    for (const [key, history] of histories) processHistory(key, history.transactions);
+  }
   publishSnapshot(true);
+  await publishCheckpoint();
   // Keep layer barriers: streaming pages must not start a deeper layer early.
   while (queueIndex < queue.length && !signal.aborted) {
     currentHop = depthByKey.get(queue[queueIndex]) ?? 0;
-    const levelEnd = queue.length;
+    let levelEnd = queueIndex;
+    while (levelEnd < queue.length && depthByKey.get(queue[levelEnd]) === currentHop) levelEnd += 1;
     await Promise.all(Array.from({ length: 3 }, () => worker(levelEnd)));
   }
   reportProgress("building", null);
@@ -560,5 +685,6 @@ export async function runClusterFinder(
     ? "Scan stopped before all discovered wallets were scanned. Fetched transactions are retained."
     : undefined);
   onSnapshot?.(result);
+  await publishCheckpoint();
   return result;
 }

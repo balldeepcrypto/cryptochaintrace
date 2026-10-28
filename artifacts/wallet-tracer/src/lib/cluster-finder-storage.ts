@@ -1,4 +1,4 @@
-import type { ClusterChain, ClusterFinderResult, ClusterProgress, ClusterHopDepth } from "./cluster-finder-engine";
+import type { ClusterChain, ClusterFinderResult, ClusterProgress, ClusterHopDepth, ClusterScanCheckpoint } from "./cluster-finder-engine";
 
 export interface ClusterCheckpoint {
   version: 1;
@@ -14,6 +14,7 @@ export interface ClusterCheckpoint {
   progress: ClusterProgress | null;
   error: string;
   persistenceError?: boolean;
+  scan?: ClusterScanCheckpoint;
 }
 
 // Only the latest scan per signed-in account is retained on this browser.

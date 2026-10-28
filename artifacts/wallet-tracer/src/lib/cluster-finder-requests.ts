@@ -1,6 +1,6 @@
 // A shared queue prevents Cluster Finder workers (and overlapping scans in this
 // tab) from independently spending the API's per-IP request allowance.
-const REQUEST_INTERVAL_MS = 1_250; // At most 48 starts/minute; leave headroom.
+const REQUEST_INTERVAL_MS = Math.ceil(60_000 / 72); // At most 72 starts/minute.
 const MAX_RETRIES = 6;
 export const CLUSTER_REQUEST_TIMEOUT_MS = 45_000;
 

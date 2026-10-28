@@ -11,6 +11,7 @@ import {
   CLUSTER_CHAIN_OPTIONS,
   MAX_CLUSTER_HISTORY_PER_WALLET,
   runClusterFinder,
+  canResumeClusterScan,
   DEFAULT_CLUSTER_HOPS,
   type ClusterHopDepth,
   type ClusterChain,
@@ -76,6 +77,18 @@ export default function ClusterFinder() {
   const [checkpointReady, setCheckpointReady] = useState(false);
   const [storageWarning, setStorageWarning] = useState("");
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  const [resumeCheckpoint, setResumeCheckpoint] = useState<ClusterCheckpoint | null>(null);
+  const flushCheckpointRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const flush = () => flushCheckpointRef.current?.();
+    document.addEventListener("visibilitychange", flush);
+    window.addEventListener("pagehide", flush);
+    return () => {
+      document.removeEventListener("visibilitychange", flush);
+      window.removeEventListener("pagehide", flush);
+    };
+  }, []);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -94,6 +107,7 @@ export default function ClusterFinder() {
     setPrimaryAddress("");
     setMaxHops(DEFAULT_CLUSTER_HOPS);
     setSelectedInput(null);
+    setResumeCheckpoint(null);
     if (owner) {
       void loadClusterCheckpoint(owner).then((checkpoint) => {
         if (disposed || !checkpoint) return;
@@ -104,6 +118,7 @@ export default function ClusterFinder() {
         setFocusText(checkpoint.focusText ?? "");
         setPrimaryAddress(checkpoint.primaryAddress);
         setProgress(checkpoint.progress);
+        setResumeCheckpoint(checkpoint);
         setSavedAt(checkpoint.persistenceError ? null : checkpoint.savedAt);
         if (checkpoint.persistenceError) setStorageWarning("Recovered results from this tab's memory, but browser saving failed. Print or export before reloading.");
         const interrupted = checkpoint.state === "running";
@@ -126,6 +141,8 @@ export default function ClusterFinder() {
       // Stop requests on navigation/logout, but the engine returns its fetched
       // pages and the captured account's checkpoint is still saved below.
       controllerRef.current?.abort();
+      flushCheckpointRef.current?.();
+      flushCheckpointRef.current = null;
     };
   }, [owner]);
 
@@ -189,14 +206,25 @@ export default function ClusterFinder() {
     }
   };
 
-  const startScan = async () => {
-    if (scanState === "running" || !primaryAddress.trim() || !hasPrimary || !checkpointReady || !owner) return;
+  const startScan = async (resume?: ClusterCheckpoint) => {
+    if (scanState === "running" || !checkpointReady || !owner) return;
+    if (!resume && (!primaryAddress.trim() || !hasPrimary)) return;
+    const config = resume ?? { chain, maxHops, addressText, focusText, primaryAddress: primaryAddress.trim() };
+    const scanMaxHops = config.maxHops ?? resume?.result?.maxHops ?? 6;
+    if (resume && !resume.scan) return;
+    if (resume) {
+      setChain(config.chain);
+      setMaxHops(scanMaxHops);
+      setAddressText(config.addressText);
+      setFocusText(config.focusText ?? "");
+      setPrimaryAddress(config.primaryAddress);
+    }
     const controller = new AbortController();
     controllerRef.current = controller;
     setReportFile(null);
     setReportError("");
-    setResult(null);
-    setProgress(null);
+    setResult(resume?.result ?? null);
+    setProgress(resume?.progress ?? null);
     setScanError("");
     setSelectedInput(null);
     setScanState("running");
@@ -204,27 +232,33 @@ export default function ClusterFinder() {
     const runId = beginClusterCheckpoint(owner);
     activeRunRef.current = runId;
     const isCurrentRun = () => mountedRef.current && activeRunRef.current === runId;
-    let latestResult: ClusterFinderResult | null = null;
-    let latestProgress: ClusterProgress | null = null;
-    const checkpoint = (state: ClusterCheckpoint["state"], error = "") => {
+    let latestResult: ClusterFinderResult | null = resume?.result ?? null;
+    let latestProgress: ClusterProgress | null = resume?.progress ?? null;
+    let latestScan = resume?.scan;
+    const checkpoint = async (state: ClusterCheckpoint["state"], error = "") => {
       const saved: ClusterCheckpoint = {
         version: 1, runId, savedAt: new Date().toISOString(),
-        chain, maxHops, addressText, focusText, primaryAddress: primaryAddress.trim(),
+        chain: config.chain, maxHops: scanMaxHops, addressText: config.addressText,
+        focusText: config.focusText, primaryAddress: config.primaryAddress,
         state, result: latestResult, progress: latestProgress, error,
+        scan: latestScan,
       };
-      void saveClusterCheckpoint(owner, saved).then((written) => {
+      if (isCurrentRun()) setResumeCheckpoint(saved);
+      await saveClusterCheckpoint(owner, saved).then((written) => {
         if (written && mountedRef.current && activeRunRef.current === runId) { setSavedAt(saved.savedAt); setStorageWarning(""); }
       }).catch(() => {
         if (mountedRef.current && activeRunRef.current === runId) setStorageWarning("Could not save this checkpoint to browser storage. Keep this page open and print/export any partial results before leaving. In-page results are still available.");
       });
     };
+    flushCheckpointRef.current = () => { void checkpoint("running"); };
     try {
       const output = await runClusterFinder({
-        addresses: enteredAddresses,
-        primaryAddress: primaryAddress.trim(),
-        chain,
-        maxHops,
-        focusAddresses,
+        addresses: resume ? config.addressText.split(/[\n,\t; ]+/).filter(Boolean) : enteredAddresses,
+        primaryAddress: config.primaryAddress,
+        chain: config.chain,
+        maxHops: scanMaxHops,
+        focusAddresses: resume ? (config.focusText ?? "").split(/[\n,\t; ]+/).filter(Boolean) : focusAddresses,
+        resumeFrom: resume?.scan,
         signal: controller.signal,
         onProgress: (next) => {
           latestProgress = next;
@@ -233,13 +267,16 @@ export default function ClusterFinder() {
         onSnapshot: (snapshot) => {
           latestResult = snapshot;
           if (isCurrentRun()) setResult(snapshot);
-          checkpoint("running");
+        },
+        onCheckpoint: async (snapshot) => {
+          latestScan = snapshot;
+          await checkpoint("running");
         },
         getKnownInfo,
         normalizeAddress: getNormalizedAddress,
       });
       latestResult = output;
-      checkpoint(controller.signal.aborted ? "cancelled" : "complete");
+      await checkpoint(controller.signal.aborted ? "cancelled" : "complete");
       if (isCurrentRun()) {
         setResult(output);
         setScanState(controller.signal.aborted ? "cancelled" : "complete");
@@ -252,14 +289,17 @@ export default function ClusterFinder() {
         if (isCurrentRun()) setResult(latestResult);
       }
       if (controller.signal.aborted || (error instanceof Error && error.name === "AbortError")) {
-        checkpoint("cancelled");
+        await checkpoint("cancelled");
         if (isCurrentRun()) setScanState("cancelled");
       } else {
-        checkpoint("failed", message);
+        await checkpoint("failed", message);
         if (isCurrentRun()) { setScanError(message); setScanState("failed"); }
       }
     } finally {
-      if (controllerRef.current === controller) controllerRef.current = null;
+      if (controllerRef.current === controller) {
+        controllerRef.current = null;
+        flushCheckpointRef.current = null;
+      }
     }
   };
 
@@ -277,6 +317,7 @@ export default function ClusterFinder() {
     setSelectedInput(null);
     setScanState("idle");
     setSavedAt(null);
+    setResumeCheckpoint(null);
     activeRunRef.current = null;
     if (owner) void clearClusterCheckpoint(owner).catch(() => {
       setStorageWarning("Results were cleared in this page, but the saved browser checkpoint could not be deleted.");
@@ -390,11 +431,30 @@ export default function ClusterFinder() {
                     <Square className="h-3.5 w-3.5 fill-current" /> Cancel scan
                   </Button>
                 ) : (
-                  <Button onClick={startScan} disabled={!hasPrimary || !checkpointReady || !owner} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
+                  <Button onClick={() => void startScan()} disabled={!hasPrimary || !checkpointReady || !owner} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
                     <Play className="h-3.5 w-3.5 fill-current" /> Run cluster scan
                   </Button>
                 )}
               </div>
+              {scanState !== "running" && resumeCheckpoint && (!result?.complete || scanState === "failed" || scanState === "cancelled") && (
+                <div className="space-y-2 border-t border-border/60 pt-3">
+                  <Button type="button" variant="outline" onClick={() => void startScan(resumeCheckpoint)}
+                    disabled={!checkpointReady || !canResumeClusterScan(resumeCheckpoint.scan)}
+                    data-testid="button-resume-cluster-scan">Resume scan</Button>
+                  <p className="text-[11px] leading-5 text-muted-foreground">
+                    {canResumeClusterScan(resumeCheckpoint.scan)
+                      ? "Continue the saved scan with its original settings. Completed histories are reused; unfinished wallets continue from their saved page cursors."
+                      : resumeCheckpoint.scan
+                        ? "No unfinished history pages remain. History caps or invalid provider cursors cannot be extended by Resume; existing limits and partial results are preserved."
+                        : "This older checkpoint contains results only, not pagination state. Start a new scan to create a resumable checkpoint."}
+                  </p>
+                </div>
+              )}
+              <p className="text-[11px] leading-5 text-muted-foreground" data-testid="status-cluster-background-limit">
+                Scans run in this browser, not a server background worker. Keep the page open to continue scanning.
+                Each fetched page is saved on this browser for this account; after closing, reloading or device sleep, return here and choose Resume.
+                Unfinished requests may be repeated, but saved pages and completed wallets are reused. Browser storage must remain available.
+              </p>
               {!hasPrimary && primaryAddress.trim() && (
                 <div className="flex items-start gap-2 border border-amber-300/20 bg-amber-200/[0.04] p-3 text-[11px] leading-5 text-amber-100/80" role="status" data-testid="status-primary-not-in-list">
                   <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -439,7 +499,7 @@ export default function ClusterFinder() {
                     <Metric label="Pages fetched" value={progress?.pagesFetched ?? 0} />
                   </div>
                   <p className="font-mono text-xs text-muted-foreground">Discovered {progress?.discoveredWallets ?? 0} · Active {progress?.activeWallets ?? 0} · Directed inputs connected {result?.connections.length ?? 0} / {inputCount}</p>
-                  <p className="text-xs leading-5 text-muted-foreground">IN/OUT history expands breadth-first from all starting wallets through {scannedHopLimit} hops, without re-scanning wallets. Requests are queued at most 48 per minute, with automatic backoff for rate limits and temporary failures. Recursive branching can discover many wallets and take hours. Partial results below update about every five seconds as pages arrive; stopping the scan retains fetched data.</p>
+                  <p className="text-xs leading-5 text-muted-foreground">IN/OUT history expands breadth-first from all starting wallets through {scannedHopLimit} hops, without re-scanning wallets. Requests are queued at most 72 per minute, with automatic backoff for rate limits and temporary failures. The shared API limit may enforce a lower effective rate. Recursive branching can discover many wallets and take hours. Partial results below update about every two seconds as pages arrive; every fetched page is checkpointed. Stopping the scan retains fetched data for Resume.</p>
                 </div>
               ) : scanState === "idle" ? (
                 <div className="flex min-h-[175px] items-center gap-4">
@@ -455,7 +515,7 @@ export default function ClusterFinder() {
                   <div className="min-w-0">
                     <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-rose-100">Scan could not complete</p>
                     <p className="mt-2 break-words text-xs leading-5 text-rose-100/70">{scanError}</p>
-                    <Button onClick={startScan} variant="outline" className="mt-4 h-8 rounded-none border-rose-200/20 font-mono text-[10px] uppercase" data-testid="button-retry-cluster-scan">Retry scan</Button>
+                    <Button onClick={() => void startScan()} variant="outline" className="mt-4 h-8 rounded-none border-rose-200/20 font-mono text-[10px] uppercase" data-testid="button-retry-cluster-scan">Retry scan</Button>
                   </div>
                 </div>
               ) : scanState === "cancelled" ? (

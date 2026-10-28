@@ -55,12 +55,12 @@ function failure(status, headers = {}, data) {
   return Object.assign(new Error(`HTTP ${status}`), { status, headers: new Headers(headers), data });
 }
 
-test("concurrent workers share a serialized 48/minute request budget", async () => {
+test("concurrent workers share a serialized 72/minute request budget", async () => {
   const api = scheduler();
   const starts = [];
   let active = 0;
   let maximum = 0;
-  await Promise.all(Array.from({ length: 70 }, () => api.clusterRequest(async () => {
+  await Promise.all(Array.from({ length: 150 }, () => api.clusterRequest(async () => {
     starts.push(api.now());
     maximum = Math.max(maximum, ++active);
     await Promise.resolve();
@@ -68,8 +68,9 @@ test("concurrent workers share a serialized 48/minute request budget", async () 
     return "ok";
   }, new AbortController().signal)));
   assert.equal(maximum, 1);
-  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= 1250);
-  for (const start of starts) assert.ok(starts.filter((time) => time >= start && time < start + 60_000).length <= 48);
+  for (let i = 1; i < starts.length; i++) assert.ok(starts[i] - starts[i - 1] >= Math.ceil(60_000 / 72));
+  for (const start of starts) assert.ok(starts.filter((time) => time >= start && time < start + 60_000).length <= 72);
+  assert.equal(starts.filter((time) => time < starts[0] + 60_000).length, 72);
 });
 
 test("429 cools down the entire queue, honors Retry-After, and retries the same operation", async () => {
@@ -88,7 +89,7 @@ test("429 cools down the entire queue, honors Retry-After, and retries the same 
   assert.equal(attempts, 2);
   assert.ok(starts[1][1] - starts[0][1] >= 90_000);
   assert.equal(starts[2][0], "second");
-  assert.ok(starts[2][1] - starts[1][1] >= 1250);
+  assert.ok(starts[2][1] - starts[1][1] >= Math.ceil(60_000 / 72));
   assert.match(messages[0], /Rate limit.*retry 1\/6/);
 });
 
@@ -235,6 +236,133 @@ test("shared paginated wallets scan fully once and still expand every private br
   const second = await api.runClusterFinder(config());
   assert.equal(calls.length, 14, "no history is shared between runs");
   assert.equal(JSON.stringify(second), JSON.stringify(first));
+});
+
+test("page checkpoints resume concurrent unfinished histories at their next cursor and reuse completed wallets", async () => {
+  for (const maxHops of [3, 4, 6]) {
+    const controller = new AbortController();
+    const snapshots = [];
+    let checkpoint;
+    const calls = [];
+    const transfers = [
+      tx("lead", "proxy", "lead-proxy"), tx("proxy", "focus", "proxy-focus"),
+      ...Array.from({ length: 7 }, (_, index) => tx(`p${index}`, `p${index + 1}`, `chain-${index}`)),
+      tx("proxy", "p0", "proxy-chain"), tx("coinbase", "focus", "exchange-touch"),
+    ];
+    const fetch = async (address, params) => {
+      const key = address.toLowerCase();
+      calls.push(`${key}:${params.cursor ?? "first"}`);
+      const history = transfers.filter((item) => item.from === key || item.to === key);
+      if (key === "focus" && !params.cursor) {
+        return { transactions: history.slice(0, 1), hasMore: true, nextCursor: "focus-second" };
+      }
+      return { transactions: key === "focus" ? history.slice(1) : history, hasMore: false };
+    };
+    const config = {
+      addresses: ["LEAD"], primaryAddress: "lead", chain: "ethereum", maxHops,
+      focusAddresses: ["FOCUS", "focus"],
+      getKnownInfo: (address) => address.toLowerCase() === "coinbase" ? { label: "Coinbase", type: "exchange" } : null,
+    };
+    const first = await engine(fetch).runClusterFinder(options({
+      ...config, signal: controller.signal,
+      onCheckpoint: async (state) => {
+        checkpoint = JSON.parse(JSON.stringify(state));
+        const focus = state.histories.find((item) => item.key === "focus");
+        if (focus?.cursor === "focus-second" && state.histories.some((item) => item.key === "lead" && item.finished)) {
+          controller.abort();
+        }
+      },
+      onSnapshot: (result) => snapshots.push(result),
+    }));
+    assert.equal(first.complete, false);
+    assert.equal(checkpoint.histories.find((item) => item.key === "focus").transactions.length, 1);
+    assert.equal(engine(fetch).canResumeClusterScan(checkpoint), true);
+    assert.ok(snapshots.some((result) => result.flows.some((flow) => flow.transactions.some((item) => item.hash === "proxy-focus"))));
+    const beforeResume = calls.length;
+    const baseline = JSON.stringify(checkpoint);
+    let finalCheckpoint;
+    // A new engine module simulates a reload, not reuse of a live promise cache.
+    const resumed = await engine(fetch).runClusterFinder(options({
+      ...config, resumeFrom: checkpoint, onCheckpoint: (state) => { finalCheckpoint = state; },
+    }));
+    assert.equal(JSON.stringify(checkpoint), baseline, "resuming must not mutate the durable checkpoint");
+    assert.equal(resumed.complete, true);
+    assert.equal(resumed.maxHops, maxHops);
+    assert.ok(!calls.slice(beforeResume).includes("lead:first"), "completed history is not fetched again");
+    assert.ok(!calls.slice(beforeResume).includes("focus:first"), "a saved page is not fetched again");
+    assert.equal(calls.filter((call) => call === "focus:focus-second").length, 1);
+    assert.ok(resumed.flows.some((flow) => flow.transactions.some((item) => item.hash === "proxy-focus")));
+    assert.ok(resumed.focusConnections.some((connection) => connection.focusAddress.toLowerCase() === "focus"));
+    assert.equal(resumed.usExchangeTransactions[0].transaction.hash, "exchange-touch");
+    assert.ok(finalCheckpoint.depths.every(([, depth]) => depth <= maxHops));
+    assert.equal(engine(fetch).canResumeClusterScan(finalCheckpoint), false);
+    assert.equal(new Set(calls).size, calls.length, "each history page is fetched once across the interruption");
+    const fresh = await engine(fetch).runClusterFinder(options(config));
+    assert.deepEqual(JSON.parse(JSON.stringify(resumed)), JSON.parse(JSON.stringify(fresh)), "resumption preserves every trail and counter");
+  }
+});
+
+test("failed histories resume at the failed cursor without replaying pages or duplicating errors and transfers", async () => {
+  let failing = true;
+  let checkpoint;
+  const calls = [];
+  const fetch = async (address, params) => {
+    calls.push(`${address}:${params.cursor ?? "first"}`);
+    if (address !== "lead") return { transactions: [], hasMore: false };
+    if (!params.cursor) return { transactions: [tx("input", "lead", "retained")], hasMore: true, nextCursor: "next" };
+    if (failing) throw failure(503);
+    return { transactions: [tx("input", "lead", "recovered")], hasMore: false };
+  };
+  const api = engine(fetch);
+  const first = await api.runClusterFinder(options({ onCheckpoint: (state) => { checkpoint = state; } }));
+  assert.equal(first.complete, false);
+  assert.equal(first.fetchErrors.length, 1);
+  assert.equal(checkpoint.histories.find((item) => item.key === "lead").cursor, "next");
+  assert.equal(api.canResumeClusterScan(checkpoint), true);
+  const previousCalls = calls.length;
+  failing = false;
+  const output = await engine(fetch).runClusterFinder(options({ resumeFrom: checkpoint }));
+  assert.deepEqual(calls.slice(previousCalls), ["lead:next"]);
+  assert.equal(output.complete, true);
+  assert.equal(output.fetchErrors.length, 0);
+  assert.equal(output.scannedWallets, 2);
+  assert.equal(output.scannedTransactions, 2);
+  assert.equal(output.connections[0].flows[0].transactions.length, 2);
+});
+
+test("checkpoint writes are awaited before the next page and contain immutable full history plus traversal state", async () => {
+  let durableCursor;
+  let finalCheckpoint;
+  const checkpoints = [];
+  await engine(async (address, params) => {
+    if (address !== "lead") return { transactions: [], hasMore: false };
+    if (params.cursor) {
+      assert.equal(durableCursor, params.cursor);
+      return { transactions: [tx("lead", "b", "second")], hasMore: false };
+    }
+    return { transactions: [tx("lead", "a", "first")], hasMore: true, nextCursor: "saved-next" };
+  }).runClusterFinder(options({
+    addresses: ["lead"],
+    onCheckpoint: async (state) => {
+      const firstPage = state.histories.find((item) => item.key === "lead");
+      await Promise.resolve();
+      if (firstPage?.cursor) durableCursor = firstPage.cursor;
+      checkpoints.push(state);
+      finalCheckpoint = state;
+    },
+  }));
+  const first = checkpoints.find((state) => state.histories.find((item) => item.key === "lead")?.transactions.length === 1);
+  assert.equal(first.histories.find((item) => item.key === "lead").transactions.length, 1);
+  assert.equal(finalCheckpoint.histories.find((item) => item.key === "lead").transactions.length, 2);
+  assert.ok(first.queue.includes("a"));
+  assert.ok(first.depths.some(([key, depth]) => key === "a" && depth === 1));
+  let called = false;
+  const api = engine(async () => { called = true; });
+  await assert.rejects(api.runClusterFinder(options({ addresses: ["lead"], primaryAddress: "other", resumeFrom: finalCheckpoint })), /does not match/);
+  assert.equal(called, false);
+  await assert.rejects(api.runClusterFinder(options({
+    addresses: ["lead"], resumeFrom: { ...finalCheckpoint, queue: ["lead", "lead"] },
+  })), /invalid/);
 });
 
 test("page retries keep the exact cursor and do not duplicate or lose history", async () => {
@@ -733,17 +861,33 @@ test("US touches from retained partial histories remain reportable with incomple
 
 test("pagination still enforces the existing 25k per-wallet history cap", async () => {
   let pages = 0;
+  let checkpoint;
   const api = engine(async (address, params) => {
     if (address === "input") return { transactions: [], hasMore: false };
     pages++;
     assert.equal(params.limit, 250);
     return { transactions: Array.from({ length: 250 }, (_, i) => tx("input", "lead", `${pages}-${i}`)), hasMore: true, nextCursor: String(pages) };
   });
-  const result = await api.runClusterFinder(options());
+  const result = await api.runClusterFinder(options({ onCheckpoint: (state) => { checkpoint = state; } }));
   assert.equal(pages, 100);
   assert.equal(result.scannedTransactions, 25_000);
   assert.equal(result.truncatedAddresses[0], "lead");
   assert.equal(result.complete, false);
+  assert.equal(checkpoint.histories.find((history) => history.key === "lead").transactions.length, 25_000);
+  assert.equal(api.canResumeClusterScan(checkpoint), false, "Resume must never bypass the history cap");
+});
+
+test("resume control uses saved settings and clearly identifies local browser execution and legacy checkpoints", () => {
+  const page = fs.readFileSync(path.join(__dirname, "../src/pages/cluster-finder.tsx"), "utf8");
+  assert.match(page, /button-resume-cluster-scan/);
+  assert.match(page, /startScan\(resumeCheckpoint\)/);
+  assert.match(page, /resumeFrom: resume\?\.scan/);
+  assert.match(page, /canResumeClusterScan\(resumeCheckpoint\.scan\)/);
+  assert.match(page, /older checkpoint contains results only/);
+  assert.match(page, /not a server background worker/);
+  assert.match(page, /every fetched page is checkpointed/);
+  assert.match(page, /visibilitychange/);
+  assert.match(page, /pagehide/);
 });
 
 function exportsModule(globals = {}) {

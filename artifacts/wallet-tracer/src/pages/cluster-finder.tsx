@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent } from "react";
 import { AlertCircle, ArrowDownLeft, ArrowRight, Clock3, Copy, GitBranch, LoaderCircle, Network, OctagonX, Play, Printer, ShieldCheck, Square, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -207,7 +207,7 @@ export default function ClusterFinder() {
   };
 
   const startScan = async (resume?: ClusterCheckpoint) => {
-    if (scanState === "running" || !checkpointReady || !owner) return;
+    if (controllerRef.current || scanState === "running" || !checkpointReady || !owner) return;
     if (!resume && (!primaryAddress.trim() || !hasPrimary)) return;
     const config = resume ?? { chain, maxHops, addressText, focusText, primaryAddress: primaryAddress.trim() };
     const scanMaxHops = config.maxHops ?? resume?.result?.maxHops ?? 6;
@@ -219,6 +219,9 @@ export default function ClusterFinder() {
       setFocusText(config.focusText ?? "");
       setPrimaryAddress(config.primaryAddress);
     }
+    // Allocate the run before resetting any recovered results. Startup failures
+    // must leave the checkpoint available for another attempt.
+    const runId = beginClusterCheckpoint(owner);
     const controller = new AbortController();
     controllerRef.current = controller;
     setReportFile(null);
@@ -229,7 +232,6 @@ export default function ClusterFinder() {
     setSelectedInput(null);
     setScanState("running");
     setSavedAt(null);
-    const runId = beginClusterCheckpoint(owner);
     activeRunRef.current = runId;
     const isCurrentRun = () => mountedRef.current && activeRunRef.current === runId;
     let latestResult: ClusterFinderResult | null = resume?.result ?? null;
@@ -301,6 +303,30 @@ export default function ClusterFinder() {
         flushCheckpointRef.current = null;
       }
     }
+  };
+
+  const handleStartError = (error: unknown) => {
+    if (!mountedRef.current) return;
+    setScanError(`Could not start the scan: ${error instanceof Error ? error.message : String(error)}. Your saved checkpoint is retained.`);
+    setScanState("failed");
+  };
+
+  const handleStartScan = (event: MouseEvent<HTMLButtonElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    void startScan().catch(handleStartError);
+  };
+
+  const handleResumeScan = (event: MouseEvent<HTMLButtonElement>) => {
+    // Do not submit an enclosing form or let a parent click handler navigate.
+    // Resume/Retry always use saved settings and cursors, never a fresh scan.
+    event.preventDefault();
+    event.stopPropagation();
+    if (!resumeCheckpoint?.scan || !canResumeClusterScan(resumeCheckpoint.scan)) {
+      setScanError("There are no resumable history pages in this checkpoint. Saved results are retained; history limits cannot be extended by Resume.");
+      return;
+    }
+    void startScan(resumeCheckpoint).catch(handleStartError);
   };
 
   const cancelScan = () => {
@@ -431,14 +457,14 @@ export default function ClusterFinder() {
                     <Square className="h-3.5 w-3.5 fill-current" /> Cancel scan
                   </Button>
                 ) : (
-                  <Button onClick={() => void startScan()} disabled={!hasPrimary || !checkpointReady || !owner} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
+                  <Button type="button" onClick={handleStartScan} disabled={!hasPrimary || !checkpointReady || !owner} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
                     <Play className="h-3.5 w-3.5 fill-current" /> Run cluster scan
                   </Button>
                 )}
               </div>
               {scanState !== "running" && resumeCheckpoint && (!result?.complete || scanState === "failed" || scanState === "cancelled") && (
                 <div className="space-y-2 border-t border-border/60 pt-3">
-                  <Button type="button" variant="outline" onClick={() => void startScan(resumeCheckpoint)}
+                  <Button type="button" variant="outline" onClick={handleResumeScan}
                     disabled={!checkpointReady || !canResumeClusterScan(resumeCheckpoint.scan)}
                     data-testid="button-resume-cluster-scan">Resume scan</Button>
                   <p className="text-[11px] leading-5 text-muted-foreground">
@@ -515,7 +541,7 @@ export default function ClusterFinder() {
                   <div className="min-w-0">
                     <p className="font-mono text-[10px] uppercase tracking-[0.15em] text-rose-100">Scan could not complete</p>
                     <p className="mt-2 break-words text-xs leading-5 text-rose-100/70">{scanError}</p>
-                    <Button onClick={() => void startScan()} variant="outline" className="mt-4 h-8 rounded-none border-rose-200/20 font-mono text-[10px] uppercase" data-testid="button-retry-cluster-scan">Retry scan</Button>
+                    <Button type="button" onClick={handleResumeScan} disabled={!checkpointReady || !canResumeClusterScan(resumeCheckpoint?.scan)} variant="outline" className="mt-4 h-8 rounded-none border-rose-200/20 font-mono text-[10px] uppercase" data-testid="button-retry-cluster-scan">Retry scan from checkpoint</Button>
                   </div>
                 </div>
               ) : scanState === "cancelled" ? (

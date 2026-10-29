@@ -143,14 +143,14 @@ function tx(from, to, hash = `${from}-${to}`) {
   return { hash, from, to, value: "0.000000000000000001", timestamp: "2026-10-24T10:20:30.123Z", tokenSymbol: "DAG", status: "success" };
 }
 
-function engine(getWalletTransactions) {
+function engine(getWalletTransactions, globals = {}) {
   const requests = scheduler();
   return load("cluster-finder-engine", {
     "@workspace/api-client-react": { getWalletTransactions },
     "./cluster-finder-requests": requests,
     "./cluster-finder-focus": load("cluster-finder-focus"),
     "./cluster-finder-history-cache": load("cluster-finder-history-cache"),
-  });
+  }, globals);
 }
 
 function options(overrides = {}) {
@@ -935,6 +935,92 @@ test("resume control uses saved settings and clearly identifies local browser ex
   assert.match(page, /pagehide/);
 });
 
+function pageHandler(name, bindings) {
+  const file = path.join(__dirname, "../src/pages/cluster-finder.tsx");
+  const source = ts.createSourceFile(file, fs.readFileSync(file, "utf8"), ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let initializer;
+  const visit = (node) => {
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === name) initializer = node.initializer;
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(initializer, `Missing page handler ${name}`);
+  const output = ts.transpileModule(`exports.handler = ${initializer.getText(source)};`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const context = { exports: {}, ...bindings };
+  vm.runInNewContext(output, context);
+  return context.exports.handler;
+}
+
+test("Resume and Retry suppress form/navigation clicks and start only the saved checkpoint; startup failures are caught", async () => {
+  const checkpoint = { scan: { saved: true }, primaryAddress: "saved-lead", focusText: "saved-focus" };
+  const calls = [];
+  const errors = [];
+  const handler = pageHandler("handleResumeScan", {
+    resumeCheckpoint: checkpoint,
+    canResumeClusterScan: () => true,
+    startScan: async (saved) => { calls.push(saved); throw new Error("startup failed"); },
+    handleStartError: (error) => errors.push(error.message),
+    setScanError: () => assert.fail("valid checkpoint must be used"),
+  });
+  const events = [];
+  handler({ preventDefault: () => events.push("prevent"), stopPropagation: () => events.push("stop") });
+  await Promise.resolve();
+  assert.deepEqual(events, ["prevent", "stop"]);
+  assert.deepEqual(calls, [checkpoint], "do not pass the click event or start from scratch");
+  assert.deepEqual(errors, ["startup failed"]);
+  const page = fs.readFileSync(path.join(__dirname, "../src/pages/cluster-finder.tsx"), "utf8");
+  for (const testId of ["button-resume-cluster-scan", "button-retry-cluster-scan"]) {
+    const button = page.slice(page.lastIndexOf("<Button", page.indexOf(`data-testid="${testId}"`)), page.indexOf(`data-testid="${testId}"`));
+    assert.match(button, /type="button"/);
+    assert.match(button, /onClick=\{handleResumeScan\}/);
+  }
+  assert.match(page, /if \(controllerRef\.current \|\| scanState === "running"/, "double taps cannot start concurrent runs");
+  assert.ok(page.indexOf("const runId = beginClusterCheckpoint(owner)") < page.indexOf("setResult(resume?.result ?? null)"));
+});
+
+test("non-resumable checkpoints never silently restart, and startup errors preserve recovered results", () => {
+  const errors = [];
+  const handler = pageHandler("handleResumeScan", {
+    resumeCheckpoint: { scan: {} }, canResumeClusterScan: () => false,
+    startScan: () => assert.fail("must not start a fresh scan"),
+    setScanError: (error) => errors.push(error),
+  });
+  handler({ preventDefault() {}, stopPropagation() {} });
+  assert.match(errors[0], /Saved results are retained/);
+  let state;
+  const onError = pageHandler("handleStartError", {
+    mountedRef: { current: true }, setScanState: (value) => { state = value; },
+    setScanError: (error) => errors.push(error),
+  });
+  onError(new Error("Safari startup error"));
+  assert.equal(state, "failed");
+  assert.match(errors[1], /Safari startup error.*saved checkpoint is retained/);
+});
+
+test("large checkpoint restoration yields to the browser and does not repeatedly save unchanged completed wallets", async () => {
+  let checkpoint;
+  await engine(async () => ({ transactions: [], hasMore: false })).runClusterFinder(options({
+    onCheckpoint: (state) => { checkpoint = state; },
+  }));
+  checkpoint.histories.find((history) => history.key === "lead").transactions =
+    Array.from({ length: 1501 }, (_, i) => tx("input", "lead", `restored-${i}`));
+  checkpoint.scannedTransactions = 1501;
+  let yields = 0;
+  let writes = 0;
+  const api = engine(async () => assert.fail("completed history must not be fetched"), {
+    setTimeout: (callback, delay) => { if (delay === 0) yields++; return setTimeout(callback, delay); },
+  });
+  const restored = await api.runClusterFinder(options({
+    resumeFrom: checkpoint, onCheckpoint: () => { writes++; },
+  }));
+  assert.ok(yields >= 5, "yield before restoration and between every bounded transaction batch");
+  assert.equal(writes, 2, "initial and final checkpoints suffice when no history changes");
+  assert.equal(restored.complete, true);
+  assert.equal(restored.flows[0].transactions.length, 1501);
+});
+
 function exportsModule(globals = {}) {
   return load("cluster-finder-exports", {
     reactflow,
@@ -1125,11 +1211,27 @@ function checkpointStorage() {
       return request;
     },
   };
-  const freshModule = () => load("cluster-finder-storage", {}, {
-    indexedDB, crypto: require("node:crypto").webcrypto,
+  const freshModule = (globals = {}) => load("cluster-finder-storage", {}, {
+    indexedDB, crypto: require("node:crypto").webcrypto, ...globals,
   });
   return { freshModule, records, failWrites: () => { failWrites = true; } };
 }
+
+test("older Safari without crypto.randomUUID can start/resume scans with unique checkpoint generations", async () => {
+  const storage = checkpointStorage();
+  const api = storage.freshModule({ crypto: {}, Date: class extends Date { static now() { return 123; } } });
+  const oldId = api.beginClusterCheckpoint("ipad");
+  const runId = api.beginClusterCheckpoint("ipad");
+  assert.notEqual(oldId, runId);
+  const checkpoint = {
+    version: 1, runId, savedAt: "2026-10-29T10:00:00Z", chain: "dag",
+    primaryAddress: "lead", addressText: "input", state: "running",
+    result: reportResult(), progress: null, error: "",
+  };
+  assert.equal(await api.saveClusterCheckpoint("ipad", { ...checkpoint, runId: oldId }), false);
+  assert.equal(await api.saveClusterCheckpoint("ipad", checkpoint), true);
+  assert.equal((await storage.freshModule({ crypto: {} }).loadClusterCheckpoint("ipad")).runId, runId);
+});
 
 test("checkpoints survive module reload, stay account-scoped, and clearing invalidates late scan writes", async () => {
   const storage = checkpointStorage();

@@ -526,6 +526,10 @@ export async function runClusterFinder(
   const worker = async (levelEnd: number) => {
     while (queueIndex < levelEnd && !signal.aborted) {
       const currentKey = queue[queueIndex++];
+      // Resume already rebuilt these observations. Avoid serializing the entire
+      // checkpoint again for every unchanged, completed wallet on the frontier.
+      const cached = histories.get(currentKey);
+      if (cached?.finished && cached.attempted) continue;
       const currentAddress = addressByKey.get(currentKey) ?? currentKey;
       const alreadyAttempted = histories.get(currentKey)?.attempted;
       activeKeys.add(currentKey);
@@ -681,7 +685,16 @@ export async function runClusterFinder(
   // Rebuild observations from saved pages without refetching them. Queue/depth
   // restoration preserves all branches, including unfinished concurrent wallets.
   if (saved) {
-    for (const [key, history] of histories) processHistory(key, history.transactions);
+    // Let Safari paint the running state before restoring a large checkpoint.
+    // Replaying in bounded batches keeps touch/cancel events responsive without
+    // changing transaction order, traversal, deduplication or saved evidence.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    for (const [key, history] of histories) {
+      for (let offset = 0; offset < history.transactions.length; offset += 500) {
+        processHistory(key, history.transactions.slice(offset, offset + 500));
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      }
+    }
   }
   publishSnapshot(true);
   await publishCheckpoint();

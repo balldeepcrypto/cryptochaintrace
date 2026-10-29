@@ -22,9 +22,14 @@ export interface ClusterCheckpoint {
 const memory = new Map<string, ClusterCheckpoint>();
 const generations = new Map<string, string>();
 let writes: Promise<unknown> = Promise.resolve();
+let fallbackRunSequence = 0;
 
 export function beginClusterCheckpoint(owner: string): string {
-  const id = crypto.randomUUID();
+  // Older iPad Safari supports IndexedDB but not crypto.randomUUID. This ID
+  // only separates local scan generations; it is not an authentication token.
+  const id = typeof globalThis.crypto?.randomUUID === "function"
+    ? globalThis.crypto.randomUUID()
+    : `cluster-${Date.now().toString(36)}-${++fallbackRunSequence}-${Math.random().toString(36).slice(2)}`;
   generations.set(owner, id);
   return id;
 }

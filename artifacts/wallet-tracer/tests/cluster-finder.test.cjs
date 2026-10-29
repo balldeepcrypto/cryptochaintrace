@@ -859,7 +859,7 @@ test("US touches from retained partial histories remain reportable with incomple
   assert.equal(result.flows.length, 0);
 });
 
-test("pagination still enforces the existing 25k per-wallet history cap", async () => {
+test("Cluster Finder enforces its 10k per-wallet history cap without allowing Resume to bypass it", async () => {
   let pages = 0;
   let checkpoint;
   const api = engine(async (address, params) => {
@@ -869,12 +869,57 @@ test("pagination still enforces the existing 25k per-wallet history cap", async 
     return { transactions: Array.from({ length: 250 }, (_, i) => tx("input", "lead", `${pages}-${i}`)), hasMore: true, nextCursor: String(pages) };
   });
   const result = await api.runClusterFinder(options({ onCheckpoint: (state) => { checkpoint = state; } }));
-  assert.equal(pages, 100);
-  assert.equal(result.scannedTransactions, 25_000);
+  assert.equal(api.MAX_CLUSTER_HISTORY_PER_WALLET, 10_000);
+  assert.equal(pages, 40);
+  assert.equal(result.scannedTransactions, 10_000);
   assert.equal(result.truncatedAddresses[0], "lead");
   assert.equal(result.complete, false);
-  assert.equal(checkpoint.histories.find((history) => history.key === "lead").transactions.length, 25_000);
+  assert.equal(checkpoint.histories.find((history) => history.key === "lead").transactions.length, 10_000);
   assert.equal(api.canResumeClusterScan(checkpoint), false, "Resume must never bypass the history cap");
+});
+
+test("Resume fetches only the remaining 10k budget and retains older saved evidence without refetching capped wallets", async () => {
+  for (const [cachedCount, hasMore] of [[9751, true], [9751, false], [10_000, true], [12_000, true]]) {
+    let checkpoint;
+    await engine(async () => ({ transactions: [], hasMore: false })).runClusterFinder(options({
+      chain: "ethereum", onCheckpoint: (state) => { checkpoint = state; },
+    }));
+    const lead = checkpoint.histories.find((history) => history.key === "lead");
+    Object.assign(lead, {
+      transactions: Array.from({ length: cachedCount }, (_, i) => tx("input", "lead", `saved-${i}`)),
+      cursor: "saved-next-page", page: 21, seenCursors: ["saved-next-page"],
+      hasMore: true, finished: false, truncated: false, error: "Old interrupted request",
+    });
+    checkpoint.scannedTransactions = cachedCount;
+    checkpoint.pagesFetched = 21;
+    const original = JSON.stringify(checkpoint);
+    const calls = [];
+    let finalCheckpoint;
+    const api = engine(async (address, params) => {
+      calls.push(address);
+      assert.equal(address, "lead", "completed input history must be reused");
+      assert.equal(params.cursor, "saved-next-page");
+      assert.equal(params.limit, 249, "only the remaining budget may be requested");
+      return {
+        transactions: Array.from({ length: hasMore ? 400 : 249 }, (_, i) => tx("input", "lead", `new-${i}`)),
+        hasMore, nextCursor: hasMore ? "must-not-fetch" : undefined,
+      };
+    });
+    const result = await api.runClusterFinder(options({
+      chain: "ethereum", resumeFrom: checkpoint,
+      onCheckpoint: (state) => { finalCheckpoint = state; },
+    }));
+    assert.deepEqual(calls, cachedCount < 10_000 ? ["lead"] : []);
+    const expectedCount = Math.max(10_000, cachedCount);
+    assert.equal(result.scannedTransactions, expectedCount);
+    assert.equal(result.flows[0].transactions.length, expectedCount, "retain every saved/new connection");
+    assert.equal(result.fetchErrors.length, 0, "capped/recovered requests must not retain transient errors");
+    assert.equal(result.complete, !hasMore);
+    assert.equal(result.truncatedAddresses.includes("lead"), hasMore);
+    assert.equal(finalCheckpoint.histories.find((history) => history.key === "lead").transactions.length, expectedCount);
+    assert.equal(api.canResumeClusterScan(finalCheckpoint), false);
+    assert.equal(JSON.stringify(checkpoint), original, "never mutate the saved checkpoint");
+  }
 });
 
 test("resume control uses saved settings and clearly identifies local browser execution and legacy checkpoints", () => {
@@ -913,7 +958,7 @@ function reportResult() {
 
 test("report includes exact amounts, every hop/hash/direction, UTC and incomplete warnings; escapes data", () => {
   const report = exportsModule().buildClusterReport(reportResult());
-  for (const value of ["Hop 1", "input → lead", "0.000000000000000001 DAG", "2026-10-24T10:20:30.123Z", "INCOMPLETE SCAN", "25,000", "&lt;unsafe&amp;&quot;hash&gt;", "&lt;service failed&gt;"]) {
+  for (const value of ["Hop 1", "input → lead", "0.000000000000000001 DAG", "2026-10-24T10:20:30.123Z", "INCOMPLETE SCAN", "10,000", "&lt;unsafe&amp;&quot;hash&gt;", "&lt;service failed&gt;"]) {
     assert.ok(report.includes(value), value);
   }
   assert.ok(!report.includes("<unsafe"));

@@ -102,12 +102,12 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     ${result.incompleteReason ? `<p class="warning">${text(result.incompleteReason)}</p>` : ""}
     <p>Hop-by-hop paths show only observed successful transfers between unlabeled wallets or wallets labeled Treasury, Stardust Collective, or Team Foundation. Arrows indicate sender → recipient.
     Hop numbers are minimum distance from each input; branches and cycles are listed as observed flows, not proof of a single chronological path or common ownership.
-    Histories are limited to 25,000 transactions per wallet; recursive IN/OUT expansion stops at ${hopName} hops from any starting wallet.
+    History fetching is limited to 10,000 transactions per wallet; previously saved observations are retained. Recursive IN/OUT expansion stops at ${hopName} hops from any starting wallet.
     Wallets at hop ${hopName} are scanned, but links to wallets beyond the boundary are not followed.</p>
     ${list("Input wallets", result.inputAddresses)}
     ${list("No directed input-to-lead path within scanned boundary (IN/OUT links may still exist)", result.disconnectedAddresses)}
     ${list("Known infrastructure excluded", result.excludedAddresses)}
-    ${list("Histories that reached the 25,000 transaction cap", result.truncatedAddresses)}
+    ${list("Histories that reached the 10,000 transaction cap", result.truncatedAddresses)}
     ${result.fetchErrors.length ? `<h3>Incomplete history warnings</h3><ul>${result.fetchErrors.map((error) => `<li>${text(error.address)}: ${text(error.message)}</li>`).join("")}</ul>` : ""}
     ${focusSection}
     ${trailSection}
@@ -151,7 +151,7 @@ export function buildClusterSelectedTrailReport(result: ClusterFinderResult, inp
     <p>Only the selected input's observed routes toward the lead are included. Every observed flow that can continue toward the lead is listed.
     Hop numbers show minimum distance from this input; branches and cycles are not proof of a single chronological path or common ownership.
     Arrows indicate actual sender → recipient. Dates are UTC and amounts are exact.
-    Histories are limited to 25,000 transactions per wallet.</p>
+    History fetching is limited to 10,000 transactions per wallet; previously saved observations are retained.</p>
     ${directedTrailDetails(connection, "Selected input")}
     </body></html>`;
 }

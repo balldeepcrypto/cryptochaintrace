@@ -143,7 +143,10 @@ export function canResumeClusterScan(checkpoint?: ClusterScanCheckpoint): boolea
   return checkpoint.queue.some((key) => !finished.has(key));
 }
 
-export const MAX_CLUSTER_HISTORY_PER_WALLET = 25_000;
+export const MAX_CLUSTER_HISTORY_PER_WALLET = 10_000;
+// Accept previously saved observations without discarding them on Resume.
+// This is a checkpoint validation ceiling, never a history-fetching limit.
+const LEGACY_CLUSTER_CHECKPOINT_HISTORY_LIMIT = 25_000;
 export const MAX_CLUSTER_HOPS = 6;
 export const DEFAULT_CLUSTER_HOPS = 4;
 export type ClusterHopDepth = 3 | 4 | 6;
@@ -215,7 +218,7 @@ function buildConnectionFlows(
 /**
  * Breadth-first expansion in both transfer directions from every starting
  * wallet. Starting wallets are depth zero; wallets through the selected depth are
- * scanned once. Histories retain the existing 25,000 transaction cap.
+ * scanned once. Cluster Finder histories fetch at most 10,000 transactions.
  */
 export async function runClusterFinder(
   options: ClusterFinderOptions,
@@ -319,7 +322,7 @@ export async function runClusterFinder(
           || (index > 0 && depth! < savedDepths.get(saved.queue[index - 1])!);
       })
       || saved.histories.some((history) => !savedDepths.has(history.key)
-        || !Array.isArray(history.transactions) || history.transactions.length > MAX_CLUSTER_HISTORY_PER_WALLET
+        || !Array.isArray(history.transactions) || history.transactions.length > LEGACY_CLUSTER_CHECKPOINT_HISTORY_LIMIT
         || !Array.isArray(history.seenCursors) || !Number.isInteger(history.page) || history.page < 1)
       || !Number.isInteger(saved.pagesFetched) || saved.pagesFetched < 0
       || !Number.isInteger(saved.scannedTransactions) || saved.scannedTransactions < 0) {
@@ -332,6 +335,15 @@ export async function runClusterFinder(
     for (const key of queue) { enqueued.add(key); depthByKey.set(key, savedDepths.get(key)!); }
     for (const history of saved.histories) {
       const restored = { ...history, transactions: history.transactions.slice(), seenCursors: history.seenCursors.slice() };
+      // Older runs may already have fetched more than the new cap. Preserve
+      // those observations, but never fetch another page for that wallet.
+      if (restored.transactions.length >= MAX_CLUSTER_HISTORY_PER_WALLET) {
+        restored.finished = true;
+        if (restored.hasMore) {
+          restored.truncated = true;
+          restored.error = undefined;
+        }
+      }
       histories.set(restored.key, restored);
       if (restored.attempted) scannedWallets += 1;
       if (restored.truncated) truncatedKeys.add(restored.key);

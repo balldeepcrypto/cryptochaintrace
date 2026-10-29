@@ -14,3 +14,9 @@ A resumable checkpoint must save an internally consistent fetched-page boundary:
 **Why:** A saved graph or transaction count cannot identify unfinished pages or restore the breadth-first frontier. Restoring only those results can repeat expensive histories or silently omit branches.
 
 **How to apply:** Persist page state before advancing to another page, preserve partial-history warnings until recovery succeeds, and distinguish browser-local Resume from an actual server background worker. Do not claim continued execution while a tab is closed.
+
+Lowering a history-fetching limit must not discard observations already saved by an older run.
+
+**Why:** A reliability limit restricts future API work; silently deleting previously collected evidence would change existing trails and reports during recovery.
+
+**How to apply:** Preserve legacy cached observations, stop further fetching for wallets already at or above the new limit, and retain explicit truncation warnings when more history exists.

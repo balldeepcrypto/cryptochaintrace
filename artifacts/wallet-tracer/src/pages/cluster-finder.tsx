@@ -549,7 +549,7 @@ export default function ClusterFinder() {
 
         {result && (
           <section className="space-y-5" aria-label="Cluster scan results" data-testid="section-cluster-results">
-            {!result.complete && <p role="status" className="border border-amber-200/30 bg-amber-200/5 p-3 text-xs text-amber-100" data-testid="status-cluster-partial-results">{result.incompleteReason ?? "Partial / incomplete history: some histories failed or reached the 25,000 transaction limit. Observed results remain available."}</p>}
+            {!result.complete && <p role="status" className="border border-amber-200/30 bg-amber-200/5 p-3 text-xs text-amber-100" data-testid="status-cluster-partial-results">{result.incompleteReason ?? "Partial / incomplete history: some histories failed or reached the 10,000 transaction limit. Observed results remain available."}</p>}
             <div className="flex justify-end">
               <Button type="button" variant="outline" onClick={exportReport} data-testid="button-print-cluster-report">
                 <Printer className="mr-2 h-4 w-4" /> Print Report

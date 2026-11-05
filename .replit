@@ -11,6 +11,56 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "cluster-webkit"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "cluster-unit"
+
+[[workflows.workflow.tasks]]
+task = "workflow.run"
+args = "cluster-typecheck"
+
+[[workflows.workflow]]
+name = "cluster-webkit"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/wallet-tracer test:webkit:replit"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "cluster-unit"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/wallet-tracer test:cluster"
+
+[workflows.workflow.metadata]
+isValidation = true
+
+[[workflows.workflow]]
+name = "cluster-typecheck"
+author = "agent"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "pnpm --filter @workspace/wallet-tracer typecheck && cd artifacts/wallet-tracer && pnpm exec tsc --noEmit --skipLibCheck --target es2022 --lib es2022,dom,dom.iterable --module esnext --moduleResolution bundler tests/browser/cluster-recovery.spec.ts playwright.config.ts"
+
+[workflows.workflow.metadata]
+isValidation = true
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -43,3 +93,4 @@ ADMIN_EMAIL = "cryptotheftvictim@proton.me"
 
 [nix]
 channel = "stable-25_05"
+packages = ["icu74", "gtk4", "glib", "gst_all_1.gstreamer", "gst_all_1.gst-plugins-base", "gst_all_1.gst-plugins-bad", "libxml2", "sqlite", "libxslt", "lcms2", "libevent", "libopus", "flite", "libwebp", "libsecret", "woff2", "libgudev", "libatomic_ops", "atk", "at-spi2-atk", "libavif", "harfbuzzFull", "libepoxy", "libjpeg", "enchant", "mesa", "libxkbcommon", "libmanette", "hyphen", "gst_all_1.gst-libav", "gcc", "libjpeg8", "libgbm", "libgcc", "libglvnd"]

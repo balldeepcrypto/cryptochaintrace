@@ -5,6 +5,7 @@ import {
 } from "@workspace/api-client-react";
 import { clusterRequest } from "./cluster-finder-requests";
 import { createClusterHistoryCache } from "./cluster-finder-history-cache";
+import { createDagRewardCollector, isDagRewardWallet, type ClusterRewardSummary } from "./cluster-finder-rewards";
 
 // Cluster Finder deployment refresh.
 export const CLUSTER_CHAIN_OPTIONS = [
@@ -85,6 +86,8 @@ export interface ClusterFinderResult {
   // Retain the stored field name for existing checkpoints; new scans record
   // all known exchange touches here, regardless of exchange jurisdiction.
   usExchangeTransactions: ClusterUsExchangeTransaction[];
+  rewardSummaries?: ClusterRewardSummary[];
+  excludedRewardAddresses?: string[];
   disconnectedAddresses: string[];
   excludedAddresses: string[];
   truncatedAddresses: string[];
@@ -237,11 +240,12 @@ export async function runClusterFinder(
     return evmChains.has(chain) ? normalized.toLowerCase() : normalized;
   };
   const knownInfo = (address: string) => getKnownInfo(address, chain);
+  const isReward = (address: string) => chain === "dag" && isDagRewardWallet(chain, knownInfo(address));
   const isPrivate = (address: string) => {
     const info = knownInfo(address);
-    // A name is not an exchange classification. Apply the same eligibility
-    // rule to leads, inputs, focus wallets and discovered proxies on every chain.
-    return info?.type.toLowerCase() !== "exchange";
+    // DAG reward/organization wallets form a separate terminal category.
+    // Other chains retain the exchange-only rule, including named individuals.
+    return info?.type.toLowerCase() !== "exchange" && !isDagRewardWallet(chain, info);
   };
 
   const primaryKey = canonicalize(primaryAddress);
@@ -263,7 +267,10 @@ export async function runClusterFinder(
   }
 
   const excludedAddresses = requestedKeys
-    .filter((key) => !isPrivate(addressByKey.get(key) ?? key))
+    .filter((key) => !isPrivate(addressByKey.get(key) ?? key) && !isReward(addressByKey.get(key) ?? key))
+    .map((key) => addressByKey.get(key) ?? key);
+  const excludedRewardAddresses = requestedKeys
+    .filter((key) => isReward(addressByKey.get(key) ?? key))
     .map((key) => addressByKey.get(key) ?? key);
   const inputKeys = requestedKeys.filter(
     (key) => key !== primaryKey && isPrivate(addressByKey.get(key) ?? key),
@@ -292,6 +299,7 @@ export async function runClusterFinder(
   const truncatedKeys = new Set<string>();
   const fetchErrors: Array<{ address: string; message: string }> = [];
   const usExchangeTransactions = new Map<string, ClusterUsExchangeTransaction>();
+  const rewardCollector = createDagRewardCollector();
 
   const saved = options.resumeFrom;
   if (saved) {
@@ -464,6 +472,9 @@ export async function runClusterFinder(
         if (!fromKey || !toKey || fromKey === toKey) continue;
         // Ignore unrelated entries in a provider's wallet-history response.
         if (fromKey !== currentKey && toKey !== currentKey) continue;
+        // A restored history may belong to a wallet made terminal by the new
+        // DAG rule. Keep its saved evidence, but do not expand through it.
+        if (isReward(currentAddress)) continue;
 
         const compactTx: ClusterTransaction = {
           hash: tx.hash,
@@ -483,6 +494,12 @@ export async function runClusterFinder(
         if (direction) {
           const exchangeAddress = direction === "OUT" ? tx.to : tx.from;
           const exchange = knownInfo(exchangeAddress);
+          if (isDagRewardWallet(chain, exchange)
+            && (!tx.tokenSymbol || tx.tokenSymbol.toUpperCase() === "DAG")) {
+            rewardCollector.record(currentAddress,
+              addressByKey.get(direction === "OUT" ? toKey : fromKey) ?? exchangeAddress,
+              exchange!.label, direction, tx.value, transactionKey(compactTx, fromKey, toKey));
+          }
           const exchangeName = exchange?.type.toLowerCase() === "exchange"
             ? exchange.label
             : undefined;
@@ -518,6 +535,7 @@ export async function runClusterFinder(
   const worker = async (levelEnd: number) => {
     while (queueIndex < levelEnd && !signal.aborted) {
       const currentKey = queue[queueIndex++];
+      if (isReward(addressByKey.get(currentKey) ?? currentKey)) continue;
       // Resume already rebuilt these observations. Avoid serializing the entire
       // checkpoint again for every unchanged, completed wallet on the frontier.
       const cached = histories.get(currentKey);
@@ -613,7 +631,8 @@ export async function runClusterFinder(
   }
   connectedInputs = connections.length;
 
-  const nodeKeys = new Set<string>(depthByKey.keys());
+  const nodeKeys = new Set<string>([...depthByKey.keys()]
+    .filter((key) => !isReward(addressByKey.get(key) ?? key)));
   for (const flow of relevantFlows) {
     nodeKeys.add(flow.from);
     nodeKeys.add(flow.to);
@@ -657,6 +676,7 @@ export async function runClusterFinder(
         || a.walletAddress.localeCompare(b.walletAddress)
         || a.transaction.hash.localeCompare(b.transaction.hash),
     ),
+    ...(chain === "dag" ? { rewardSummaries: rewardCollector.summaries(), excludedRewardAddresses } : {}),
     disconnectedAddresses,
     excludedAddresses,
     truncatedAddresses,

@@ -150,6 +150,7 @@ function engine(getWalletTransactions, globals = {}) {
     "./cluster-finder-requests": requests,
     "./cluster-finder-focus": load("cluster-finder-focus"),
     "./cluster-finder-history-cache": load("cluster-finder-history-cache"),
+    "./cluster-finder-rewards": load("cluster-finder-rewards"),
   }, globals);
 }
 
@@ -645,7 +646,7 @@ test("breadth-first layers preserve shortest depths and canonical wallets scan o
   assert.equal(result.flows.find((flow) => flow.to.toLowerCase() === "f").discoveryHop, 6);
 });
 
-test("Treasury, Team Foundation and Stardust Collective are included as inputs, proxies, and leads", async () => {
+test("Treasury, Team Foundation and Stardust Collective remain private on other chains", async () => {
   for (const [label, type] of [
     ["Treasury", "dag-team"],
     ["[DAG Treasury 2]", "dag-team"],
@@ -662,7 +663,7 @@ test("Treasury, Team Foundation and Stardust Collective are included as inputs, 
       transactions: transfers.filter((item) => item.from === address || item.to === address),
       hasMore: false,
     }));
-    const result = await api.runClusterFinder(options({ getKnownInfo: () => ({ label, type }) }));
+    const result = await api.runClusterFinder(options({ chain: "xrp", getKnownInfo: () => ({ label, type }) }));
     assert.equal(result.complete, true, label);
     assert.equal(result.connections.length, 1, label);
     assert.equal(result.connections[0].flows.length, 2, label);
@@ -672,7 +673,7 @@ test("Treasury, Team Foundation and Stardust Collective are included as inputs, 
   }
 });
 
-test("Lattice Treasury follows the same non-exchange rule as every other wallet", async () => {
+test("Lattice Treasury remains private on other chains", async () => {
   const lattice = "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV";
   for (const getKnownInfo of [
     (address) => address === lattice ? { label: "Lattice Treasury", type: "dag-team" } : null,
@@ -688,7 +689,7 @@ test("Lattice Treasury follows the same non-exchange rule as every other wallet"
       };
     });
     const result = await api.runClusterFinder(options({
-      addresses: ["input", lattice, "lead"], getKnownInfo,
+      addresses: ["input", lattice, "lead"], getKnownInfo, chain: "xrp",
     }));
     assert.equal(result.complete, true);
     assert.ok(!result.excludedAddresses.includes(lattice));
@@ -697,7 +698,7 @@ test("Lattice Treasury follows the same non-exchange rule as every other wallet"
     assert.ok(result.flows.some((flow) => flow.from === lattice || flow.to === lattice));
     assert.equal(result.connections.length, 2);
     const leadResult = await api.runClusterFinder(options({
-      primaryAddress: lattice, getKnownInfo,
+      primaryAddress: lattice, getKnownInfo, chain: "xrp",
     }));
     assert.equal(leadResult.primaryAddress, lattice);
     assert.equal(leadResult.excludedAddresses.length, 0);
@@ -784,10 +785,174 @@ test("non-exchange types remain eligible regardless of an infrastructure or indi
     const api = engine(async (address) => ({
       transactions: transfers.filter((item) => item.from === address || item.to === address), hasMore: false,
     }));
-    const result = await api.runClusterFinder(options({ getKnownInfo: () => ({ label, type }) }));
+    const result = await api.runClusterFinder(options({ chain: "xrp", getKnownInfo: () => ({ label, type }) }));
     assert.equal(result.excludedAddresses.length, 0, label);
     assert.equal(result.nodes.length, 3, label);
     assert.equal(result.connections[0].flows.length, 2, label);
+  }
+});
+
+test("reward classification is DAG-only and does not exclude unrelated named wallets", () => {
+  const { isDagRewardWallet } = load("cluster-finder-rewards");
+  const labels = ["Lattice Treasury", "Team Foundation Wallet", "[Stardust Team Fdn 2]",
+    "Stardust Collective Wallet", "DOR Metagraph", "DOR Validator Tax Pool", "PylonFi DOR Node",
+    "Node Staking Reward Wallet", "Dor Enterprise Reward Wallet", "DTM Reward Pool",
+    "TestNet Reward Pool", "Softnode Reward Distribution", "Integrationnet Reward Distribution",
+    "Constellation Foundation / Reward Distribution Wallet", "Upsider Reward METAGRAPH Wallet"];
+  for (const { value: chain } of engine(async () => ({})).CLUSTER_CHAIN_OPTIONS) {
+    for (const label of labels) {
+      assert.equal(isDagRewardWallet(chain, { label, type: "official" }), chain === "dag", `${chain}: ${label}`);
+    }
+  }
+  for (const label of ["Gen.BearJew", "Dagnum", "JustLiveIt", "Prophet", "BitcoinBarry",
+    "Teton Node", "Stardust Creatives", "Treasury", "Data Pool Distribution", "Official main bridge wallet",
+    "PacaSwap METAGRAPH", "Constellation Protocol Wallet", "Dorian"]) {
+    assert.equal(isDagRewardWallet("dag", { label, type: "named" }), false, label);
+  }
+  assert.equal(isDagRewardWallet("dag", { label: "Reward Exchange", type: "exchange" }), false);
+  assert.equal(isDagRewardWallet("dag", null), false);
+});
+
+test("DAG category inputs, focus wallets and proxies are terminal without altering private paths", async () => {
+  for (const label of ["Lattice Treasury", "Team Foundation Wallet", "Stardust Collective Wallet",
+    "DOR Metagraph", "PylonFi DOR Node", "Node Staking Reward Wallet", "TestNet Reward Pool",
+    "Softnode Reward Distribution", "[Stardust Team Fdn 7]"]) {
+    const scanned = [];
+    const transfers = [tx("input", "lead", "private-path"),
+      { ...tx("reward", "lead", "reward-in"), value: "0.1" },
+      { ...tx("lead", "reward", "reward-out"), value: "2.2" },
+      tx("reward", "hidden", "never-expand")];
+    const getKnownInfo = (address) => address === "reward" ? { label, type: "official" } : null;
+    const api = engine(async (address) => {
+      scanned.push(address);
+      return { transactions: transfers.filter((t) => t.from === address || t.to === address), hasMore: false };
+    });
+    const result = await api.runClusterFinder(options({
+      addresses: ["input", "lead", "reward"], focusAddresses: ["reward"], maxHops: 3, getKnownInfo,
+    }));
+    assert.equal(result.complete, true, label);
+    assert.deepEqual(scanned.sort(), ["input", "lead"], label);
+    assert.equal(result.excludedRewardAddresses.join(), "reward");
+    assert.equal(result.excludedAddresses.length, 0);
+    assert.equal(result.connections.length, 1);
+    assert.equal(result.connections[0].flows[0].transactions[0].hash, "private-path");
+    assert.equal(result.nodes.length, 2);
+    assert.equal(result.flows.length, 1);
+    assert.equal(result.focusConnections.length, 0);
+    assert.equal(result.rewardSummaries.length, 1);
+    assert.equal(result.rewardSummaries[0].totalReceived, "0.1");
+    assert.equal(result.rewardSummaries[0].totalSent, "2.2");
+    assert.ok(exportsModule().buildClusterReport(result).includes("Excluded by existing allowed-wallet rules"));
+    await assert.rejects(api.runClusterFinder(options({ primaryAddress: "reward", getKnownInfo })),
+      /excluded from private-wallet paths/);
+  }
+});
+
+test("DAG reward totals are exact, deduplicated and separated from exchanges and non-DAG assets", async () => {
+  const inbound = { ...tx("reward", "lead", "reward-1"), value: "0.1" };
+  const transfers = [inbound, inbound, { ...tx("reward", "lead", "reward-2"), value: "0.2" },
+    { ...tx("lead", "reward", "sent"), value: "0.05" },
+    { ...tx("pool", "input", "pool-receipt"), value: "1.10000001" },
+    { ...tx("reward", "lead", "wrong-asset"), value: "100", tokenSymbol: "OTHER" },
+    { ...tx("reward", "lead", "failed"), value: "500", status: "failed" },
+    tx("input", "lead"), tx("coinbase", "input", "exchange-touch")];
+  const labels = { reward: { label: "Team Foundation Wallet", type: "official" },
+    pool: { label: "DTM Reward Pool", type: "official" },
+    coinbase: { label: "Coinbase", type: "exchange" } };
+  const calls = [];
+  const result = await engine(async (address) => {
+    calls.push(address);
+    return { transactions: [...transfers.filter((t) => t.from === address || t.to === address),
+      { ...tx("pool", "unrelated", "unrelated"), value: "1000" }], hasMore: false };
+  }).runClusterFinder(options({ getKnownInfo: (address) => labels[address] ?? null }));
+  assert.deepEqual(calls.sort(), ["input", "lead"]);
+  assert.equal(result.rewardSummaries.length, 2);
+  const row = result.rewardSummaries.find((s) => s.walletAddress === "lead");
+  assert.equal(row.incomingTransactions, 2);
+  assert.equal(row.outgoingTransactions, 1);
+  assert.equal(row.totalReceived, "0.3");
+  assert.equal(row.totalSent, "0.05");
+  const rewards = load("cluster-finder-rewards");
+  assert.equal(rewards.totalRewardReceived(result.rewardSummaries), "1.40000001");
+  assert.equal(rewards.addRewardAmounts("9007199254740993.00000001", "0.00000002"), "9007199254740993.00000003");
+  assert.equal(rewards.addRewardAmounts("1e-8", "0.00000002"), "0.00000003");
+  assert.equal(rewards.addRewardAmounts("9.9", "0.1"), "10");
+  assert.equal(result.usExchangeTransactions.length, 1);
+  assert.equal(result.usExchangeTransactions[0].transaction.hash, "exchange-touch");
+  const report = exportsModule().buildClusterReport(result);
+  const section = report.slice(report.indexOf("<section><h2>DAG reward / organization activity"));
+  for (const value of ["lead", "input", "reward", "pool", "Team Foundation Wallet", "DTM Reward Pool",
+    "1.40000001", "0.3", "0.05", "IN transfers", "OUT transfers"]) assert.ok(section.includes(value), value);
+  for (const hash of ["reward-1", "reward-2", "pool-receipt", "wrong-asset"]) assert.ok(!report.includes(hash), hash);
+  assert.ok(report.includes("exchange-touch"), "exchange report remains unchanged");
+  const escaped = exportsModule().buildClusterRewardReportSection({ ...result, rewardSummaries: [
+    { ...row, rewardLabel: '<script>alert("bad")</script>' },
+  ] });
+  assert.ok(!escaped.includes("<script>"));
+  assert.ok(escaped.includes("&lt;script&gt;"));
+  assert.match(exportsModule().buildClusterReport(reportResult()), /predates reward summaries/);
+  assert.equal(exportsModule().buildClusterRewardReportSection({ ...result, chain: "xrp" }), "");
+  assert.match(exportsModule().buildClusterRewardReportSection({ ...result, rewardSummaries: [] }), /No category activity/);
+  const page = fs.readFileSync(path.join(__dirname, "../src/pages/cluster-finder.tsx"), "utf8");
+  assert.ok(page.includes('result.chain === "dag" && <Card'));
+  assert.ok(page.includes('data-testid="panel-dag-reward-summary"'));
+  assert.ok(page.includes("totalRewardReceived(result.rewardSummaries)"));
+});
+
+test("DAG reward summaries rebuild exactly from checkpoints without refetch or duplicate totals", async () => {
+  let checkpoint;
+  const controller = new AbortController();
+  const calls = [];
+  const getKnownInfo = (address) => address === "reward" ? { label: "Node Staking Reward Wallet", type: "official" } : null;
+  const fetch = async (address, params) => {
+    calls.push(`${address}:${params.cursor ?? "first"}`);
+    if (!params.cursor) return {
+      transactions: [{ ...tx("reward", "lead", "first-reward"), value: "0.1" }],
+      hasMore: true, nextCursor: "next",
+    };
+    return { transactions: [{ ...tx("reward", "lead", "first-reward"), value: "0.1" },
+      { ...tx("reward", "lead", "next-reward"), value: "0.2" }], hasMore: false };
+  };
+  const partial = await engine(fetch).runClusterFinder(options({
+    addresses: ["lead"], getKnownInfo, signal: controller.signal,
+    onCheckpoint: (state) => {
+      checkpoint = state;
+      if (state.histories.some((h) => h.cursor === "next")) controller.abort();
+    },
+  }));
+  assert.equal(partial.complete, false);
+  assert.equal(partial.rewardSummaries[0].totalReceived, "0.1");
+  const original = JSON.stringify(checkpoint);
+  const resumed = await engine(fetch).runClusterFinder(options({
+    addresses: ["lead"], getKnownInfo, resumeFrom: checkpoint,
+  }));
+  assert.equal(resumed.complete, true);
+  assert.equal(JSON.stringify(checkpoint), original);
+  assert.equal(resumed.rewardSummaries[0].totalReceived, "0.3");
+  assert.equal(resumed.rewardSummaries[0].incomingTransactions, 2);
+  assert.deepEqual(calls, ["lead:first", "lead:next"]);
+});
+
+test("other chains still expand all non-exchange labels and have no reward summary section", async () => {
+  for (const { value: chain } of engine(async () => ({})).CLUSTER_CHAIN_OPTIONS.filter((c) => c.value !== "dag")) {
+    const labels = ["Lattice Treasury", "Team Foundation", "Stardust Collective", "DOR Metagraph",
+      "Reward Node", "Reward Pool", "Node Staking Reward Wallet"];
+    const transfers = labels.map((_, index) => tx("lead", `wallet-${index}`));
+    const calls = [];
+    const result = await engine(async (address) => {
+      calls.push(address);
+      return { transactions: transfers.filter((t) => t.from === address || t.to === address), hasMore: false };
+    }).runClusterFinder(options({
+      chain, addresses: ["lead"], maxHops: 3,
+      getKnownInfo: (address) => address.startsWith("wallet-")
+        ? { label: labels[Number(address.split("-")[1])], type: "official" } : null,
+    }));
+    assert.equal(result.complete, true, chain);
+    assert.equal(calls.length, labels.length + 1, chain);
+    assert.equal(result.flows.length, labels.length, chain);
+    assert.equal(result.rewardSummaries, undefined, chain);
+    assert.equal(result.excludedRewardAddresses, undefined, chain);
+    assert.ok(!exportsModule().buildClusterReport(result).includes("DAG reward / organization activity"), chain);
   }
 });
 
@@ -817,12 +982,12 @@ test("all exchange touches are recorded IN/OUT without expanding exchange paths 
     ["imposter", []],
   ]);
   const labels = {
-    treasury: { label: "Lattice Treasury", type: "dag-team" },
+    treasury: { label: "Treasury", type: "dag-team" },
     coinbase: { label: "Coinbase ETH 2", type: "exchange" },
     uphold: { label: "Uphold DAG Exchange", type: "exchange" },
     kraken: { label: "KRAKEN BTC", type: "exchange" },
     kucoin: { label: "KuCoin", type: "exchange" },
-    imposter: { label: "Coinbase Reward Wallet", type: "official" },
+    imposter: { label: "Coinbase Named Wallet", type: "official" },
   };
   const scanned = [];
   const api = engine(async (address) => {
@@ -1066,6 +1231,7 @@ function exportsModule(globals = {}) {
     "./report-evidence": load("report-evidence"),
     "./cluster-finder-graph-style": load("cluster-finder-graph-style"),
     "./cluster-finder-download": load("cluster-finder-download", {}, globals),
+    "./cluster-finder-rewards": load("cluster-finder-rewards"),
   }, globals);
 }
 

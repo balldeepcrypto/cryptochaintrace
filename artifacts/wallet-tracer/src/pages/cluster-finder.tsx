@@ -22,6 +22,7 @@ import { getKnownInfo, getNormalizedAddress } from "@/pages/wallet-detail";
 import { printClusterReport, printClusterSelectedTrail } from "@/lib/cluster-finder-exports";
 import { triggerClusterDownload, type ClusterDownload } from "@/lib/cluster-finder-download";
 import { ClusterFinderDownloadLinks } from "@/components/cluster-finder-download-links";
+import { totalRewardReceived } from "@/lib/cluster-finder-rewards";
 import { useAuth } from "@/lib/auth-context";
 import { beginClusterCheckpoint, clearClusterCheckpoint, hasClusterCheckpoint, loadClusterCheckpoint, saveClusterCheckpoint, type ClusterCheckpoint } from "@/lib/cluster-finder-storage";
 
@@ -679,7 +680,7 @@ export default function ClusterFinder() {
                 const connection = result.focusConnections?.find((item) => item.focusAddress === address);
                 return <div key={address} className="mt-3 text-xs">
                   <code className="break-all">{address}</code>
-                  <p className="mt-1 text-muted-foreground">{connection ? `${connection.hopCount} hop(s) from lead · ${connection.flows.length} observed link(s), highlighted on graph.` : result.excludedAddresses.includes(address) ? "Excluded by existing wallet rules." : "No connecting path observed within the selected depth. Partial histories may hide paths."}</p>
+                  <p className="mt-1 text-muted-foreground">{connection ? `${connection.hopCount} hop(s) from lead · ${connection.flows.length} observed link(s), highlighted on graph.` : result.excludedAddresses.includes(address) || result.excludedRewardAddresses?.includes(address) ? "Excluded by existing wallet rules." : "No connecting path observed within the selected depth. Partial histories may hide paths."}</p>
                   {connection && <ol className="mt-2 space-y-1">{connection.flows.map((flow) => <li key={flow.id} className="break-all font-mono">Hop {flow.hop}: {flow.from} → {flow.to} · {flow.transactions.length} TX</li>)}</ol>}
                 </div>;
               })}
@@ -687,10 +688,27 @@ export default function ClusterFinder() {
             {(result.disconnectedAddresses.length > 0 || result.excludedAddresses.length > 0 || result.truncatedAddresses.length > 0) && (
               <div className="grid gap-3 lg:grid-cols-3" data-testid="panel-scan-qualifiers">
                 {result.disconnectedAddresses.length > 0 && <Qualifier title="No directed path to lead" icon={<Unplug className="h-3.5 w-3.5" />} addresses={result.disconnectedAddresses} tone="amber" testId="panel-disconnected-addresses" note={`No directed private-wallet path toward the lead was found within the scanned ${result.maxHops ?? 6}-hop boundary. These wallets may still have IN/OUT links in the full graph. This is not proof that no relationship exists.`} />}
-                {result.excludedAddresses.length > 0 && <Qualifier title="Known exchanges excluded" icon={<ShieldCheck className="h-3.5 w-3.5" />} addresses={result.excludedAddresses} tone="slate" testId="panel-excluded-addresses" note="Only wallets classified as known exchanges are excluded from path expansion. Named individuals and other non-exchange wallets remain eligible on every chain. Observed exchange IN/OUT transactions are listed separately in the printable report." />}
+                {result.excludedAddresses.length > 0 && <Qualifier title="Known exchanges excluded" icon={<ShieldCheck className="h-3.5 w-3.5" />} addresses={result.excludedAddresses} tone="slate" testId="panel-excluded-addresses" note={result.chain === "dag" ? "Known exchanges are excluded. DAG reward / organization wallets are also terminal and summarized separately below. Exchange IN/OUT transactions remain in the printable report." : "Only wallets classified as known exchanges are excluded from path expansion. Named individuals and other non-exchange wallets remain eligible on every chain. Observed exchange IN/OUT transactions are listed separately in the printable report."} />}
                 {result.truncatedAddresses.length > 0 && <Qualifier title="History truncated" icon={<AlertCircle className="h-3.5 w-3.5" />} addresses={result.truncatedAddresses} tone="rose" testId="panel-truncated-addresses" note={`Wallet history reached the ${MAX_CLUSTER_HISTORY_PER_WALLET.toLocaleString()} transaction cap. Paths may be incomplete.`} />}
               </div>
             )}
+
+            {result.chain === "dag" && <Card className="rounded-none border-border/80 bg-card/65 p-4" data-testid="panel-dag-reward-summary">
+              <h3 className="text-sm font-medium">DAG reward / organization activity</h3>
+              <p className="mt-2 text-xs text-muted-foreground">Lattice Treasury, DOR / Team Foundation, Stardust Collective and known reward wallets stop private expansion. Successful native DAG transfers are summarized from scanned histories only, not lifetime totals. IN/OUT is relative to the scanned wallet; labels alone do not establish payment purpose.</p>
+              {!!result.excludedRewardAddresses?.length && <p className="mt-2 break-all text-xs">Category inputs excluded from paths: {result.excludedRewardAddresses.join(", ")}</p>}
+              {result.rewardSummaries === undefined ? <p className="mt-3 text-xs">This saved result predates reward summaries. Run a new DAG scan to collect this category.</p> : <>
+                <p className="mt-3 text-sm">Total DAG received from this category: <strong>{totalRewardReceived(result.rewardSummaries)} DAG</strong></p>
+                <div className="mt-3 overflow-x-auto"><table className="w-full text-left text-xs">
+                  <thead><tr><th className="p-2">Scanned wallet</th><th className="p-2">Category wallet / label</th><th className="p-2">IN transfers</th><th className="p-2">OUT transfers</th><th className="p-2">DAG received</th><th className="p-2">DAG sent</th></tr></thead>
+                  <tbody>{result.rewardSummaries.map((row) => <tr key={`${row.walletAddress}|${row.rewardAddress}`} className="border-t border-border/60">
+                    <td className="break-all p-2 font-mono">{row.walletAddress}</td><td className="break-all p-2"><code>{row.rewardAddress}</code><br />{row.rewardLabel}</td>
+                    <td className="p-2">{row.incomingTransactions}</td><td className="p-2">{row.outgoingTransactions}</td><td className="p-2">{row.totalReceived}</td><td className="p-2">{row.totalSent}</td>
+                  </tr>)}</tbody>
+                </table></div>
+                {!result.rewardSummaries.length && <p className="mt-2 text-xs text-muted-foreground">No category activity was observed in the scanned histories.</p>}
+              </>}
+            </Card>}
 
             <div className="grid gap-5 xl:grid-cols-[minmax(0,1.12fr)_minmax(330px,0.88fr)]">
               <Card className="min-w-0 rounded-none border-border/80 bg-card/65 shadow-none">

@@ -3,6 +3,7 @@ import type { ClusterConnection, ClusterFinderResult, ClusterFlow, ClusterNode }
 import { createClusterDownload, type ClusterDownload } from "./cluster-finder-download";
 import { CATALOG_PROVENANCE, evidenceTime, explorerTransactionUrl, type EvidenceTransfer } from "./report-evidence";
 import { clusterFlowCaption, clusterNodeAppearance, GRAPH_LEGEND, MAIN_PATH_COLOR, mainObservedGraphPath, mainPathFlowIds } from "./cluster-finder-graph-style";
+import { totalRewardReceived } from "./cluster-finder-rewards";
 
 function escapeMarkup(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -66,7 +67,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
           ${connection.flows.map((flow) => `<h4>Hop ${flow.hop}: <span class="address">${text(flow.from)} → ${text(flow.to)}</span></h4>
           <table><thead><tr><th>TX hash</th><th>Exact amount</th><th>Date/time (UTC)</th><th>Direction</th></tr></thead><tbody>
           ${flow.transactions.map((tx) => `<tr><td class="hash">${transferReference(tx, result.chain)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(Date.parse(tx.timestamp)) ? tx.timestamp : new Date(tx.timestamp).toISOString())}</td><td class="address">${text(flow.from)} → ${text(flow.to)}</td></tr>`).join("")}</tbody></table>`).join("")}`
-        : `<p class="warning">${result.excludedAddresses.includes(address) ? "Excluded by existing allowed-wallet rules." : "No connection observed within the selected lead-to-focus hop depth. Incomplete histories may hide paths."}</p>`}`;
+        : `<p class="warning">${result.excludedAddresses.includes(address) || result.excludedRewardAddresses?.includes(address) ? "Excluded by existing allowed-wallet rules." : "No connection observed within the selected lead-to-focus hop depth. Incomplete histories may hide paths."}</p>`}`;
     }).join("")}</section>` : "";
   const trailSection = `<section><h2>Complete recursive IN/OUT trail</h2>
     <p>Expansion follows both transfer directions up to ${hopName} hops from the lead and additional starting wallets (hop 0).
@@ -108,6 +109,8 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       th:first-child { width:48%; } thead { display:table-header-group; } tr { break-inside:avoid; }
       .exchange-table th:first-child { width:20%; }
       .exchange-table th:nth-child(2),.exchange-table th:nth-child(3) { width:12%; }
+      .reward-table th:first-child { width:25%; }
+      .reward-table th:nth-child(2) { width:35%; }
       .exchange-table th:nth-child(4) { width:28%; } .exchange-table th:nth-child(5) { width:18%; }
       .exchange-table th:nth-child(6) { width:10%; }
       h2,h3,.address { break-after:avoid; } .hash,.address { font-family:monospace; }
@@ -121,13 +124,14 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     ${reportCoverage(result)}
     <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? `Scan complete within the ${hopName}-hop boundary and configured history cap.` : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
     ${result.incompleteReason ? `<p class="warning">${text(result.incompleteReason)}</p>` : ""}
-    <p>Hop-by-hop paths show only observed successful transfers between non-exchange wallets, including named individual wallets. Known exchanges are excluded from path expansion and listed separately below. Arrows indicate sender → recipient.
+    <p>Hop-by-hop paths show only observed successful transfers between non-exchange wallets, including named individual wallets. Known exchanges are excluded from path expansion and listed separately below.${result.chain === "dag" ? " DAG reward / organization wallets also stop expansion and are summarized separately." : ""} Arrows indicate sender → recipient.
     Hop numbers are minimum distance from each input; branches and cycles are listed as observed flows, not proof of a single chronological path or common ownership.
     History fetching is limited to 10,000 transactions per wallet; previously saved observations are retained. Recursive IN/OUT expansion stops at ${hopName} hops from any starting wallet.
     Wallets at hop ${hopName} are scanned, but links to wallets beyond the boundary are not followed.</p>
     ${list("Input wallets", result.inputAddresses)}
     ${list("No directed input-to-lead path within scanned boundary (IN/OUT links may still exist)", result.disconnectedAddresses)}
     ${list("Known exchanges excluded", result.excludedAddresses)}
+    ${result.chain === "dag" ? list("DAG reward / organization wallets excluded from paths", result.excludedRewardAddresses ?? []) : ""}
     ${list("Histories that reached the 10,000 transaction cap", result.truncatedAddresses)}
     ${result.fetchErrors.length ? `<h3>Incomplete history warnings</h3><ul>${result.fetchErrors.map((error) => `<li>${text(error.address)}: ${text(error.message)}</li>`).join("")}</ul>` : ""}
     ${focusSection}
@@ -136,7 +140,25 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     <h2>Directed input-to-lead paths</h2>
     ${sections || "<p>No directed input-to-lead paths were observed in this scan.</p>"}
     ${exchangeSection}
+    ${buildClusterRewardReportSection(result)}
     </body></html>`;
+}
+
+export function buildClusterRewardReportSection(result: ClusterFinderResult): string {
+  if (result.chain !== "dag") return "";
+  const rows = result.rewardSummaries ?? [];
+  return `<section><h2>DAG reward / organization activity</h2>
+    <p>Lattice Treasury, DOR / Team Foundation, Stardust Collective and known reward wallets are excluded from private path expansion.</p>
+    <p>Summary of successful native DAG transfers observed in scanned wallet histories only. IN/OUT is relative to the scanned wallet.
+    Incoming totals describe receipts from this category; labels alone do not establish the purpose of each payment. OUT amounts are not subtracted from received totals.
+    This is not a lifetime reward total; incomplete or capped histories may omit activity.</p>
+    ${result.rewardSummaries === undefined ? "<p>This saved result predates reward summaries. Run a new DAG scan to collect this category.</p>" :
+      `<p><strong>Total DAG received from this category: ${escapeMarkup(totalRewardReceived(rows))} DAG</strong></p>
+      ${rows.length ? `<table class="reward-table"><thead><tr><th>Scanned wallet</th><th>Category wallet / label</th><th>IN transfers</th><th>OUT transfers</th><th>DAG received</th><th>DAG sent</th></tr></thead><tbody>
+        ${rows.map((row) => `<tr><td class="address">${escapeMarkup(row.walletAddress)}</td><td class="address">${escapeMarkup(row.rewardAddress)}<br>${escapeMarkup(row.rewardLabel)}</td>
+        <td>${row.incomingTransactions}</td><td>${row.outgoingTransactions}</td><td>${escapeMarkup(row.totalReceived)}</td><td>${escapeMarkup(row.totalSent)}</td></tr>`).join("")}
+      </tbody></table>` : "<p>No category activity was observed in the scanned histories.</p>"}`}
+    </section>`;
 }
 
 export function printClusterReport(result: ClusterFinderResult): ClusterDownload {

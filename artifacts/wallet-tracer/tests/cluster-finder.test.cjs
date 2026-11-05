@@ -468,7 +468,7 @@ test("focus wallets are prioritized, deduplicated and connected within the selec
   assert.equal(connection.flows[1].transactions[0].hash, "focus-proxy");
   assert.ok(result.flows.some((flow) => flow.from === "other"));
   const report = exportsModule().buildClusterReport(result);
-  for (const text of ["Focus wallet connections", "lead-proxy", "focus-proxy", "2 hop(s)", "IN/OUT", "US exchange"]) {
+  for (const text of ["Focus wallet connections", "lead-proxy", "focus-proxy", "2 hop(s)", "IN/OUT", "Exchange IN/OUT"]) {
     assert.ok(report.includes(text), text);
   }
 });
@@ -488,15 +488,16 @@ test("focus matching retains alternate shortest paths, actual directions and exc
 });
 
 test("focus wallets obey existing exclusions and canonical deduplication; blank focus preserves the normal scan", async () => {
-  const lattice = "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV";
+  const named = "named-focus";
   const scanned = [];
   const api = engine(async (address) => { scanned.push(address); return { transactions: [], hasMore: false }; });
   const result = await api.runClusterFinder(options({
-    addresses: ["lead"], focusAddresses: [lattice, "exchange"], getKnownInfo: (address) =>
-      address === "exchange" ? { type: "exchange", label: "Coinbase" } : null,
+    addresses: ["lead"], focusAddresses: [named, "exchange"], getKnownInfo: (address) =>
+      address === "exchange" ? { type: "exchange", label: "Coinbase" }
+        : address === named ? { type: "named", label: "Gen.BearJew" } : null,
   }));
-  assert.deepEqual(scanned, ["lead"]);
-  assert.equal(result.excludedAddresses.length, 2);
+  assert.deepEqual(scanned, ["lead", named]);
+  assert.equal(result.excludedAddresses.length, 1);
   assert.equal(result.focusConnections.length, 0);
   assert.ok(exportsModule().buildClusterReport(result).includes("Excluded by existing allowed-wallet rules"));
   const canonical = await api.runClusterFinder(options({
@@ -671,7 +672,7 @@ test("Treasury, Team Foundation and Stardust Collective are included as inputs, 
   }
 });
 
-test("the specified Lattice Treasury DAG wallet is excluded as input, proxy, and lead", async () => {
+test("Lattice Treasury follows the same non-exchange rule as every other wallet", async () => {
   const lattice = "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV";
   for (const getKnownInfo of [
     (address) => address === lattice ? { label: "Lattice Treasury", type: "dag-team" } : null,
@@ -690,15 +691,16 @@ test("the specified Lattice Treasury DAG wallet is excluded as input, proxy, and
       addresses: ["input", lattice, "lead"], getKnownInfo,
     }));
     assert.equal(result.complete, true);
-    assert.ok(result.excludedAddresses.includes(lattice));
-    assert.ok(!scanned.includes(lattice));
-    assert.ok(!result.nodes.some((node) => node.address === lattice));
-    assert.ok(result.flows.every((flow) => flow.from !== lattice && flow.to !== lattice));
-    assert.equal(result.connections.length, 1);
-    assert.equal(result.connections[0].flows.length, 1);
-    await assert.rejects(api.runClusterFinder(options({
+    assert.ok(!result.excludedAddresses.includes(lattice));
+    assert.equal(scanned.filter((address) => address === lattice).length, 1);
+    assert.ok(result.nodes.some((node) => node.address === lattice));
+    assert.ok(result.flows.some((flow) => flow.from === lattice || flow.to === lattice));
+    assert.equal(result.connections.length, 2);
+    const leadResult = await api.runClusterFinder(options({
       primaryAddress: lattice, getKnownInfo,
-    })), /primary wallet.*excluded/);
+    }));
+    assert.equal(leadResult.primaryAddress, lattice);
+    assert.equal(leadResult.excludedAddresses.length, 0);
   }
 });
 
@@ -709,26 +711,12 @@ test("FULL PKG VICTIM starts blank and remains editable", () => {
   assert.match(source, /onChange=\{e => setVictimWallet\(e\.target\.value\.trim\(\)\)\}/);
 });
 
-test("other labeled infrastructure stays excluded from inputs, proxies, and lead selection", async () => {
+test("only known exchanges stay excluded from inputs, proxies, and lead selection", async () => {
   for (const [label, type] of [
     ["KuCoin", "exchange"],
     ["Team Foundation Exchange", "exchange"],
-    ["Stardust Collective Bridge", "bridge"],
-    ["Team Foundation Genesis", "genesis"],
     ["Treasury", "exchange"],
-    ["PacaSwap METAGRAPH", "defi"],
-    ["DOR Metagraph", "official"],
-    ["Node Staking Reward Wallet", "official"],
-    ["Dor Enterprise Reward Wallet", "official"],
-    ["Upsider Reward METAGRAPH Wallet", "official"],
-    ["Constellation Distribution Wallet (Node Rewards)", "official"],
-    ["DTM Reward Pool", "official"],
-    ["TestNet Reward Pool", "official"],
-    ["Constellation Protocol Wallet", "official"],
-    ["Data Pool Distribution", "dag-team"],
-    ["Founder", "founder"],
-    ["Flagged private wallet", "flagged"],
-    ["Other labeled wallet", "unknown-type"],
+    ["Dagnum", "EXCHANGE"],
   ]) {
     const scanned = [];
     const api = engine(async (address) => {
@@ -755,6 +743,54 @@ test("other labeled infrastructure stays excluded from inputs, proxies, and lead
   }
 });
 
+test("named individuals are eligible as lead, input, focus and proxy on every supported chain", async () => {
+  const labels = ["Gen.BearJew", "Dagnum", "JustLiveIt", "Prophet", "BitcoinBarry"];
+  for (const chain of engine(async () => ({ transactions: [], hasMore: false })).CLUSTER_CHAIN_OPTIONS.map((item) => item.value)) {
+    for (const label of labels) {
+      const transfers = [tx("input", "proxy"), tx("proxy", "lead"), tx("focus", "proxy")];
+      const scanned = [];
+      const api = engine(async (address) => {
+        scanned.push(address);
+        return { transactions: transfers.filter((item) => item.from === address || item.to === address), hasMore: false };
+      });
+      const result = await api.runClusterFinder(options({
+        chain, focusAddresses: ["focus"], getKnownInfo: () => ({ label, type: "named" }),
+      }));
+      assert.equal(result.complete, true, `${chain}: ${label}`);
+      assert.equal(result.excludedAddresses.length, 0);
+      assert.equal(new Set(scanned).size, 4);
+      assert.equal(scanned.length, 4, "shared named proxy is scanned only once");
+      assert.equal(result.flows.length, 3);
+      assert.ok(result.connections.some((connection) => connection.inputAddress === "input"));
+      assert.equal(result.focusConnections[0].focusAddress, "focus");
+      assert.equal(result.focusConnections[0].hopCount, 2);
+      assert.ok(result.nodes.every((node) => node.label === label));
+    }
+  }
+});
+
+test("non-exchange types remain eligible regardless of an infrastructure or individual label", async () => {
+  for (const [label, type] of [
+    ["Stardust Collective Bridge", "bridge"], ["Team Foundation Genesis", "genesis"],
+    ["PacaSwap METAGRAPH", "defi"], ["DOR Metagraph", "official"],
+    ["Node Staking Reward Wallet", "official"], ["Dor Enterprise Reward Wallet", "official"],
+    ["Upsider Reward METAGRAPH Wallet", "official"], ["DTM Reward Pool", "official"],
+    ["TestNet Reward Pool", "official"], ["Constellation Protocol Wallet", "official"],
+    ["Data Pool Distribution", "dag-team"], ["Founder", "founder"],
+    ["Flagged private wallet", "flagged"], ["Other labeled wallet", "unknown-type"],
+    ["Coinbase Reward Wallet", "official"],
+  ]) {
+    const transfers = [tx("input", "proxy"), tx("proxy", "lead")];
+    const api = engine(async (address) => ({
+      transactions: transfers.filter((item) => item.from === address || item.to === address), hasMore: false,
+    }));
+    const result = await api.runClusterFinder(options({ getKnownInfo: () => ({ label, type }) }));
+    assert.equal(result.excludedAddresses.length, 0, label);
+    assert.equal(result.nodes.length, 3, label);
+    assert.equal(result.connections[0].flows.length, 2, label);
+  }
+});
+
 test("unlabeled private wallets remain eligible", async () => {
   const api = engine(async () => ({ transactions: [tx("input", "lead")], hasMore: false }));
   const result = await api.runClusterFinder(options());
@@ -762,7 +798,7 @@ test("unlabeled private wallets remain eligible", async () => {
   assert.equal(result.complete, true);
 });
 
-test("US exchange touches are recorded IN/OUT without adding exchange paths or requests", async () => {
+test("all exchange touches are recorded IN/OUT without expanding exchange paths or requests", async () => {
   const privateTransfers = [tx("input", "treasury"), tx("treasury", "lead")];
   const inbound = tx("coinbase", "input", "coinbase-in");
   const outbound = tx("treasury", "uphold", "uphold-out");
@@ -778,6 +814,7 @@ test("US exchange touches are recorded IN/OUT without adding exchange paths or r
     ]],
     ["treasury", [...privateTransfers, outbound]],
     ["orphan", [orphanExchange]],
+    ["imposter", []],
   ]);
   const labels = {
     treasury: { label: "Lattice Treasury", type: "dag-team" },
@@ -797,19 +834,20 @@ test("US exchange touches are recorded IN/OUT without adding exchange paths or r
     addresses: ["input", "orphan", "lead"], getKnownInfo: (address) => labels[address] ?? null,
   }));
   assert.equal(result.complete, true);
-  assert.equal(scanned.length, 4);
+  assert.equal(scanned.length, 5);
   assert.equal(result.connections.length, 1);
   assert.equal(result.connections[0].flows.length, 2);
-  assert.equal(result.nodes.length, 4);
+  assert.equal(result.nodes.length, 5);
   assert.ok(result.nodes.some((node) => node.address === "orphan"));
-  assert.equal(result.flows.length, 2);
+  assert.equal(result.flows.length, 3);
   assert.equal(result.disconnectedAddresses[0], "orphan");
-  assert.equal(result.usExchangeTransactions.length, 3);
+  assert.equal(result.usExchangeTransactions.length, 4);
   const entries = new Map(result.usExchangeTransactions.map((entry) => [entry.transaction.hash, entry]));
   for (const [hash, wallet, exchange, name, direction] of [
-    ["coinbase-in", "input", "coinbase", "Coinbase", "IN"],
-    ["uphold-out", "treasury", "uphold", "Uphold", "OUT"],
-    ["disconnected-out", "orphan", "kraken", "Kraken", "OUT"],
+    ["coinbase-in", "input", "coinbase", "Coinbase ETH 2", "IN"],
+    ["uphold-out", "treasury", "uphold", "Uphold DAG Exchange", "OUT"],
+    ["disconnected-out", "orphan", "kraken", "KRAKEN BTC", "OUT"],
+    ["not-us", "input", "kucoin", "KuCoin", "OUT"],
   ]) {
     const entry = entries.get(hash);
     assert.equal(entry.walletAddress, wallet);
@@ -821,7 +859,7 @@ test("US exchange touches are recorded IN/OUT without adding exchange paths or r
   }
 });
 
-test("US classification matches the existing report list without classifying global Binance as Binance.US", async () => {
+test("all exchange classifications are reported with their original labels without a country whitelist", async () => {
   const names = ["Coinbase", "Kraken", "Gemini", "Bitstamp", "Uphold", "Robinhood", "Binance.US", "Bittrex", "eToro"];
   const transfers = [
     ...names.map((name, index) => tx(`exchange-${index}`, "lead", name)),
@@ -838,8 +876,9 @@ test("US classification matches the existing report list without classifying glo
       : address === "global-binance" ? { label: "Binance ETH", type: "exchange" }
       : address === "unknown-exchange" ? { label: "Unknown", type: "exchange" } : null,
   }));
-  assert.equal(result.usExchangeTransactions.length, names.length);
-  assert.deepEqual(Array.from(result.usExchangeTransactions.map((entry) => entry.exchangeName)).sort(), [...names].sort());
+  assert.equal(result.usExchangeTransactions.length, names.length + 2);
+  assert.deepEqual(Array.from(result.usExchangeTransactions.map((entry) => entry.exchangeName)).sort(),
+    [...names.map((name) => `${name.toUpperCase()} ETH 2`), "Binance ETH", "Unknown"].sort());
   assert.equal(result.flows.length, 0);
 });
 
@@ -1067,7 +1106,7 @@ test("full report includes the on-screen Directed Input-to-Lead Index and its co
   assert.match(index, /input<\/td><td>1<\/td><td>2<\/td>/);
   assert.match(index, /&lt;second&amp;input&gt;<\/td><td>2<\/td><td>3<\/td>/);
   assert.match(report, /Complete recursive IN\/OUT trail/);
-  assert.match(report, /US exchange IN\/OUT transactions/);
+  assert.match(report, /Exchange IN\/OUT transactions/);
   assert.equal(JSON.stringify(result), before);
   result.connections = [];
   assert.match(exportsModule().buildClusterReport(result), /No input wallet has an observed private-wallet path/);
@@ -1095,7 +1134,7 @@ test("selected-trail report contains only the selected input's flows and exact t
     "selected-hop-two", "&lt;unsafe&amp;&quot;hash&gt;", "INCOMPLETE SCAN", "Interrupted &lt;timeout&gt;"]) {
     assert.ok(report.includes(text), text);
   }
-  for (const text of ["UNRELATED", "Complete recursive IN/OUT trail", "US exchange IN/OUT transactions", "Focus wallet connections"]) {
+  for (const text of ["UNRELATED", "Complete recursive IN/OUT trail", "Exchange IN/OUT transactions", "Focus wallet connections"]) {
     assert.ok(!report.includes(text), text);
   }
   assert.match(report, /table-header-group/);
@@ -1136,13 +1175,13 @@ test("full recursive report preserves outgoing-only flows with no directed input
   const report = exportsModule().buildClusterReport(result);
   for (const value of ["Complete recursive IN/OUT trail", "Discovery hop 6", "lead → private-&lt;wallet&gt;",
     "outgoing-hash", "0.000000000000000001 DAG", "2026-10-24T10:20:30.123Z",
-    "six hops", "US exchange IN/OUT transactions"]) {
+    "six hops", "Exchange IN/OUT transactions"]) {
     assert.ok(report.includes(value), value);
   }
   assert.ok(!report.includes("no artificial hop limit"));
 });
 
-test("printed US exchange section includes every required field, directions and escaped data", () => {
+test("printed exchange section includes every required field, directions and escaped data", () => {
   const result = reportResult();
   result.usExchangeTransactions = [
     {
@@ -1151,28 +1190,28 @@ test("printed US exchange section includes every required field, directions and 
       transaction: tx("exchange-address", "wallet-<unsafe>", 'hash-<unsafe&">'),
     },
     {
-      walletAddress: "treasury-wallet", exchangeAddress: "uphold-address",
-      exchangeName: "Uphold", direction: "OUT",
-      transaction: { ...tx("treasury-wallet", "uphold-address", "outbound-hash"), value: "123.456789123456789" },
+      walletAddress: "treasury-wallet", exchangeAddress: "kucoin-address",
+      exchangeName: "KuCoin", direction: "OUT",
+      transaction: { ...tx("treasury-wallet", "kucoin-address", "outbound-hash"), value: "123.456789123456789" },
     },
   ];
   const report = exportsModule().buildClusterReport(result);
-  const section = report.slice(report.indexOf("<section><h2>US exchange IN/OUT transactions"));
+  const section = report.slice(report.indexOf("<section><h2>Exchange IN/OUT transactions"));
   for (const value of [
-    "wallet-&lt;unsafe&gt;", "exchange-address", "Coinbase", "Uphold", "outbound-hash",
+    "wallet-&lt;unsafe&gt;", "exchange-address", "Coinbase", "KuCoin", "kucoin-address", "outbound-hash",
     "123.456789123456789 DAG", "hash-&lt;unsafe&amp;&quot;&gt;", "2026-10-24T10:20:30.123Z",
     ">IN</td>", ">OUT</td>", "IN = exchange → wallet", "OUT = wallet → exchange",
-    "existing US-exchange reporting classification", "incomplete-history warnings",
+    "existing wallet classifications and labels", "incomplete-history warnings",
   ]) assert.ok(section.includes(value), value);
   assert.ok(!section.includes("<unsafe"));
   assert.match(report, /Hop 1/);
   assert.match(report, /INCOMPLETE SCAN/);
 });
 
-test("printed report explicitly states when no US transactions were observed", () => {
+test("printed report explicitly states when no known-exchange transactions were observed", () => {
   const report = exportsModule().buildClusterReport(reportResult());
-  assert.match(report, /US exchange IN\/OUT transactions/);
-  assert.match(report, /No US-exchange transactions were observed/);
+  assert.match(report, /Exchange IN\/OUT transactions/);
+  assert.match(report, /No known-exchange transactions were observed/);
   assert.match(report, /not proof that none exist/);
 });
 

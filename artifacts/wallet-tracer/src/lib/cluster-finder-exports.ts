@@ -80,9 +80,9 @@ export function buildClusterReport(result: ClusterFinderResult): string {
         return `<tr><td class="hash">${transferReference(tx, result.chain)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td></tr>`;
       }).join("")}</tbody></table>`).join("") || "<p>No eligible transfers were observed.</p>"}</section>`;
   const exchangeTransactions = result.usExchangeTransactions ?? [];
-  const exchangeSection = `<section><h2>US exchange IN/OUT transactions</h2>
+  const exchangeSection = `<section><h2>Exchange IN/OUT transactions</h2>
     <p>Observed in the fetched histories of scanned eligible wallets, including wallets without an observed connection to the lead.
-    Uses the application's existing US-exchange reporting classification and known wallet labels, not a live verification of exchange headquarters.
+    Includes all observed known-exchange transactions from the fetched histories, using the application's existing wallet classifications and labels.
     Exchange wallets are excluded from path traversal and the graph; no additional histories are fetched.</p>
     <p><strong>Direction is relative to the listed wallet:</strong> IN = exchange → wallet; OUT = wallet → exchange.
     Successful transfers only. The scan's incomplete-history warnings also apply to this section.</p>
@@ -95,7 +95,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
         <td>${text(entry.exchangeName)}<br><span class="hash">${text(entry.exchangeAddress)}</span><br>${text(CATALOG_PROVENANCE)}</td>
         <td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td class="hash">${transferReference(tx, result.chain)}</td>
         <td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td><td>${text(entry.direction)}</td></tr>`;
-    }).join("")}</tbody></table>` : "<p>No US-exchange transactions were observed in the fetched histories. This is not proof that none exist.</p>"}
+    }).join("")}</tbody></table>` : "<p>No known-exchange transactions were observed in the fetched histories. This is not proof that none exist.</p>"}
     </section>`;
   return `<!doctype html><html><head><meta charset="utf-8"><title>Cluster Finder Report</title>
     <style>
@@ -121,13 +121,13 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     ${reportCoverage(result)}
     <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? `Scan complete within the ${hopName}-hop boundary and configured history cap.` : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
     ${result.incompleteReason ? `<p class="warning">${text(result.incompleteReason)}</p>` : ""}
-    <p>Hop-by-hop paths show only observed successful transfers between unlabeled wallets or wallets labeled Treasury, Stardust Collective, or Team Foundation. Arrows indicate sender → recipient.
+    <p>Hop-by-hop paths show only observed successful transfers between non-exchange wallets, including named individual wallets. Known exchanges are excluded from path expansion and listed separately below. Arrows indicate sender → recipient.
     Hop numbers are minimum distance from each input; branches and cycles are listed as observed flows, not proof of a single chronological path or common ownership.
     History fetching is limited to 10,000 transactions per wallet; previously saved observations are retained. Recursive IN/OUT expansion stops at ${hopName} hops from any starting wallet.
     Wallets at hop ${hopName} are scanned, but links to wallets beyond the boundary are not followed.</p>
     ${list("Input wallets", result.inputAddresses)}
     ${list("No directed input-to-lead path within scanned boundary (IN/OUT links may still exist)", result.disconnectedAddresses)}
-    ${list("Known infrastructure excluded", result.excludedAddresses)}
+    ${list("Known exchanges excluded", result.excludedAddresses)}
     ${list("Histories that reached the 10,000 transaction cap", result.truncatedAddresses)}
     ${result.fetchErrors.length ? `<h3>Incomplete history warnings</h3><ul>${result.fetchErrors.map((error) => `<li>${text(error.address)}: ${text(error.message)}</li>`).join("")}</ul>` : ""}
     ${focusSection}

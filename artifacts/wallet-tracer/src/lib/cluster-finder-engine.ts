@@ -82,6 +82,8 @@ export interface ClusterFinderResult {
   nodes: ClusterNode[];
   flows: ClusterFlow[];
   connections: ClusterConnection[];
+  // Retain the stored field name for existing checkpoints; new scans record
+  // all known exchange touches here, regardless of exchange jurisdiction.
   usExchangeTransactions: ClusterUsExchangeTransaction[];
   disconnectedAddresses: string[];
   excludedAddresses: string[];
@@ -152,14 +154,6 @@ export const MAX_CLUSTER_HOPS = 6;
 export const DEFAULT_CLUSTER_HOPS = 4;
 export type ClusterHopDepth = 3 | 4 | 6;
 
-const INFRASTRUCTURE_TYPES = new Set(["exchange", "bridge", "genesis"]);
-const PRIVATE_ENTITY_LABEL = /\btreasury\b|\bteam\s+(?:foundation|fdn)\b|\bstardust\s+collective\b/i;
-// Match the existing wallet-detail report's US_REGULATED classification.
-// Keep this Cluster Finder-only; other reports and shared labels are unchanged.
-const US_EXCHANGE_NAMES = new Map([
-  "Coinbase", "Kraken", "Gemini", "Bitstamp", "Uphold",
-  "Robinhood", "Binance.US", "Bittrex", "eToro",
-].map((name) => [name.toLowerCase(), name]));
 const PAGE_SIZE: Record<ClusterChain, number> = {
   bitcoin: 25,
   dag: 250,
@@ -244,15 +238,10 @@ export async function runClusterFinder(
   };
   const knownInfo = (address: string) => getKnownInfo(address, chain);
   const isPrivate = (address: string) => {
-    if (chain === "dag" && canonicalize(address) === "DAG4nBMH7KwFAnpfB6VaFRaKEwACNSidzeMuPtgV") return false;
     const info = knownInfo(address);
-    if (!info) return true;
-    const type = info.type.toLowerCase();
-    // Exchange/bridge/genesis classifications take precedence over any label.
-    if (INFRASTRUCTURE_TYPES.has(type)) return false;
-    // Only the named entity labels are allowed; every other known label is
-    // excluded, regardless of type. Legacy Foundation/Fdn labels still match.
-    return PRIVATE_ENTITY_LABEL.test(info.label);
+    // A name is not an exchange classification. Apply the same eligibility
+    // rule to leads, inputs, focus wallets and discovered proxies on every chain.
+    return info?.type.toLowerCase() !== "exchange";
   };
 
   const primaryKey = canonicalize(primaryAddress);
@@ -269,7 +258,7 @@ export async function runClusterFinder(
     throw new Error("Enter a primary wallet.");
   }
   if (!isPrivate(addressByKey.get(primaryKey) ?? primaryAddress)) {
-    const label = knownInfo(addressByKey.get(primaryKey) ?? primaryAddress)?.label ?? "known infrastructure wallet";
+    const label = knownInfo(addressByKey.get(primaryKey) ?? primaryAddress)?.label ?? "known exchange wallet";
     throw new Error(`The primary wallet is labeled ${label} and is excluded from private-wallet paths.`);
   }
 
@@ -495,7 +484,7 @@ export async function runClusterFinder(
           const exchangeAddress = direction === "OUT" ? tx.to : tx.from;
           const exchange = knownInfo(exchangeAddress);
           const exchangeName = exchange?.type.toLowerCase() === "exchange"
-            ? US_EXCHANGE_NAMES.get(exchange.label.trim().split(/\s+/)[0].toLowerCase())
+            ? exchange.label
             : undefined;
           if (exchangeName) {
             const key = `${currentKey}|${direction}|${transactionKey(compactTx, fromKey, toKey)}`;

@@ -82,6 +82,11 @@ for (const missingUUID of [false, true]) {
         });
       }, { fixture, owner: OWNER });
       await page.goto("/cluster-finder");
+      await expect(page.getByTestId("panel-cluster-saved-scan")).toBeVisible();
+      await expect(page.getByTestId("section-cluster-results")).toHaveCount(0);
+      await expect(page.locator(".react-flow")).toHaveCount(0);
+      expect(requests).toHaveLength(0);
+      await page.getByTestId("button-load-saved-cluster-results").tap();
       const button = page.getByTestId(`button-${action}-cluster-scan`);
       await expect(button).toBeEnabled();
       await expect(button).toHaveAttribute("type", "button");

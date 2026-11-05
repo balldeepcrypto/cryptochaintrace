@@ -3,3 +3,4 @@
 - [Graph export integrity](graph-export-integrity.md) — Validate visible graph content, not just PNG headers; keep explicit download/open links for generated reports.
 - [Report evidence policy](report-evidence-policy.md) — Complete report-only cursor history, disclosed FIFO attribution, and truthful label provenance; Cluster Finder limits stay separate.
 - [WebKit runtime verification](webkit-runtime.md) — Clean library checks do not prove EGL works; distinguish host launch blockers from recovery failures.
+- [Lightweight Cluster recovery](cluster-recovery-rendering.md) — Page opening must not hydrate saved histories or mount recovered results; recovery and graph viewing are explicit actions.

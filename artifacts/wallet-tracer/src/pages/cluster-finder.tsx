@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode, type MouseEvent } from "react";
 import { AlertCircle, ArrowDownLeft, ArrowRight, Clock3, Copy, GitBranch, LoaderCircle, Network, OctagonX, Play, Printer, ShieldCheck, Square, Unplug } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -6,7 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { ClusterFinderGraph } from "@/components/cluster-finder-graph";
 import {
   CLUSTER_CHAIN_OPTIONS,
   MAX_CLUSTER_HISTORY_PER_WALLET,
@@ -24,7 +23,9 @@ import { printClusterReport, printClusterSelectedTrail } from "@/lib/cluster-fin
 import { triggerClusterDownload, type ClusterDownload } from "@/lib/cluster-finder-download";
 import { ClusterFinderDownloadLinks } from "@/components/cluster-finder-download-links";
 import { useAuth } from "@/lib/auth-context";
-import { beginClusterCheckpoint, clearClusterCheckpoint, loadClusterCheckpoint, saveClusterCheckpoint, type ClusterCheckpoint } from "@/lib/cluster-finder-storage";
+import { beginClusterCheckpoint, clearClusterCheckpoint, hasClusterCheckpoint, loadClusterCheckpoint, saveClusterCheckpoint, type ClusterCheckpoint } from "@/lib/cluster-finder-storage";
+
+const ClusterFinderGraph = lazy(() => import("@/components/cluster-finder-graph").then((module) => ({ default: module.ClusterFinderGraph })));
 
 type ScanState = "idle" | "running" | "cancelled" | "failed" | "complete";
 
@@ -78,6 +79,11 @@ export default function ClusterFinder() {
   const [storageWarning, setStorageWarning] = useState("");
   const [savedAt, setSavedAt] = useState<string | null>(null);
   const [resumeCheckpoint, setResumeCheckpoint] = useState<ClusterCheckpoint | null>(null);
+  const [savedScanAvailable, setSavedScanAvailable] = useState(false);
+  const [recovering, setRecovering] = useState(false);
+  const [graphVisible, setGraphVisible] = useState(false);
+  const [resultsVisible, setResultsVisible] = useState(false);
+  const recoveryRequestRef = useRef(0);
   const flushCheckpointRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
@@ -93,6 +99,11 @@ export default function ClusterFinder() {
   useEffect(() => {
     mountedRef.current = true;
     let disposed = false;
+    recoveryRequestRef.current += 1;
+    setRecovering(false);
+    setSavedScanAvailable(false);
+    setGraphVisible(false);
+    setResultsVisible(false);
     setCheckpointReady(false);
     setResult(null);
     setProgress(null);
@@ -109,25 +120,8 @@ export default function ClusterFinder() {
     setSelectedInput(null);
     setResumeCheckpoint(null);
     if (owner) {
-      void loadClusterCheckpoint(owner).then((checkpoint) => {
-        if (disposed || !checkpoint) return;
-        setChain(checkpoint.chain);
-        // Checkpoints created before the selector always used six hops.
-        setMaxHops(checkpoint.maxHops ?? checkpoint.result?.maxHops ?? 6);
-        setAddressText(checkpoint.addressText);
-        setFocusText(checkpoint.focusText ?? "");
-        setPrimaryAddress(checkpoint.primaryAddress);
-        setProgress(checkpoint.progress);
-        setResumeCheckpoint(checkpoint);
-        setSavedAt(checkpoint.persistenceError ? null : checkpoint.savedAt);
-        if (checkpoint.persistenceError) setStorageWarning("Recovered results from this tab's memory, but browser saving failed. Print or export before reloading.");
-        const interrupted = checkpoint.state === "running";
-        const restored = interrupted && checkpoint.result
-          ? { ...checkpoint.result, complete: false, incompleteReason: "Scan interrupted by leaving or reloading the page. This saved checkpoint contains fetched pages only; it has not resumed automatically." }
-          : checkpoint.result;
-        setResult(restored);
-        setScanState(interrupted ? "cancelled" : checkpoint.state);
-        setScanError(checkpoint.error);
+      void hasClusterCheckpoint(owner).then((available) => {
+        if (!disposed) setSavedScanAvailable(available);
       }).catch(() => {
         if (!disposed) setStorageWarning("Saved results could not be loaded. Browser storage may be unavailable. New results remain visible in this page, but may not survive a reload.");
       }).finally(() => { if (!disposed) setCheckpointReady(true); });
@@ -136,6 +130,7 @@ export default function ClusterFinder() {
     }
     return () => {
       disposed = true;
+      recoveryRequestRef.current += 1;
       mountedRef.current = false;
       activeRunRef.current = null;
       // Stop requests on navigation/logout, but the engine returns its fetched
@@ -180,7 +175,9 @@ export default function ClusterFinder() {
   const hopProgress = ((progress?.currentHop ?? 0) / scannedHopLimit) * 100;
   const activeSelection = result?.connections.find((connection) => connection.inputAddress === selectedInput) ?? result?.connections[0];
   const selectedPath = useMemo(() => activeSelection?.nodes ?? [], [activeSelection]);
-  const focusFlowIds = useMemo(() => [...new Set(result?.focusConnections?.flatMap((connection) => connection.flows.map((flow) => flow.id)) ?? [])], [result?.focusConnections]);
+  const focusFlowIds = useMemo(() => graphVisible
+    ? [...new Set(result?.focusConnections?.flatMap((connection) => connection.flows.map((flow) => flow.id)) ?? [])]
+    : [], [graphVisible, result?.focusConnections]);
 
   const exportReport = () => {
     if (!result) return;
@@ -222,6 +219,8 @@ export default function ClusterFinder() {
     // Allocate the run before resetting any recovered results. Startup failures
     // must leave the checkpoint available for another attempt.
     const runId = beginClusterCheckpoint(owner);
+    setSavedScanAvailable(false);
+    if (!resume) setGraphVisible(false);
     const controller = new AbortController();
     controllerRef.current = controller;
     setReportFile(null);
@@ -314,6 +313,9 @@ export default function ClusterFinder() {
   const handleStartScan = (event: MouseEvent<HTMLButtonElement>) => {
     event.preventDefault();
     event.stopPropagation();
+    if (recovering) return;
+    recoveryRequestRef.current += 1;
+    setResultsVisible(false);
     void startScan().catch(handleStartError);
   };
 
@@ -329,12 +331,64 @@ export default function ClusterFinder() {
     void startScan(resumeCheckpoint).catch(handleStartError);
   };
 
+  const loadSavedScan = async (resume: boolean) => {
+    if (!owner || recovering || controllerRef.current) return;
+    const request = ++recoveryRequestRef.current;
+    const isCurrent = () => mountedRef.current && recoveryRequestRef.current === request;
+    setRecovering(true);
+    setScanError("");
+    try {
+      // Paint the loading state before Safari deserializes a large checkpoint.
+      await new Promise<void>((resolve) => setTimeout(resolve, 0));
+      if (!isCurrent()) return;
+      const checkpoint = await loadClusterCheckpoint(owner);
+      if (!isCurrent()) return;
+      if (!checkpoint) {
+        setSavedScanAvailable(false);
+        setStorageWarning("No saved scan was found in this browser.");
+        return;
+      }
+      setChain(checkpoint.chain);
+      // Checkpoints created before the selector always used six hops.
+      setMaxHops(checkpoint.maxHops ?? checkpoint.result?.maxHops ?? 6);
+      setAddressText(checkpoint.addressText);
+      setFocusText(checkpoint.focusText ?? "");
+      setPrimaryAddress(checkpoint.primaryAddress);
+      setProgress(checkpoint.progress);
+      setResumeCheckpoint(checkpoint);
+      setSavedAt(checkpoint.persistenceError ? null : checkpoint.savedAt);
+      if (checkpoint.persistenceError) setStorageWarning("Recovered results from this tab's memory, but browser saving failed. Print or export before reloading.");
+      const interrupted = checkpoint.state === "running";
+      const restored = interrupted && checkpoint.result
+        ? { ...checkpoint.result, complete: false, incompleteReason: "Scan interrupted by leaving or reloading the page. This saved checkpoint contains fetched pages only; it has not resumed automatically." }
+        : checkpoint.result;
+      setResult(restored);
+      setScanState(interrupted ? "cancelled" : checkpoint.state);
+      setScanError(checkpoint.error);
+      setSavedScanAvailable(false);
+      setResultsVisible(!resume);
+      if (resume) {
+        if (checkpoint.scan && canResumeClusterScan(checkpoint.scan)) void startScan(checkpoint).catch(handleStartError);
+        else setStorageWarning("There are no resumable history pages in this checkpoint. Saved results are retained; history limits cannot be extended by Resume.");
+      }
+    } catch (error) {
+      if (isCurrent()) setStorageWarning(`Saved results could not be loaded. The checkpoint has not been deleted. ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      if (isCurrent()) setRecovering(false);
+    }
+  };
+
   const cancelScan = () => {
     controllerRef.current?.abort();
   };
 
   const clearScan = () => {
     if (scanState === "running") return;
+    recoveryRequestRef.current += 1;
+    setRecovering(false);
+    setSavedScanAvailable(false);
+    setGraphVisible(false);
+    setResultsVisible(false);
     setReportFile(null);
     setReportError("");
     setResult(null);
@@ -353,9 +407,17 @@ export default function ClusterFinder() {
   return (
     <div className="min-h-[100dvh] bg-background px-4 py-6 text-foreground sm:px-6 lg:px-8" data-testid="page-cluster-finder">
       <div className="mx-auto max-w-[1500px] space-y-6">
-        {!checkpointReady && <p role="status" className="text-sm text-muted-foreground">Loading the latest saved Cluster Finder checkpoint…</p>}
+        {!checkpointReady && <p role="status" className="text-sm text-muted-foreground">Checking for a saved Cluster Finder scan…</p>}
+        {savedScanAvailable && <Card className="space-y-3 p-4" data-testid="panel-cluster-saved-scan">
+          <p className="text-sm">A saved scan is available in this browser. Its histories and graph are not loaded until you request them.</p>
+          <div className="flex flex-wrap gap-3">
+            <Button type="button" disabled={recovering} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void loadSavedScan(false); }} data-testid="button-load-saved-cluster-results">View saved results</Button>
+            <Button type="button" variant="outline" disabled={recovering} onClick={(event) => { event.preventDefault(); event.stopPropagation(); void loadSavedScan(true); }} data-testid="button-resume-saved-cluster-scan">Resume saved scan</Button>
+          </div>
+        </Card>}
+        {recovering && <p role="status" className="text-sm text-muted-foreground">Loading saved scan… Your checkpoint is retained.</p>}
         {storageWarning && <p role="alert" className="border border-amber-200/30 p-3 text-xs text-amber-100" data-testid="status-cluster-storage-warning">{storageWarning}</p>}
-        {savedAt && <p className="text-xs text-muted-foreground" data-testid="status-cluster-checkpoint">Latest checkpoint saved in this browser: {formatTimestamp(savedAt)}. Leaving this page stops the scan. Reload restores the last saved checkpoint; the most recent unsaved pages may be absent. Scans do not resume automatically.</p>}
+        {savedAt && <p className="text-xs text-muted-foreground" data-testid="status-cluster-checkpoint">Latest checkpoint saved in this browser: {formatTimestamp(savedAt)}. Leaving this page stops the scan. After reload, choose View saved results or Resume saved scan to load the last checkpoint; the most recent unsaved pages may be absent. Scans do not resume automatically.</p>}
         <header className="relative overflow-hidden border border-border/80 bg-card/70 px-5 py-6 sm:px-7">
           <div className="pointer-events-none absolute inset-y-0 right-0 hidden w-[42%] opacity-50 md:block" aria-hidden="true">
             <div className="absolute right-12 top-8 h-28 w-28 rounded-full border border-cyan-300/15" />
@@ -457,7 +519,7 @@ export default function ClusterFinder() {
                     <Square className="h-3.5 w-3.5 fill-current" /> Cancel scan
                   </Button>
                 ) : (
-                  <Button type="button" onClick={handleStartScan} disabled={!hasPrimary || !checkpointReady || !owner} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
+                  <Button type="button" onClick={handleStartScan} disabled={recovering || !hasPrimary || !checkpointReady || !owner} className="h-10 rounded-none bg-cyan-100 px-5 font-mono text-[10px] uppercase tracking-[0.15em] text-slate-950 hover:bg-cyan-50" data-testid="button-start-cluster-scan">
                     <Play className="h-3.5 w-3.5 fill-current" /> Run cluster scan
                   </Button>
                 )}
@@ -573,7 +635,13 @@ export default function ClusterFinder() {
           </Card>
         </section>
 
-        {result && (
+        {result && <div className="flex flex-wrap items-center gap-3">
+          <Button type="button" variant="outline" onClick={() => setResultsVisible((visible) => !visible)} data-testid="button-view-cluster-results">
+            {resultsVisible ? "Hide results" : "View results"}
+          </Button>
+          {!resultsVisible && <p className="text-xs text-muted-foreground">Results are retained. Detailed trails and transactions render only when viewed.</p>}
+        </div>}
+        {result && resultsVisible && (
           <section className="space-y-5" aria-label="Cluster scan results" data-testid="section-cluster-results">
             {!result.complete && <p role="status" className="border border-amber-200/30 bg-amber-200/5 p-3 text-xs text-amber-100" data-testid="status-cluster-partial-results">{result.incompleteReason ?? "Partial / incomplete history: some histories failed or reached the 10,000 transaction limit. Observed results remain available."}</p>}
             <div className="flex justify-end">
@@ -636,7 +704,12 @@ export default function ClusterFinder() {
                     <span className="flex items-center gap-1.5"><i className="h-2 w-2 rounded-full bg-teal-200" /> Input</span>
                   </div>
                 </div>
-                <ClusterFinderGraph nodes={result.nodes} flows={result.flows} selectedPath={selectedPath} focusAddresses={result.focusAddresses} focusFlowIds={focusFlowIds} />
+                <div className="p-3">
+                  <Button type="button" variant="outline" onClick={() => setGraphVisible((visible) => !visible)} data-testid="button-view-cluster-graph">{graphVisible ? "Hide graph" : "View graph"}</Button>
+                </div>
+                {graphVisible && <Suspense fallback={<p role="status" className="p-4 text-sm">Loading graph…</p>}>
+                  <ClusterFinderGraph nodes={result.nodes} flows={result.flows} selectedPath={selectedPath} focusAddresses={result.focusAddresses} focusFlowIds={focusFlowIds} />
+                </Suspense>}
                 <div className="border-t border-border/60 px-4 py-2.5 font-mono text-[9px] uppercase tracking-[0.12em] text-muted-foreground/65">Scanned boundary: {result.maxHops ?? 6} hops · arrows show sender → recipient · separate components do not imply a connection.</div>
                 <div className="border-t border-border/60 p-4" data-testid="panel-recursive-trail">
                   <h3 className="text-sm font-medium">Complete recursive trail</h3>

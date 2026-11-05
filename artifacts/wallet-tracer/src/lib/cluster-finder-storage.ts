@@ -94,6 +94,16 @@ export function saveClusterCheckpoint(owner: string, checkpoint: ClusterCheckpoi
   return pending;
 }
 
+// A count reads only the key/index, not the potentially very large structured
+// clone of every saved history. Opening the page must never hydrate that data.
+export async function hasClusterCheckpoint(owner: string): Promise<boolean> {
+  if (memory.has(owner)) return true;
+  return database<boolean>((store, done) => {
+    const request = store.count(owner);
+    request.onsuccess = () => done(request.result > 0);
+  });
+}
+
 export async function loadClusterCheckpoint(owner: string): Promise<ClusterCheckpoint | null> {
   await writes;
   if (memory.has(owner)) return memory.get(owner)!;

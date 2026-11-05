@@ -1196,6 +1196,11 @@ function checkpointStorage() {
                     records.set(key, structuredClone(value));
                   },
                   delete(key) { records.delete(key); },
+                  count(key) {
+                    const count = {};
+                    queueMicrotask(() => { count.result = records.has(key) ? 1 : 0; count.onsuccess?.(); });
+                    return count;
+                  },
                   get(key) {
                     const get = {};
                     queueMicrotask(() => { get.result = structuredClone(records.get(key)); get.onsuccess?.(); });
@@ -1218,6 +1223,95 @@ function checkpointStorage() {
   });
   return { freshModule, records, failWrites: () => { failWrites = true; } };
 }
+
+test("page-load checkpoint detection reads only the account key, never saved histories or results", async () => {
+  const storage = checkpointStorage();
+  // Any attempt to read/clone this payload would fail. A key-only count works.
+  storage.records.set("large-ipad-scan", { get result() { throw new Error("must not hydrate on page load"); } });
+  const api = storage.freshModule();
+  assert.equal(await api.hasClusterCheckpoint("large-ipad-scan"), true);
+  assert.equal(await api.hasClusterCheckpoint("another-account"), false);
+  assert.equal(storage.records.size, 1, "detection never deletes or rewrites saved work");
+});
+
+test("initial Cluster Finder render defers recovery, detailed results and React Flow until requested", () => {
+  const page = fs.readFileSync(path.join(__dirname, "../src/pages/cluster-finder.tsx"), "utf8");
+  assert.match(page, /void hasClusterCheckpoint\(owner\)/);
+  assert.doesNotMatch(page, /void loadClusterCheckpoint\(owner\)\.then/);
+  assert.match(page, /const ClusterFinderGraph = lazy\(/);
+  assert.doesNotMatch(page, /import \{ ClusterFinderGraph \} from/);
+  assert.match(page, /result && resultsVisible &&/);
+  assert.match(page, /graphVisible && <Suspense/);
+  assert.match(page, /button-load-saved-cluster-results/);
+  assert.match(page, /button-resume-saved-cluster-scan/);
+});
+
+function savedScanLoader(overrides = {}) {
+  const state = {};
+  const setters = Object.fromEntries([
+    "Recovering", "ScanError", "SavedScanAvailable", "StorageWarning", "Chain", "MaxHops",
+    "AddressText", "FocusText", "PrimaryAddress", "Progress", "ResumeCheckpoint", "SavedAt",
+    "Result", "ScanState", "ResultsVisible",
+  ].map((name) => [`set${name}`, (value) => { state[name] = value; }]));
+  const bindings = {
+    owner: "ipad-owner", recovering: false, controllerRef: { current: null },
+    recoveryRequestRef: { current: 0 }, mountedRef: { current: true },
+    setTimeout: (fn) => queueMicrotask(fn), handleStartError: () => {},
+    ...setters, ...overrides,
+  };
+  return { state, bindings, handler: pageHandler("loadSavedScan", bindings) };
+}
+
+test("on-demand View and Resume preserve saved settings, cursors and interrupted status", async () => {
+  const checkpoint = {
+    chain: "polygon", maxHops: 3, addressText: "saved-input", primaryAddress: "saved-lead",
+    focusText: "saved-focus", state: "running", savedAt: "2026-11-05T00:00:00Z",
+    result: { complete: true, flows: ["retained-flow"] }, progress: { pagesFetched: 99 },
+    scan: { cursor: "opaque-saved-cursor" }, error: "",
+  };
+  for (const resume of [false, true]) {
+    const calls = [];
+    const { state, handler } = savedScanLoader({
+      loadClusterCheckpoint: async (owner) => { assert.equal(owner, "ipad-owner"); return checkpoint; },
+      canResumeClusterScan: () => true,
+      startScan: async (value) => { calls.push(value); },
+    });
+    await handler(resume);
+    assert.equal(state.ResumeCheckpoint, checkpoint);
+    assert.equal(state.Result.complete, false, "an interrupted checkpoint remains explicitly incomplete");
+    assert.equal(state.Result.flows, checkpoint.result.flows);
+    assert.equal(state.MaxHops, 3);
+    assert.equal(state.PrimaryAddress, "saved-lead");
+    assert.equal(state.FocusText, "saved-focus");
+    assert.equal(state.ResultsVisible, !resume, "Resume does not mount a saved result tree");
+    assert.equal(state.Recovering, false);
+    assert.deepEqual(calls, resume ? [checkpoint] : []);
+  }
+});
+
+test("deferred recovery cannot expose another account's results after navigation or overwrite a newer scan", async () => {
+  let finishLoad;
+  const pending = new Promise((resolve) => { finishLoad = resolve; });
+  const { state, bindings, handler } = savedScanLoader({ loadClusterCheckpoint: () => pending });
+  const loading = handler(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  bindings.recoveryRequestRef.current += 1;
+  finishLoad({ primaryAddress: "old-account-wallet" });
+  await loading;
+  assert.equal(state.Result, undefined);
+  assert.equal(state.PrimaryAddress, undefined);
+});
+
+test("deferred recovery storage failures retain the checkpoint and permit another attempt", async () => {
+  const { state, handler } = savedScanLoader({
+    loadClusterCheckpoint: async () => { throw new Error("Safari storage unavailable"); },
+  });
+  await handler(true);
+  assert.match(state.StorageWarning, /checkpoint has not been deleted/);
+  assert.equal(state.Recovering, false);
+  assert.equal(state.SavedScanAvailable, undefined);
+  assert.equal(state.Result, undefined);
+});
 
 test("older Safari without crypto.randomUUID can start/resume scans with unique checkpoint generations", async () => {
   const storage = checkpointStorage();

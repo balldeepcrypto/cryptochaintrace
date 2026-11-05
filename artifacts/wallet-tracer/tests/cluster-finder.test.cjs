@@ -1025,6 +1025,7 @@ function exportsModule(globals = {}) {
   return load("cluster-finder-exports", {
     reactflow,
     "./report-evidence": load("report-evidence"),
+    "./cluster-finder-graph-style": load("cluster-finder-graph-style"),
     "./cluster-finder-download": load("cluster-finder-download", {}, globals),
   }, globals);
 }
@@ -1289,7 +1290,7 @@ test("SVG exports full graph coordinates, directional edges, labels, highlights 
   assert.match(svg, /xmlns="http:\/\/www.w3.org\/2000\/svg"/);
   assert.match(svg, /width="3202"/);
   assert.match(svg, /marker-end="url\(#arrow\)"/);
-  assert.match(svg, /#e4b568/);
+  assert.match(svg, /#ef4444/);
   assert.match(svg, /1 TX/);
   assert.match(svg, /Label &lt;&amp;&gt;/);
   assert.match(svg, /1\. input/);
@@ -1344,7 +1345,7 @@ test("PNG rasterizes self-contained graph SVG at viewport size without foreignOb
   });
   assert.match(svg, /viewBox="-20 -40 400 300"/);
   assert.match(svg, /FOCUS · WALLET/);
-  assert.match(svg, /#29251e/);
+  assert.match(svg, /#142b20/);
   assert.match(svg, /marker-end/);
   assert.ok(!svg.includes("foreignObject"));
   const created = [];
@@ -1393,6 +1394,70 @@ test("graph connectors attach to facing card edges so sender and recipient arrow
     assert.equal(sides.sourcePosition, from);
     assert.equal(sides.targetPosition, to);
   }
+});
+
+test("graph categories use evidence-aware type colors without changing labels or including wallets", () => {
+  const style = load("cluster-finder-graph-style");
+  const node = { address: "wallet", role: "proxy", label: null };
+  assert.equal(style.clusterNodeAppearance({ ...node, role: "primary" }).key, "victim");
+  assert.equal(style.clusterNodeAppearance(node).key, "private");
+  assert.equal(style.clusterNodeAppearance({ ...node, label: "Team Foundation" }).key, "organization");
+  assert.equal(style.clusterNodeAppearance({ ...node, label: "KuCoin" }).key, "possibleExchange");
+  assert.equal(style.clusterNodeAppearance({ ...node, label: "KuCoin", labelConfidence: "Confirmed" }).key, "confirmedExchange");
+  assert.equal(style.clusterNodeAppearance({ ...node, label: "Confirmed Exchange" }).key, "possibleExchange");
+});
+
+test("graph captions sum exact amounts separately by symbol and show the UTC date range", () => {
+  const { clusterFlowCaption } = load("cluster-finder-graph-style");
+  const flow = { id: "sum", from: "a", to: "b", transactions: [
+    { ...tx("a", "b", "one"), value: "0.1", tokenSymbol: "XRP", timestamp: "2026-01-01T23:59:00Z" },
+    { ...tx("a", "b", "two"), value: "0.2", tokenSymbol: "XRP", timestamp: "2026-01-03T00:01:00Z" },
+    { ...tx("a", "b", "three"), value: "1e-18", tokenSymbol: "USDC", timestamp: "2026-01-02T00:00:00Z" },
+  ] };
+  const before = JSON.stringify(flow);
+  const caption = clusterFlowCaption(flow);
+  assert.equal(caption.amount, "0.000000000000000001 USDC + 0.3 XRP");
+  assert.equal(caption.dates, "2026-01-01 → 2026-01-03 UTC");
+  assert.match(caption.lines[0], /3 TXS/);
+  assert.equal(JSON.stringify(flow), before);
+  const unknown = clusterFlowCaption({ ...flow, transactions: [{ ...flow.transactions[0], value: "invalid", timestamp: "invalid" }] });
+  assert.match(unknown.amount, /unavailable/);
+  assert.equal(unknown.dates, "Date unavailable");
+});
+
+test("main graph route follows directed observed transfers toward the lead, not reversed edges or chords", () => {
+  const { mainObservedGraphPath, mainPathFlowIds } = load("cluster-finder-graph-style");
+  const nodes = ["lead", "input", "a", "b", "outgoing"].map((address) => ({
+    address, label: null, role: address === "lead" ? "primary" : address === "input" ? "input" : "proxy",
+  }));
+  const flows = [["input", "a"], ["a", "b"], ["b", "lead"], ["a", "lead"], ["lead", "outgoing"], ["b", "a"]]
+    .map(([from, to], index) => ({ id: `f${index}`, from, to, transactions: [tx(from, to)] }));
+  const before = JSON.stringify({ nodes, flows });
+  const selected = ["input", "a", "b", "lead"];
+  assert.deepEqual(Array.from(mainObservedGraphPath(nodes, flows, selected)), selected);
+  assert.deepEqual(Array.from(mainPathFlowIds(flows, selected)), ["f0", "f1", "f2"]);
+  assert.deepEqual(Array.from(mainObservedGraphPath(nodes, flows)), ["input", "a", "lead"]);
+  assert.equal(mainObservedGraphPath(nodes, [flows[4]]).length, 0);
+  assert.equal(JSON.stringify({ nodes, flows }), before);
+});
+
+test("SVG graph uses shared node colors, red directed path, per-asset amounts, date range and legend", () => {
+  const result = reportResult();
+  result.nodes[0].label = "Team Foundation";
+  result.flows[0].transactions = [
+    { ...result.flows[0].transactions[0], value: "12.5", tokenSymbol: "DAG", timestamp: "2026-01-01T00:00:00Z" },
+    { ...result.flows[0].transactions[0], hash: "second", value: "2.5", tokenSymbol: "DAG", timestamp: "2026-01-04T00:00:00Z" },
+  ];
+  const before = JSON.stringify(result);
+  const svg = exportsModule().buildClusterGraphSvg([
+    { id: "input", position: { x: 600, y: 50 } }, { id: "lead", position: { x: 50, y: 50 } },
+  ], result.nodes, result.flows, []);
+  for (const color of ["#4ade80", "#60a5fa", "#ef4444", "#facc15", "#f87171", "#a3a3a3"]) assert.ok(svg.includes(color));
+  assert.match(svg, /2 TXS · 15 DAG/);
+  assert.match(svg, /2026-01-01 → 2026-01-04 UTC/);
+  assert.match(svg, /Main observed path/);
+  assert.match(svg, /Possible exchange/);
+  assert.equal(JSON.stringify(result), before);
 });
 
 test("report and SVG exports create real files with persistent links instead of hidden print iframes", async () => {

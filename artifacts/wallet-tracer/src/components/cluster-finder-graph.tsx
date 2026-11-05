@@ -1,5 +1,5 @@
 import { memo, useMemo, useRef, useState, type ReactNode } from "react";
-import ReactFlow, { Background, BackgroundVariant, Controls, Handle, MarkerType, Position, type Edge, type Node, type NodeProps, type ReactFlowInstance } from "reactflow";
+import ReactFlow, { Background, BackgroundVariant, BaseEdge, Controls, EdgeLabelRenderer, getSmoothStepPath, Handle, MarkerType, Position, type Edge, type EdgeProps, type Node, type NodeProps, type ReactFlowInstance } from "reactflow";
 import "reactflow/dist/style.css";
 import type { ClusterFlow, ClusterNode } from "@/lib/cluster-finder-engine";
 import { buildClusterGraphSvg, clusterGraphHandleSides, downloadClusterGraph } from "@/lib/cluster-finder-exports";
@@ -9,6 +9,7 @@ import { triggerClusterDownload, type ClusterDownload } from "@/lib/cluster-find
 import { ClusterFinderDownloadLinks } from "./cluster-finder-download-links";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
+import { clusterFlowCaption, clusterNodeAppearance, GRAPH_LEGEND, MAIN_PATH_COLOR, mainObservedGraphPath, mainPathFlowIds } from "@/lib/cluster-finder-graph-style";
 
 interface ClusterFinderGraphProps {
   nodes: ClusterNode[];
@@ -33,6 +34,22 @@ function ClusterWalletNode({ data }: NodeProps<{ label: ReactNode }>) {
 }
 const nodeTypes = { clusterWallet: ClusterWalletNode };
 
+function ClusterTransferEdge(props: EdgeProps) {
+  const [path, x, y] = getSmoothStepPath(props);
+  return <>
+    <BaseEdge id={props.id} path={path} markerEnd={props.markerEnd} style={props.style} />
+    <EdgeLabelRenderer>
+      <div className="nodrag nopan" style={{
+        position: "absolute", transform: `translate(-50%, -50%) translate(${x}px,${y}px)`,
+        pointerEvents: "none", whiteSpace: "pre", padding: "4px 6px", borderRadius: 3,
+        background: "#101923", color: "#dce8ef", fontSize: 9, lineHeight: "13px",
+        fontFamily: "ui-monospace, monospace", border: `1px solid ${props.style?.stroke === MAIN_PATH_COLOR ? "#ef444470" : "#334151"}`,
+      }}>{props.label}</div>
+    </EdgeLabelRenderer>
+  </>;
+}
+const edgeTypes = { clusterTransfer: ClusterTransferEdge };
+
 export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allNodes, flows: allFlows, selectedPath = [], focusAddresses = [], focusFlowIds = [] }: ClusterFinderGraphProps) {
   const [instance, setInstance] = useState<ReactFlowInstance | null>(null);
   const [showAll, setShowAll] = useState(false);
@@ -56,6 +73,8 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
     },
     [allNodes, allFlows, showAll, focusAddresses, focusFlowIds],
   );
+  const mainPath = mainObservedGraphPath(clusterNodes, flows, selectedPath, focusAddresses);
+  const mainFlowIds = mainPathFlowIds(flows, mainPath);
   const exportPng = async () => {
     if (!graphRef.current) return;
     setExporting(true);
@@ -63,7 +82,7 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
     try {
       const { width, height } = graphRef.current.getBoundingClientRect();
       const svg = buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows,
-        [...new Set([...selectedPath, ...focusNodes])],
+        mainPath,
         { ...(instance?.getViewport() ?? { x: 0, y: 0, zoom: 1 }), width, height, focusAddresses });
       const file = await downloadClusterGraphPng(svg, width, height);
       setPngFile(file);
@@ -77,7 +96,7 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
   const exportSvg = () => {
     setExportError("");
     try {
-      const file = downloadClusterGraph(buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows, [...new Set([...selectedPath, ...focusNodes])]));
+      const file = downloadClusterGraph(buildClusterGraphSvg(instance?.getNodes() ?? nodes, clusterNodes, flows, mainPath));
       setSvgFile(file);
       triggerClusterDownload(file);
     } catch (error) {
@@ -123,7 +142,7 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
   const positions = new Map<string, { x: number; y: number }>();
   [...levels.entries()].sort(([a], [b]) => b - a).forEach(([level, levelNodes]) => {
     levelNodes.forEach((node, index) => positions.set(node.address, {
-      x: 70 + level * 245,
+      x: 70 + level * 420,
       y: 54 + index * 128,
     }));
   });
@@ -131,7 +150,8 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
   const nodes: Node[] = clusterNodes.map((node) => {
     const isPrimary = node.role === "primary";
     const selected = selectedPath.includes(node.address) || focusNodes.has(node.address);
-    const color = isPrimary ? "#f0b85b" : node.role === "input" ? "#71c4bd" : "#91a8c5";
+    const appearance = clusterNodeAppearance(node);
+    const color = appearance.color;
     const title = focusAddresses.includes(node.address) ? `FOCUS · ${node.label ?? "WALLET"}` : node.label ?? (isPrimary ? "LEAD WALLET" : node.role === "input" ? "INPUT WALLET" : "PRIVATE WALLET");
     return {
       id: node.address,
@@ -145,12 +165,12 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
             <div style={{ color, fontSize: 9, letterSpacing: "0.14em", fontWeight: 700, marginBottom: 7, textTransform: "uppercase" }}>{title}</div>
             {node.label && <div style={{ color: "#a9b7c8", fontSize: 8, marginBottom: 4 }}>Inferred · App label catalog</div>}
             <div title={node.address} style={{ color: "#d8e1ec", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis" }}>{shorten(node.address)}</div>
-            <div style={{ marginTop: 8, color: "#697b8f", fontSize: 8, letterSpacing: "0.12em" }}>{node.role.toUpperCase()} NODE</div>
+            <div style={{ marginTop: 8, color: "#94a3b8", fontSize: 8, letterSpacing: "0.08em" }}>{appearance.label.toUpperCase()} · {node.role.toUpperCase()}</div>
           </div>
         ),
       },
       style: {
-        background: isPrimary ? "#29251e" : node.role === "input" ? "#182b2c" : "#1b2532",
+        background: appearance.background,
         border: `1px solid ${selected ? color : `${color}72`}`,
         borderRadius: 3,
         padding: "12px 13px",
@@ -161,8 +181,8 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
   });
 
   const edges: Edge[] = flows.map((flow) => {
-    const selected = focusIds.has(flow.id) || (selectedPath.includes(flow.from) && selectedPath.includes(flow.to));
-    const count = flow.transactions.length;
+    const selected = mainFlowIds.has(flow.id);
+    const caption = clusterFlowCaption(flow);
     const { sourcePosition, targetPosition } = clusterGraphHandleSides(
       positions.get(flow.from) ?? { x: 0, y: 0 }, positions.get(flow.to) ?? { x: 0, y: 0 });
     return {
@@ -171,13 +191,13 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
       target: flow.to,
       sourceHandle: `${sourcePosition}-out`,
       targetHandle: `${targetPosition}-in`,
-      type: "smoothstep",
+      type: "clusterTransfer",
       animated: selected,
-      label: `${count} ${count === 1 ? "TX" : "TXS"}`,
+      label: caption.lines.join("\n"),
       labelStyle: { fill: selected ? "#dce8ef" : "#8493a3", fontFamily: "ui-monospace, monospace", fontSize: 9 },
       labelBgStyle: { fill: "#101923", fillOpacity: 0.95 },
-      style: { stroke: selected ? "#e4b568" : "#526477", strokeWidth: selected ? 2 : 1.35 },
-      markerEnd: { type: MarkerType.ArrowClosed, color: selected ? "#e4b568" : "#526477", width: 12, height: 12 },
+      style: { stroke: selected ? MAIN_PATH_COLOR : "#526477", strokeWidth: selected ? 2.5 : 1.35 },
+      markerEnd: { type: MarkerType.ArrowClosed, color: selected ? MAIN_PATH_COLOR : "#526477", width: 12, height: 12 },
     };
   });
   const height = Math.max(380, Math.max(1, ...[...levels.values()].map((items) => items.length)) * 128 + 100);
@@ -220,6 +240,7 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
           onInit={setInstance}
           nodes={nodes}
           nodeTypes={nodeTypes}
+          edgeTypes={edgeTypes}
           edges={edges}
           fitView
           fitViewOptions={{ padding: 0.2, minZoom: 0.25 }}
@@ -247,7 +268,15 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
         </div>
       )}
       <span className="sr-only">Graph canvas height {height}px</span>
+        <div aria-label="Graph legend" data-testid="cluster-graph-legend" className="pointer-events-none absolute bottom-3 left-3 z-10 rounded border border-[#334151] bg-[#101923]/95 p-2 font-mono text-[9px] text-[#d8e1ec]" style={{ width: 288, maxWidth: "calc(100% - 84px)" }}>
+          <div className="mb-1 text-[8px] uppercase tracking-widest text-[#94a3b8]">Wallet types · observed flows</div>
+          <div className="grid grid-cols-2 gap-x-2 gap-y-1">
+            {GRAPH_LEGEND.map((item) => <span key={item.key} className="flex items-center gap-1.5"><span style={{ background: item.color }} className="h-2 w-2 shrink-0 rounded-full" />{item.label}</span>)}
+            <span className="flex items-center gap-1.5"><span className="h-0.5 w-2 shrink-0" style={{ background: MAIN_PATH_COLOR }} />Main observed path</span>
+          </div>
+        </div>
       </div>
+      <p className="mt-2 text-[10px] text-muted-foreground">Arrow amounts are transfer totals by asset symbol; dates are UTC. Red highlights the selected directed trail or a representative observed route toward the lead, not proof of ownership. Exchange categories do not add excluded wallets to this graph.</p>
     </div>
   );
 });

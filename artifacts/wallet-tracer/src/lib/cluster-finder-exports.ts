@@ -2,6 +2,7 @@ import { getSmoothStepPath, Position, type Node } from "reactflow";
 import type { ClusterConnection, ClusterFinderResult, ClusterFlow, ClusterNode } from "./cluster-finder-engine";
 import { createClusterDownload, type ClusterDownload } from "./cluster-finder-download";
 import { CATALOG_PROVENANCE, evidenceTime, explorerTransactionUrl, type EvidenceTransfer } from "./report-evidence";
+import { clusterFlowCaption, clusterNodeAppearance, GRAPH_LEGEND, MAIN_PATH_COLOR, mainObservedGraphPath, mainPathFlowIds } from "./cluster-finder-graph-style";
 
 function escapeMarkup(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -204,6 +205,8 @@ export function buildClusterGraphSvg(
   view?: { x: number; y: number; zoom: number; width: number; height: number; focusAddresses?: string[] },
 ): string {
   const byId = new Map(nodes.map((node) => [node.id, node]));
+  const mainPath = mainObservedGraphPath(wallets, flows, selectedPath, view?.focusAddresses);
+  const highlighted = mainPathFlowIds(flows, mainPath);
   const minX = Math.min(...nodes.map((node) => node.position.x)) - 35;
   const minY = Math.min(...nodes.map((node) => node.position.y)) - 60;
   const maxX = Math.max(...nodes.map((node) => node.position.x + (node.width ?? 202))) + 35;
@@ -211,7 +214,7 @@ export function buildClusterGraphSvg(
   const graphHeight = maxY - minY;
   const width = Math.max(700, maxX - minX);
   // Preserve the entire graph, rather than exporting only its zoomed viewport.
-  const height = graphHeight + 55 + wallets.length * 24;
+  const height = graphHeight + 150 + wallets.length * 24;
   const paths = flows.map((flow) => {
     const source = byId.get(flow.from);
     const target = byId.get(flow.to);
@@ -228,15 +231,17 @@ export function buildClusterGraphSvg(
       targetX: end.x, targetY: end.y,
       sourcePosition, targetPosition,
     });
-    const selected = selectedPath.includes(flow.from) && selectedPath.includes(flow.to);
-    return `<path d="${escapeMarkup(path)}" fill="none" stroke="${selected ? "#e4b568" : "#8493a3"}" stroke-width="${selected ? 2 : 1.35}" marker-end="url(#arrow)"/>
-      <text x="${x}" y="${y - 6}" text-anchor="middle" fill="#dce8ef" font-size="10" stroke="#0b1118" stroke-width="3" paint-order="stroke">${flow.transactions.length} TX</text>`;
+    const selected = highlighted.has(flow.id);
+    const caption = clusterFlowCaption(flow);
+    const labelWidth = Math.max(100, ...caption.lines.map((line) => line.length * 5.4 + 12));
+    return `<path d="${escapeMarkup(path)}" fill="none" stroke="${selected ? MAIN_PATH_COLOR : "#526477"}" stroke-width="${selected ? 2.5 : 1.35}" marker-end="url(#${selected ? "arrow" : "arrow-muted"})"/>
+      <rect x="${x - labelWidth / 2}" y="${y - 17}" width="${labelWidth}" height="34" rx="3" fill="#101923" stroke="${selected ? "#ef444470" : "#334151"}"/>
+      ${caption.lines.map((line, index) => `<text x="${x}" y="${y - 4 + index * 13}" text-anchor="middle" fill="#dce8ef" font-size="9">${escapeMarkup(line)}</text>`).join("")}`;
   }).join("");
   const boxes = wallets.map((wallet, index) => {
     const node = byId.get(wallet.address);
     if (!node) return "";
-    const color = wallet.role === "primary" ? "#f0b85b" : wallet.role === "input" ? "#71c4bd" : "#91a8c5";
-    const background = wallet.role === "primary" ? "#29251e" : wallet.role === "input" ? "#182b2c" : "#1b2532";
+    const { color, background, label: category } = clusterNodeAppearance(wallet);
     const short = wallet.address.length > 24 ? `${wallet.address.slice(0, 10)}…${wallet.address.slice(-8)}` : wallet.address;
     const title = view?.focusAddresses?.includes(wallet.address) ? `FOCUS · ${wallet.label ?? "WALLET"}` : wallet.label ?? (wallet.role === "primary" ? "LEAD WALLET" : wallet.role === "input" ? "INPUT WALLET" : "PRIVATE WALLET");
     return `<g transform="translate(${node.position.x},${node.position.y})">
@@ -245,19 +250,33 @@ export function buildClusterGraphSvg(
       <clipPath id="node-label-${index}"><rect x="12" y="0" width="${(node.width ?? 202) - 24}" height="${node.height ?? 100}"/></clipPath>
       <g clip-path="url(#node-label-${index})">
       <text x="13" y="25" fill="${color}" font-size="9" font-weight="700" letter-spacing="1.2">${escapeMarkup(view ? title.toUpperCase() : `${index + 1}. ${wallet.role.toUpperCase()} WALLET`)}</text>
-      <text x="13" y="48" fill="#d8e1ec" font-size="10">${escapeMarkup(short)}</text>
-      <text x="13" y="70" fill="${view ? "#697b8f" : color}" font-size="${view ? 8 : 9}">${escapeMarkup(view ? `${wallet.role.toUpperCase()} NODE` : wallet.label ?? "")}</text>
+      ${wallet.label ? `<text x="13" y="40" fill="#a9b7c8" font-size="8">Inferred · App label catalog</text>` : ""}
+      <text x="13" y="${wallet.label ? 57 : 48}" fill="#d8e1ec" font-size="10">${escapeMarkup(short)}</text>
+      <text x="13" y="${wallet.label ? 79 : 70}" fill="#94a3b8" font-size="8">${escapeMarkup(`${category.toUpperCase()} · ${wallet.role.toUpperCase()}`)}</text>
       </g></g>`;
   }).join("");
-  const key = wallets.map((wallet, index) => `<text x="${minX + 15}" y="${maxY + 40 + index * 24}" fill="#d8e1ec" font-size="11">${index + 1}. ${escapeMarkup(wallet.address)}${wallet.label ? ` — ${escapeMarkup(wallet.label)}` : ""}</text>`).join("");
+  const key = wallets.map((wallet, index) => `<text x="${minX + 15}" y="${maxY + 135 + index * 24}" fill="#d8e1ec" font-size="11">${index + 1}. ${escapeMarkup(wallet.address)}${wallet.label ? ` — ${escapeMarkup(wallet.label)}` : ""}</text>`).join("");
   const bounds = view ? { x: -view.x / view.zoom, y: -view.y / view.zoom, width: view.width / view.zoom, height: view.height / view.zoom } : { x: minX, y: minY, width, height };
+  // Fixed-size legend in a viewport PNG; graph-space legend in a full SVG.
+  const legendX = view ? bounds.x + 12 / view.zoom : minX + 15;
+  const legendY = view ? bounds.y + (view.height - 94) / view.zoom : maxY + 12;
+  const legendWidth = view ? Math.min(288, view.width - 84) : 288;
+  const legendItems = [...GRAPH_LEGEND, { key: "path", label: "Main observed path", color: MAIN_PATH_COLOR }];
+  const legend = `<g transform="translate(${legendX},${legendY}) scale(${view ? 1 / view.zoom : 1})">
+    <rect width="${legendWidth}" height="82" rx="3" fill="#101923" fill-opacity=".95" stroke="#334151"/>
+    <text x="8" y="14" fill="#94a3b8" font-size="8">WALLET TYPES · OBSERVED FLOWS</text>
+    ${legendItems.map((item, index) => {
+      const x = 12 + (index % 2) * ((legendWidth - 16) / 2), y = 30 + Math.floor(index / 2) * 17;
+      return `${item.key === "path" ? `<path d="M${x - 4} ${y - 3}h8" stroke="${item.color}" stroke-width="2"/>` : `<circle cx="${x}" cy="${y - 3}" r="4" fill="${item.color}"/>`}
+      <text x="${x + 10}" y="${y}" fill="#d8e1ec" font-size="9">${escapeMarkup(item.label)}</text>`;
+    }).join("")}</g>`;
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${view?.width ?? width}" height="${view?.height ?? height}" viewBox="${bounds.x} ${bounds.y} ${bounds.width} ${bounds.height}" font-family="monospace">
     <title>Cluster Finder — Observed private-wallet flows</title>
     <rect x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="#0b1118"/>
     ${view ? `<defs><pattern id="grid" width="28" height="28" patternUnits="userSpaceOnUse"><circle cx="0" cy="0" r="0.5" fill="#334151"/></pattern></defs><rect x="${bounds.x}" y="${bounds.y}" width="${bounds.width}" height="${bounds.height}" fill="url(#grid)"/>` : ""}
-    <defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#dce8ef"/></marker></defs>
+    <defs>${[["arrow", MAIN_PATH_COLOR], ["arrow-muted", "#526477"]].map(([id, color]) => `<marker id="${id}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="${color}"/></marker>`).join("")}</defs>
     ${view ? "" : `<text x="${minX + 15}" y="${minY + 25}" fill="#dce8ef" font-size="14">Cluster Finder · Observed private-wallet flows · Sender → recipient</text>`}
-    ${paths}${boxes}${view ? "" : key}</svg>`;
+    ${paths}${boxes}${legend}${view ? "" : key}</svg>`;
 }
 
 export function downloadClusterGraph(svg: string): ClusterDownload {

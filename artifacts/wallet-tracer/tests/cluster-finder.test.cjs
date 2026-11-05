@@ -1024,6 +1024,7 @@ test("large checkpoint restoration yields to the browser and does not repeatedly
 function exportsModule(globals = {}) {
   return load("cluster-finder-exports", {
     reactflow,
+    "./report-evidence": load("report-evidence"),
     "./cluster-finder-download": load("cluster-finder-download", {}, globals),
   }, globals);
 }
@@ -1068,7 +1069,7 @@ test("full report includes the on-screen Directed Input-to-Lead Index and its co
   assert.match(report, /US exchange IN\/OUT transactions/);
   assert.equal(JSON.stringify(result), before);
   result.connections = [];
-  assert.match(exportsModule().buildClusterReport(result), /No input wallet has a confirmed private-wallet path/);
+  assert.match(exportsModule().buildClusterReport(result), /No input wallet has an observed private-wallet path/);
 });
 
 test("selected-trail report contains only the selected input's flows and exact transaction details", () => {

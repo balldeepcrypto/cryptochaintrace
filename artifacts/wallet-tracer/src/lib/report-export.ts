@@ -12,7 +12,8 @@ export function renderReportHtml(content: string): string {
     text
       .split("\n")
       .map((line) => {
-        const esc = escHtml(line);
+        const esc = escHtml(line).replace(/https:\/\/[^\s<]+/g, (url) =>
+          `<a href="${url}" target="_blank" rel="noopener noreferrer">${url}</a>`);
         const tr = line.trim();
 
         if (!tr) return '<div class="blank"></div>';

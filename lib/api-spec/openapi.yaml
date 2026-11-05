@@ -96,6 +96,13 @@ paths:
           schema:
             type: string
             description: Pagination cursor from previous response (XRP marker JSON or page number)
+        - name: reportHistory
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: ["true"]
+            description: Report-only evidence mode retaining all Stellar transfer assets and dust; omitted for existing views and scans
       responses:
         "200":
           description: Transaction list
@@ -286,6 +293,14 @@ components:
           type: integer
           nullable: true
           description: XRP destination tag or chain-specific routing identifier
+        operationId:
+          type: string
+          nullable: true
+          description: Explorer operation identifier, distinguishing transfers within one transaction
+        assetId:
+          type: string
+          nullable: true
+          description: Asset identity including issuer where supplied by the explorer
       required:
         - hash
         - from

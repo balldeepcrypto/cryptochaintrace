@@ -502,6 +502,7 @@ export default function TraceGraph() {
                   color: typeTag.color,
                 }}>
                   {typeTag.text}
+                  {node.label && node.label !== "Target" && <div style={{ fontSize: 6, fontWeight: 400 }}>INFERRED · APP LABEL CATALOG</div>}
                 </div>
               )}
               <div style={{ fontSize: 8, fontFamily: "monospace", color: st.textColor, letterSpacing: "0.02em" }}>

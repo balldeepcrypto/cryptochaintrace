@@ -1,6 +1,7 @@
 import { getSmoothStepPath, Position, type Node } from "reactflow";
 import type { ClusterConnection, ClusterFinderResult, ClusterFlow, ClusterNode } from "./cluster-finder-engine";
 import { createClusterDownload, type ClusterDownload } from "./cluster-finder-download";
+import { CATALOG_PROVENANCE, evidenceTime, explorerTransactionUrl, type EvidenceTransfer } from "./report-evidence";
 
 function escapeMarkup(value: unknown): string {
   return String(value ?? "").replace(/[&<>"']/g, (character) => ({
@@ -8,7 +9,25 @@ function escapeMarkup(value: unknown): string {
   })[character]!);
 }
 
-function directedTrailDetails(connection: ClusterConnection, title: string): string {
+function transferReference(tx: Pick<EvidenceTransfer, "hash" | "timestamp" | "memo" | "destinationTag">, chain: string): string {
+  const url = explorerTransactionUrl(chain, tx.hash);
+  return `${url ? `<a href="${escapeMarkup(url)}" target="_blank" rel="noopener noreferrer">${escapeMarkup(tx.hash)}</a>` : escapeMarkup(tx.hash)}
+    <br>${escapeMarkup(evidenceTime(tx.timestamp))}
+    <br>Memo: ${escapeMarkup(tx.memo == null ? "not supplied" : tx.memo)}
+    <br>Destination tag: ${escapeMarkup(tx.destinationTag == null ? "not supplied" : tx.destinationTag)}`;
+}
+
+function reportCoverage(result: ClusterFinderResult): string {
+  return `<section><h2>History coverage and label provenance</h2>
+    <p>${escapeMarkup(CATALOG_PROVENANCE)}. Explorer links are references, not provider confirmation of a label.</p>
+    <p>Loaded counts refer to transfer records, which may include several transfers for one TX ID. Repeated paths may show the same transfer; section counts must not be summed.</p>
+    ${result.nodes.filter((node) => node.label).map((node) => `<p>${escapeMarkup(node.address)} — ${escapeMarkup(node.label)} — ${escapeMarkup(CATALOG_PROVENANCE)}</p>`).join("")}
+    ${result.historyCoverage?.length ? `<table><thead><tr><th>Wallet</th><th>Records loaded</th><th>Available records</th></tr></thead><tbody>${result.historyCoverage.map((history) =>
+      `<tr><td>${escapeMarkup(history.address)}</td><td>${history.loaded}</td><td>${history.available ?? "Unknown — incomplete or capped"}</td></tr>`).join("")}</tbody></table>` :
+      "<p>This saved result has no per-wallet coverage metadata. Available history totals are unknown.</p>"}</section>`;
+}
+
+function directedTrailDetails(connection: ClusterConnection, title: string, chain: string): string {
   const text = escapeMarkup;
   return `<section><h2>${text(title)}: ${text(connection.inputAddress)}</h2>
     <p>${connection.flows.length} relevant flow(s) · ${connection.nodes.length} nodes</p>
@@ -18,7 +37,7 @@ function directedTrailDetails(connection: ClusterConnection, title: string): str
       <table><thead><tr><th>TX hash</th><th>Exact amount</th><th>Date/time (UTC)</th></tr></thead><tbody>
       ${flow.transactions.map((tx) => {
         const date = new Date(tx.timestamp);
-        return `<tr><td class="hash">${text(tx.hash)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td></tr>`;
+        return `<tr><td class="hash">${transferReference(tx, chain)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td></tr>`;
       }).join("")}
       </tbody></table>
     `).join("")}</section>`;
@@ -31,12 +50,12 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     ? `<h3>${title}</h3><ul>${addresses.map((address) => `<li>${text(address)}</li>`).join("")}</ul>`
     : "";
   const sections = result.connections.map((connection, index) =>
-    directedTrailDetails(connection, `Input ${index + 1}`)).join("");
+    directedTrailDetails(connection, `Input ${index + 1}`, result.chain)).join("");
   const directedIndex = `<section><h2>Directed Input-to-Lead Index</h2>
     <p>${result.connections.length} observed path(s) · Lead: <span class="address">${text(result.primaryAddress)}</span></p>
     ${result.connections.length ? `<table><thead><tr><th>Input wallet</th><th>Relevant flows</th><th>Nodes</th></tr></thead><tbody>
       ${result.connections.map((connection) => `<tr><td class="address">${text(connection.inputAddress)}</td><td>${connection.flows.length}</td><td>${connection.nodes.length}</td></tr>`).join("")}
-    </tbody></table>` : "<p>No input wallet has a confirmed private-wallet path to the lead in the scanned history.</p>"}</section>`;
+    </tbody></table>` : "<p>No input wallet has an observed private-wallet path to the lead in the scanned history.</p>"}</section>`;
   const focusSection = result.focusAddresses?.length ? `<section><h2>Focus wallet connections</h2>
     <p>Observed shortest IN/OUT routes between the lead and focus wallets, within ${text(result.maxHops ?? 6)} transfers. Arrows retain the actual sender → recipient direction; these are connectivity paths, not proof of chronological flow or ownership.</p>
     ${result.focusAddresses.map((address) => {
@@ -45,7 +64,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
         ? `<p>${connection.hopCount} hop(s) from lead. Alternate shortest routes are grouped by hop.</p>
           ${connection.flows.map((flow) => `<h4>Hop ${flow.hop}: <span class="address">${text(flow.from)} → ${text(flow.to)}</span></h4>
           <table><thead><tr><th>TX hash</th><th>Exact amount</th><th>Date/time (UTC)</th><th>Direction</th></tr></thead><tbody>
-          ${flow.transactions.map((tx) => `<tr><td class="hash">${text(tx.hash)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(Date.parse(tx.timestamp)) ? tx.timestamp : new Date(tx.timestamp).toISOString())}</td><td class="address">${text(flow.from)} → ${text(flow.to)}</td></tr>`).join("")}</tbody></table>`).join("")}`
+          ${flow.transactions.map((tx) => `<tr><td class="hash">${transferReference(tx, result.chain)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(Date.parse(tx.timestamp)) ? tx.timestamp : new Date(tx.timestamp).toISOString())}</td><td class="address">${text(flow.from)} → ${text(flow.to)}</td></tr>`).join("")}</tbody></table>`).join("")}`
         : `<p class="warning">${result.excludedAddresses.includes(address) ? "Excluded by existing allowed-wallet rules." : "No connection observed within the selected lead-to-focus hop depth. Incomplete histories may hide paths."}</p>`}`;
     }).join("")}</section>` : "";
   const trailSection = `<section><h2>Complete recursive IN/OUT trail</h2>
@@ -57,7 +76,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       <table><thead><tr><th>TX hash</th><th>Exact amount</th><th>Date/time (UTC)</th></tr></thead><tbody>
       ${flow.transactions.map((tx) => {
         const date = new Date(tx.timestamp);
-        return `<tr><td class="hash">${text(tx.hash)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td></tr>`;
+        return `<tr><td class="hash">${transferReference(tx, result.chain)}</td><td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td></tr>`;
       }).join("")}</tbody></table>`).join("") || "<p>No eligible transfers were observed.</p>"}</section>`;
   const exchangeTransactions = result.usExchangeTransactions ?? [];
   const exchangeSection = `<section><h2>US exchange IN/OUT transactions</h2>
@@ -72,8 +91,8 @@ export function buildClusterReport(result: ClusterFinderResult): string {
       const tx = entry.transaction;
       const date = new Date(tx.timestamp);
       return `<tr><td class="hash">${text(entry.walletAddress)}</td>
-        <td>${text(entry.exchangeName)}<br><span class="hash">${text(entry.exchangeAddress)}</span></td>
-        <td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td class="hash">${text(tx.hash)}</td>
+        <td>${text(entry.exchangeName)}<br><span class="hash">${text(entry.exchangeAddress)}</span><br>${text(CATALOG_PROVENANCE)}</td>
+        <td>${text(tx.value)} ${text(tx.tokenSymbol)}</td><td class="hash">${transferReference(tx, result.chain)}</td>
         <td>${text(Number.isNaN(date.getTime()) ? tx.timestamp : date.toISOString())}</td><td>${text(entry.direction)}</td></tr>`;
     }).join("")}</tbody></table>` : "<p>No US-exchange transactions were observed in the fetched histories. This is not proof that none exist.</p>"}
     </section>`;
@@ -98,6 +117,7 @@ export function buildClusterReport(result: ClusterFinderResult): string {
     <p>Generated: ${text(new Date().toISOString())} · Chain: ${text(result.chain)}</p>
     <p class="address"><strong>Lead wallet:</strong> ${text(result.primaryAddress)}</p>
     <p>${result.scannedWallets} wallets scanned · ${result.scannedTransactions} transactions scanned · ${result.connections.length} connected inputs</p>
+    ${reportCoverage(result)}
     <p class="${result.complete ? "" : "warning"}"><strong>${result.complete ? `Scan complete within the ${hopName}-hop boundary and configured history cap.` : "INCOMPLETE SCAN — paths may be missing."}</strong></p>
     ${result.incompleteReason ? `<p class="warning">${text(result.incompleteReason)}</p>` : ""}
     <p>Hop-by-hop paths show only observed successful transfers between unlabeled wallets or wallets labeled Treasury, Stardust Collective, or Team Foundation. Arrows indicate sender → recipient.
@@ -152,7 +172,9 @@ export function buildClusterSelectedTrailReport(result: ClusterFinderResult, inp
     Hop numbers show minimum distance from this input; branches and cycles are not proof of a single chronological path or common ownership.
     Arrows indicate actual sender → recipient. Dates are UTC and amounts are exact.
     History fetching is limited to 10,000 transactions per wallet; previously saved observations are retained.</p>
-    ${directedTrailDetails(connection, "Selected input")}
+    ${reportCoverage({ ...result, nodes: result.nodes.filter((node) => connection.nodes.includes(node.address)),
+      historyCoverage: result.historyCoverage?.filter((history) => connection.nodes.includes(history.address)) })}
+    ${directedTrailDetails(connection, "Selected input", result.chain)}
     </body></html>`;
 }
 

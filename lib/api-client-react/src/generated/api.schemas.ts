@@ -63,6 +63,10 @@ export interface Transaction {
   memo?: string | null;
   /** XRP destination tag or chain-specific routing identifier */
   destinationTag?: number | null;
+  /** Explorer operation identifier, distinguishing transfers within one transaction */
+  operationId?: string | null;
+  /** Asset identity including issuer where supplied by the explorer */
+  assetId?: string | null;
 }
 
 export interface TransactionList {
@@ -172,6 +176,10 @@ export type GetWalletTransactionsParams = {
    * Pagination cursor from previous response (XRP marker JSON or page number)
    */
   cursor?: string;
+  /**
+   * Report-only evidence mode retaining all Stellar transfer assets and dust; omitted for existing views and scans
+   */
+  reportHistory?: GetWalletTransactionsReportHistory;
 };
 
 export type GetWalletTransactionsChain =
@@ -187,6 +195,13 @@ export const GetWalletTransactionsChain = {
   hbar: "hbar",
   xdc: "xdc",
   dag: "dag",
+} as const;
+
+export type GetWalletTransactionsReportHistory =
+  (typeof GetWalletTransactionsReportHistory)[keyof typeof GetWalletTransactionsReportHistory];
+
+export const GetWalletTransactionsReportHistory = {
+  true: "true",
 } as const;
 
 export type GetWalletConnectionsParams = {

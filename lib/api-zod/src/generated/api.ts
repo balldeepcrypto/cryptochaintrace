@@ -80,6 +80,7 @@ export const GetWalletTransactionsQueryParams = zod.object({
   page: zod.coerce.number().default(getWalletTransactionsQueryPageDefault),
   limit: zod.coerce.number().default(getWalletTransactionsQueryLimitDefault),
   cursor: zod.coerce.string().optional(),
+  reportHistory: zod.enum(["true"]).optional(),
 });
 
 export const GetWalletTransactionsResponse = zod.object({
@@ -108,6 +109,18 @@ export const GetWalletTransactionsResponse = zod.object({
         .number()
         .nullish()
         .describe("XRP destination tag or chain-specific routing identifier"),
+      operationId: zod
+        .string()
+        .nullish()
+        .describe(
+          "Explorer operation identifier, distinguishing transfers within one transaction",
+        ),
+      assetId: zod
+        .string()
+        .nullish()
+        .describe(
+          "Asset identity including issuer where supplied by the explorer",
+        ),
     }),
   ),
   total: zod.number(),

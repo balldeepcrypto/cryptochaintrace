@@ -22,7 +22,7 @@ export const CLUSTER_CHAIN_OPTIONS = [
 export type ClusterChain = (typeof CLUSTER_CHAIN_OPTIONS)[number]["value"];
 export type ClusterTransaction = Pick<
   Transaction,
-  "hash" | "from" | "to" | "value" | "valueUsd" | "timestamp" | "tokenSymbol" | "status"
+  "hash" | "from" | "to" | "value" | "valueUsd" | "timestamp" | "tokenSymbol" | "status" | "memo" | "destinationTag"
 >;
 
 export interface ClusterNode {
@@ -91,6 +91,7 @@ export interface ClusterFinderResult {
   scannedTransactions: number;
   complete: boolean;
   incompleteReason?: string;
+  historyCoverage?: Array<{ address: string; loaded: number; available: number | null }>;
 }
 
 export interface ClusterFinderOptions {
@@ -484,6 +485,8 @@ export async function runClusterFinder(
           timestamp: tx.timestamp,
           tokenSymbol: tx.tokenSymbol,
           status: tx.status,
+          memo: tx.memo,
+          destinationTag: tx.destinationTag,
         };
         // Record exchange touches from this eligible wallet's already-fetched
         // history only. Exchanges never become traversal nodes or graph edges.
@@ -669,6 +672,12 @@ export async function runClusterFinder(
     excludedAddresses,
     truncatedAddresses,
     fetchErrors: [...fetchErrors],
+    historyCoverage: [...depthByKey.keys()].map((key) => {
+      const history = histories.get(key);
+      const exhausted = history?.finished && !history.error && !history.truncated && !history.hasMore;
+      return { address: addressByKey.get(key) ?? key, loaded: history?.transactions.length ?? 0,
+        available: exhausted ? history!.transactions.length : null };
+    }),
     scannedWallets,
     scannedTransactions,
     complete: finished && fetchErrors.length === 0 && truncatedAddresses.length === 0,

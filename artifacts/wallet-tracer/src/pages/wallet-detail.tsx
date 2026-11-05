@@ -9,6 +9,9 @@ import {
 import { AddressDisplay } from "@/components/address-display";
 import { saveRecentSearch } from "@/lib/recent-searches";
 import { exportAsPdf, exportAsJson, reportFilename, encodeReportForUrl, sha256Sync } from "@/lib/report-export";
+import { CATALOG_PROVENANCE, evidenceTransferLines, neutralReportText, transferIdentity } from "@/lib/report-evidence";
+import { loadReportHistory, reportRequest, type ReportHistory } from "@/lib/report-history";
+import { attributeFifo } from "@/lib/report-fifo";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import {
@@ -914,6 +917,8 @@ interface Tx {
   tokenName: string | null;
   memo?: string | null;
   destinationTag?: number | null;
+  operationId?: string | null;
+  assetId?: string | null;
 }
 
 // ─── XLM asset allowlist + per-asset minimum amounts ─────────────────────────
@@ -972,9 +977,10 @@ function passesSpamFilter(
  * DAG: ≥2  ·  BTC/ETH: ≥0.001  ·  all other chains: ≥1.0
  */
 function passesAnalysisFilter(
-  tx: { value?: string | null; tokenSymbol?: string | null },
+  tx: { value?: string | null; tokenSymbol?: string | null; status?: string },
   chain: string
 ): boolean {
+  if (tx.status && tx.status !== "success") return false;
   if (!tx || !tx.value) return false;
   const amt = parseFloat(tx.value);
   if (isNaN(amt) || amt <= 0) return false;
@@ -1275,6 +1281,66 @@ export default function WalletDetail() {
   // allTxs is state ONLY so useMemo dependencies (filteredTxs, groupedRows) re-run on changes.
   // Everything else is read directly from page.current in the render.
   const [allTxs, setAllTxs] = useState<Tx[]>([]);
+  const reportHistoriesRef = useRef(new Map<string, ReportHistory<Tx>>());
+  const reportLoadsRef = useRef(new Map<string, Promise<ReportHistory<Tx>>>());
+  const reportScopeRef = useRef(new Set<string>());
+  const [reportHistoryBusy, setReportHistoryBusy] = useState(false);
+  const [reportHistoryStatus, setReportHistoryStatus] = useState("");
+
+  function loadCompleteReportHistory(walletAddress: string): Promise<ReportHistory<Tx>> {
+    const key = `${chain}:${getNormalizedAddress(walletAddress, chain)}`;
+    const existing = reportLoadsRef.current.get(key);
+    if (existing) return existing;
+    const histories = reportHistoriesRef.current;
+    const loading = loadReportHistory<Tx>(async (cursor) => reportRequest(async () => {
+      const params = new URLSearchParams({ chain, reportHistory: "true", limit: chain === "bitcoin" ? "25" : chain === "dag" ? "250" : "500" });
+      if (cursor) params.set("cursor", cursor);
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 45_000);
+      try {
+        const response = await fetch(`/api/wallets/${encodeURIComponent(walletAddress)}/transactions?${params}`, { signal: controller.signal });
+        if (!response.ok) throw Object.assign(new Error(`History HTTP ${response.status}`), {
+          status: response.status, retryAfter: response.headers.get("Retry-After"),
+        });
+        const data = await response.json();
+        if (reportHistoriesRef.current === histories) setReportHistoryStatus(`Loading ${walletAddress}: explorer page received; following remaining cursor${data.hasMore ? "…" : " — checking coverage."}`);
+        return data;
+      } finally { clearTimeout(timeout); }
+    }), histories.get(key)).then((history) => {
+      histories.set(key, history);
+      return history;
+    }).finally(() => { if (reportLoadsRef.current.get(key) === loading) reportLoadsRef.current.delete(key); });
+    reportLoadsRef.current.set(key, loading);
+    return loading;
+  }
+
+  async function prepareCompleteReportHistory() {
+    reportScopeRef.current = new Set([`${chain}:${getNormalizedAddress(address, chain)}`]);
+    setReportHistoryBusy(true);
+    setReportHistoryStatus("Loading complete report history through explorer cursors…");
+    try {
+      const history = await loadCompleteReportHistory(address);
+      setReportHistoryStatus(`${history.transactions.length.toLocaleString()} transfer records loaded / ${history.available?.toLocaleString() ?? "unknown"} available · ${history.complete ? "explorer pagination exhausted" : "INCOMPLETE"}${history.warnings.length ? ` · ${history.warnings.join(" ")}` : ""}`);
+    } finally { setReportHistoryBusy(false); }
+  }
+
+  function reportRecordsFor(walletAddress: string): Tx[] {
+    return reportHistoriesRef.current.get(`${chain}:${getNormalizedAddress(walletAddress, chain)}`)?.transactions
+      ?? (walletAddress === address ? page.current.txs : []);
+  }
+
+  async function prepareReportContext(wallets: string[]) {
+    reportScopeRef.current = new Set(wallets.filter(Boolean).map((walletAddress) => `${chain}:${getNormalizedAddress(walletAddress, chain)}`));
+    setReportHistoryBusy(true);
+    try {
+      for (const walletAddress of new Set(wallets.filter(Boolean))) {
+        setReportHistoryStatus(`Loading complete report history: ${walletAddress}`);
+        if (walletAddress !== address && getKnownInfo(walletAddress, chain)?.type === "exchange") continue;
+        await loadCompleteReportHistory(walletAddress);
+      }
+      setReportHistoryStatus("Report histories loaded. Coverage and any missing pages are listed in the report.");
+    } finally { setReportHistoryBusy(false); }
+  }
   const [showDonate, setShowDonate] = useState(false);
   const [copiedDonate, setCopiedDonate] = useState<string | null>(null);
   const copyDonateAddr = (addr: string) => {
@@ -1349,21 +1415,60 @@ export default function WalletDetail() {
     lines.push("Generated by CryptoChainTrace  \u00b7  cryptochaintrace.vercel.app");
     lines.push("\u00a9 2026 Ball Deep Crypto  \u2022  For Official Investigative Use Only");
 
-    const preHash = lines.join("\n");
+    // Canonical evidence appendix: one transfer identity across all loaded
+    // histories, independent of filtered/pattern-summary section counts.
+    const records = new Map<string, Tx>();
+    const coverage: string[] = [];
+    for (const [key, history] of reportHistoriesRef.current) {
+      if (!key.startsWith(`${chain}:`)) continue;
+      if (!reportScopeRef.current.has(key)) continue;
+      coverage.push(`${key.slice(chain.length + 1)}: ${history.transactions.length} transfer records loaded / ${history.available ?? "unknown"} available; ${history.complete ? "explorer pages exhausted" : "INCOMPLETE"}${history.warnings.length ? `; ${history.warnings.join("; ")}` : ""}`);
+      for (const tx of history.transactions) records.set(transferIdentity(tx), tx);
+    }
+    if (!coverage.length) {
+      coverage.push(`${address}: ${page.current.txs.length} displayed records loaded; available unknown; ${page.current.hasMore ? "INCOMPLETE — more pages remain" : "completeness not verified for reports"}. View filters may omit transfers.`);
+      for (const tx of page.current.txs) records.set(transferIdentity(tx), tx);
+    }
+    const evidence = [...records.values()];
+    const labels = new Map<string, string>();
+    for (const tx of evidence) for (const addr of [tx.from, tx.to]) {
+      if (!addr) continue;
+      const info = getKnownInfo(addr, chain);
+      if (info) labels.set(addr, info.label);
+    }
+    lines.push("", "HISTORY COVERAGE AND COUNT DEFINITIONS", ...coverage,
+      `Evidence dataset: ${evidence.length} unique transfer records; ${new Set(evidence.map((tx) => tx.hash)).size} unique transaction IDs.`,
+      "One transaction can contain multiple transfers. Wallet histories overlap; per-wallet counts must not be summed. Pattern sections are filtered subsets, not additional transfers.",
+      "Explorer pagination exhaustion is not proof of complete ledger archival coverage. Provider archive gaps and unavailable totals remain explicit.",
+      "", "LABEL PROVENANCE",
+      ...[...labels].map(([addr, label]) => `${addr} [${label}] — ${CATALOG_PROVENANCE}`),
+      "Explorer transaction links are lookup references, not label verification. A label is not proof of beneficial ownership or wrongdoing.",
+      "", "TRANSFER EVIDENCE APPENDIX",
+      ...evidence.flatMap((tx) => [...evidenceTransferLines(tx, chain), ""]));
+    const preHash = neutralReportText(lines.join("\n"));
     const hash    = sha256Sync(preHash);
-
-    lines.push("");
-    lines.push(rule);
-    lines.push("DIGITAL SIGNATURE / TAMPER-EVIDENT SEAL");
-    lines.push(`Report Hash  : ${hash}`);
-    lines.push(`Generated    : ${now}`);
-    lines.push("This document is cryptographically signed and tamper-evident.");
-    lines.push("Any alteration will invalidate this hash.");
-    lines.push(rule);
-    return lines.join("\n");
+    return `${preHash}\n\n${rule}\nCONTENT CHECKSUM (SHA-256)\nReport Hash  : ${hash}\nGenerated    : ${now}\nChecksum covers the report above, excluding this checksum block. This is not an authenticated digital signature.\n${rule}`;
   }
 
   function generateReport(): string {
+    const allTxs = reportRecordsFor(address);
+    // Use the report history, not the separately capped on-screen row cache.
+    const reportGroups = new Map<string, GroupedRow>();
+    for (const tx of allTxs) {
+      if (tx.direction === "self") continue;
+      const cp = tx.direction === "in" ? tx.from : tx.to;
+      const value = parseFloat(tx.value) || 0;
+      if (!cp || (chain === "xlm" ? !xlmPassesFilter(tx) : value < minAmount)) continue;
+      const key = `${cp}:${tx.direction}`;
+      const row = reportGroups.get(key);
+      if (row) {
+        row.txCount++; row.totalValue += value;
+        if (tx.timestamp > row.latestTs) row.latestTs = tx.timestamp;
+      } else reportGroups.set(key, { address: cp, direction: tx.direction as "in" | "out",
+        totalValue: value, txCount: 1, latestTs: tx.timestamp, asset: tx.tokenSymbol ?? chain.toUpperCase() });
+    }
+    const groupedRows = [...reportGroups.values()].filter((row) =>
+      dirFilter === "only-in" ? row.direction === "in" : dirFilter === "only-out" ? row.direction === "out" : true);
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
     const fmtAmt = (v: string, dir: "in" | "out") => {
@@ -1527,6 +1632,7 @@ export default function WalletDetail() {
   }
 
   function generateTrailReport(): string {
+    const allTxs = reportRecordsFor(address);
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
     const sep = (label = "") => label
@@ -1657,6 +1763,7 @@ export default function WalletDetail() {
   }
 
   function generateCommingleReport(): string {
+    const allTxs = reportRecordsFor(address);
     return ((commingleResult: CommingleCheckResult | null): string => {
     if (!commingleResult) return "";
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
@@ -2416,6 +2523,7 @@ export default function WalletDetail() {
 
   // ── EXCHANGE FLOWS REPORT — all IN/OUT TXs touching known exchanges/bridges ──
   function generateExchangeFlowsReport(): string {
+    const allTxs = reportRecordsFor(address);
     const now = new Date().toISOString().replace("T", " ").slice(0, 19) + " UTC";
     const chainUp = chain.toUpperCase();
     const rule = "─".repeat(64);
@@ -3586,8 +3694,6 @@ export default function WalletDetail() {
     lines.push("");
 
     // ── Per-hop details ────────────────────────────────────────────────────
-    let originAmount: number | null = null;
-
     hopData.forEach((hop, idx) => {
       const fromKn   = KNOWN_LABELS[hop.from];
       const toKn     = KNOWN_LABELS[hop.to];
@@ -3603,12 +3709,7 @@ export default function WalletDetail() {
       // Primary TX — the user-specified hash, or best match from fetched history
       const primaryTx = hop.tx;
       if (primaryTx) {
-        const amt = parseFloat(primaryTx.value) || 0;
-        if (idx === 0 && originAmount === null && amt > 0) originAmount = amt;
-        const taintPct = originAmount && originAmount > 0 && amt > 0
-          ? ((amt / originAmount) * 100).toFixed(1)
-          : null;
-        if (taintPct !== null) lines.push(`  Taint     : ${taintPct}% of original stolen funds reached this point`);
+        lines.push("  Observed transfer amount is not an attribution of the selected source value. See FIFO allocation below.");
         lines.push(`  ─ Transaction Detail ─`);
         emitTx(primaryTx, "  ").forEach(l => lines.push(l));
       } else if (hop.knownHash) {
@@ -3660,6 +3761,26 @@ export default function WalletDetail() {
       });
     }
     lines.push("");
+
+    const origin = hopData[0]?.tx;
+    if (origin && origin.status === "success" && chain !== "bitcoin" && hopData[0].knownHash && origin.from === hopData[0].from && origin.to === hopData[0].to) {
+      lines.push(sepSection("FORWARD VALUE ALLOCATION — FIFO ESTIMATE"));
+      const records = [...reportHistoriesRef.current].filter(([key]) => reportScopeRef.current.has(key)).flatMap(([, history]) => history.transactions);
+      const fifo = attributeFifo(records, origin,
+        (walletAddress) => getKnownInfo(walletAddress, chain)?.type === "exchange",
+        (walletAddress) => ["ethereum", "polygon", "bsc", "xdc"].includes(chain) ? getNormalizedAddress(walletAddress, chain).toLowerCase() : walletAddress,
+        ({ ethereum: "ETH", polygon: "MATIC", bsc: "BNB", xdc: "XDC", xrp: "XRP", xlm: "XLM", dag: "DAG", hbar: "HBAR" } as Record<string, string>)[chain]);
+      lines.push(`Selected source TX: ${origin.hash}`, `Source amount: ${fifo.sourceAmount} ${fifo.asset}`,
+        ...fifo.warnings, fifo.note,
+        "Only loaded downstream wallets are covered. This is not a claim that unscanned branches received no value.",
+        ...fifo.arrivals.map((arrival) => `${arrival.wallet}: cumulative FIFO arrivals ${arrival.cumulativeArrivals}; ${arrival.exchangeStop ? `allocation stopped at custody boundary ${arrival.remaining}; EXCHANGE STOP — no private expansion beyond custody` : `allocated unspent value in loaded records ${arrival.remaining}`}`),
+        ...fifo.flows.flatMap((flow) => [
+          `FIFO allocated arrival: ${flow.attributed} ${fifo.asset}`,
+          ...evidenceTransferLines(flow.transaction, chain), "",
+        ]));
+    } else {
+      lines.push("FIFO allocation unavailable: a matched successful source transfer and account-based history are required. Bitcoin multi-input/output attribution needs UTXO-level evidence not provided by this view. No substitute transaction or wallet-history total is used.");
+    }
 
     // ── Expand from final wallet ──────────────────────────────────────────
     const lastAddr = walletAddrs[walletAddrs.length - 1];
@@ -3714,8 +3835,8 @@ export default function WalletDetail() {
     lines.push(`  Victim         : ${walletAddrs[0]}`);
     lines.push(`  Thief          : ${walletAddrs[1]}`);
     lines.push(`  Total Hops     : ${hopData.length}`);
-    if (originAmount !== null) {
-      lines.push(`  Origin Amount  : ${(originAmount as number).toFixed(8)} ${chainUp} (first hop TX)`);
+    if (origin) {
+      lines.push(`  Source Amount  : ${origin.value} ${origin.tokenSymbol ?? chainUp} (specified source TX)`);
     }
     lines.push("");
 
@@ -3891,9 +4012,14 @@ export default function WalletDetail() {
       .map(s => ({ wallet: s.wallet.trim(), txHash: s.txHash.trim() }))
       .filter(s => s.wallet);
     if (steps.length < 2) {
-      setPathError("Enter at least a victim wallet and a thief wallet.");
+      setPathError("Enter at least a source wallet and recipient wallet.");
       return;
     }
+    if (!steps[0].txHash) {
+      setPathError("Enter the source transfer TX hash on the first wallet. FIFO allocation cannot use an assumed theft amount.");
+      return;
+    }
+    reportScopeRef.current = new Set(steps.map((step) => `${chain}:${getNormalizedAddress(step.wallet, chain)}`));
     setPathLoading(true);
     setPathError(null);
     setPathProgress("Starting path analysis…");
@@ -3904,8 +4030,12 @@ export default function WalletDetail() {
       for (let i = 0; i < steps.length - 1; i++) {
         const fromAddr  = steps[i].wallet;
         const toAddr    = steps[i + 1].wallet;
+        if (getKnownInfo(fromAddr, chain)?.type === "exchange") break;
         const knownHash = steps[i].txHash; // TX hash on the FROM side of this hop
         setPathProgress(`Fetching hop ${i + 1}/${steps.length - 1}…`);
+        const history = await loadCompleteReportHistory(fromAddr);
+        if (getKnownInfo(toAddr, chain)?.type !== "exchange") await loadCompleteReportHistory(toAddr);
+        const allTxs = history.transactions;
 
         // Search allTxs (loaded history on current wallet) for matching TXs
         const inLoaded = allTxs.filter(t => {
@@ -3914,37 +4044,14 @@ export default function WalletDetail() {
           return (self === fromAddr && cp === toAddr) || (self === toAddr && cp === fromAddr);
         });
 
-        let txPool: Tx[] = inLoaded;
-
-        // Also fetch directly from the from-wallet if we don't already have enough
-        if (txPool.length === 0 || knownHash) {
-          try {
-            const resp = await fetch(
-              `/api/wallets/${encodeURIComponent(fromAddr)}/transactions?chain=${chain}&limit=50`
-            );
-            if (resp.ok) {
-              const data = await resp.json() as { transactions?: Tx[] };
-              const fetched = (data.transactions ?? []).filter(t => {
-                const cp = t.direction === "in" ? t.from : t.to;
-                return cp === toAddr;
-              });
-              // Merge: deduplicate by hash
-              const seen = new Set(txPool.map(t => t.hash).filter(Boolean));
-              txPool = [...txPool, ...fetched.filter(t => !seen.has(t.hash))];
-            }
-          } catch { /* best-effort */ }
-        }
+        const txPool: Tx[] = inLoaded;
 
         // Find the primary TX — prefer the user-specified hash; fall back to largest-value match
         let primaryTx: Tx | null = null;
         if (knownHash) {
-          primaryTx = txPool.find(t => t.hash === knownHash) ?? null;
-          // If not found by hash in the filtered pool, search all of allTxs by hash directly
-          if (!primaryTx) {
-            primaryTx = allTxs.find(t => t.hash === knownHash) ?? null;
-          }
+          primaryTx = txPool.find(t => t.hash === knownHash && t.from === fromAddr && t.to === toAddr && t.status === "success") ?? null;
         }
-        if (!primaryTx && txPool.length > 0) {
+        if (!knownHash && txPool.length > 0) {
           primaryTx = txPool.reduce((best, t) =>
             parseFloat(t.value) > parseFloat(best.value) ? t : best
           );
@@ -3958,8 +4065,13 @@ export default function WalletDetail() {
       const lastAddr = steps[steps.length - 1].wallet;
       let expandTxs: Tx[] = [];
       try {
+        if (getKnownInfo(lastAddr, chain)?.type === "exchange") {
+          // Custodial hot-wallet activity is not a continuation of a private trail.
+          expandTxs = [];
+        } else {
+        const finalHistory = await loadCompleteReportHistory(lastAddr);
         // Check allTxs first (already filtered and clean)
-        const inLoadedExpand = allTxs.filter(t => {
+        const inLoadedExpand = finalHistory.transactions.filter(t => {
           const self = t.direction === "in" ? t.to : t.from;
           return self === lastAddr;
         });
@@ -3973,6 +4085,7 @@ export default function WalletDetail() {
             const data = await resp.json() as { transactions?: Tx[] };
             expandTxs = (data.transactions ?? []).slice(0, 20);
           }
+        }
         }
       } catch { /* best-effort */ }
 
@@ -4149,6 +4262,10 @@ export default function WalletDetail() {
   // ── Reset everything when the wallet address, chain, or initLimit changes ──
   useEffect(() => {
     txInitializedRef.current = false;
+    reportHistoriesRef.current = new Map();
+    reportLoadsRef.current = new Map();
+    reportScopeRef.current = new Set();
+    setReportHistoryStatus("");
     page.current = { txs: [], cursor: null, hasMore: false, busy: false, error: null, status: null };
     setAllTxs([]);
     setMinAmount(1);
@@ -4307,7 +4424,7 @@ export default function WalletDetail() {
         commit([...accumulated], cursor, data.hasMore && accumulated.length < MAX_TOTAL);
         if (!data.hasMore || !cursor) break;
       }
-      page.current.status = `Full history loaded · ${accumulated.length.toLocaleString()} total`;
+      page.current.status = `${page.current.hasMore || cursor ? "History incomplete / display cap reached" : "Explorer pagination exhausted"} · ${accumulated.length.toLocaleString()} loaded; available ${cursor ? "unknown" : accumulated.length.toLocaleString()}`;
     } catch (err) {
       page.current.error = err instanceof Error ? err.message : "Unknown error — try again";
     } finally {
@@ -4393,10 +4510,10 @@ export default function WalletDetail() {
     }
     return new Set(
       Array.from(parentSets.entries())
-        .filter(([, parents]) => parents.size > 1)
+        .filter(([addr, parents]) => parents.size > 1 && getKnownInfo(addr, chain)?.type !== "exchange")
         .map(([addr]) => addr)
     );
-  }, [trailEntries]);
+  }, [trailEntries, chain]);
 
   // ── Intersection / Commingling Analysis ──
   // Computes all 3 sections purely from data already in memory — no extra API calls.
@@ -4436,7 +4553,7 @@ export default function WalletDetail() {
     // § 1 — Direct Intersections: trail nodes whose address also appears in allTxs
     const trailNodes = trailEntries.filter((e) => e.depth > 0);
     const directIntersections = trailNodes
-      .filter((e) => cpMap.has(e.address))
+      .filter((e) => cpMap.has(e.address) && getKnownInfo(e.address, chain)?.type !== "exchange")
       .map((e) => ({ ...e, cp: cpMap.get(e.address)! }))
       .sort((a, b) => b.cp.totalValue - a.cp.totalValue);
     const intersectionAddrs = new Set(directIntersections.map((d) => d.address));
@@ -4449,7 +4566,7 @@ export default function WalletDetail() {
       parentSets.get(e.address)!.add(e.parentAddress);
     }
     const commonEndpoints = Array.from(parentSets.entries())
-      .filter(([, parents]) => parents.size > 1)
+      .filter(([addr, parents]) => parents.size > 1 && getKnownInfo(addr, chain)?.type !== "exchange")
       .map(([addr, parents]) => ({
         address: addr,
         parents: Array.from(parents),
@@ -4482,6 +4599,7 @@ export default function WalletDetail() {
 
   // ── Trail trace ──
   const expandTrailNode = useCallback(async (entry: TrailEntry) => {
+    if (getKnownInfo(entry.address, chain)?.type === "exchange") return;
     if (fetchingRef.current.has(entry.address) || entry.depth >= 6) return;
     fetchingRef.current.add(entry.address);
     setTrailEntries((prev) =>
@@ -4533,6 +4651,13 @@ export default function WalletDetail() {
   }, [chain]);
 
   const startTrailTrace = useCallback(async (targetAddr: string) => {
+    if (getKnownInfo(targetAddr, chain)?.type === "exchange") {
+      setShowTrailPanel(true);
+      setTrailEntries([{ address: targetAddr, depth: 0, parentAddress: null,
+        knownInfo: getKnownInfo(targetAddr, chain) ?? undefined, isExpanded: true, isLoading: false,
+        totalValueUsd: 0, txCount: 0, childAddresses: [] }]);
+      return;
+    }
     setShowTrailPanel(true);
     fetchingRef.current.clear();
     const rootEntry: TrailEntry = {
@@ -4712,7 +4837,7 @@ export default function WalletDetail() {
     };
 
     const isPrivateWallet = (addr: string): boolean => {
-      const info = KNOWN_LABELS[addr];
+      const info = getKnownInfo(addr, chain);
       if (!info) return true; // unknown = private
       const type = (info.type || "").toLowerCase();
       return !["exchange", "bridge", "hot", "custodial"].includes(type);
@@ -4728,6 +4853,7 @@ export default function WalletDetail() {
       label: string,
     ): Promise<{ reach: TieReachMap; segTxs: Record<string, Tx> }> => {
       const reach: TieReachMap = new Map();
+      if (getKnownInfo(wallet, chain)?.type === "exchange") return { reach, segTxs: {} };
       const segTxs: Record<string, Tx> = {};
 
       // Tier 1: direct counterparties of the root wallet
@@ -4843,7 +4969,7 @@ export default function WalletDetail() {
     };
 
     const isPrivateWallet = (addr: string): boolean => {
-      const info = KNOWN_LABELS[addr];
+      const info = getKnownInfo(addr, chain);
       if (!info) return true;
       const type = (info.type || "").toLowerCase();
       return !["exchange", "bridge", "hot", "custodial"].includes(type);
@@ -4855,6 +4981,7 @@ export default function WalletDetail() {
       label: string,
     ): Promise<Map<string, { path: string[]; tier: number }>> => {
       const reach = new Map<string, { path: string[]; tier: number }>();
+      if (getKnownInfo(wallet, chain)?.type === "exchange") return reach;
 
       setMultiProgress(`${label}: tier 1…`);
       const rootTxs = await fetchTxs(wallet);
@@ -4992,6 +5119,7 @@ export default function WalletDetail() {
 
     const buildReachMap = async (wallet: string, label: string): Promise<ReachMap> => {
       const reach: ReachMap = new Map();
+      if (getKnownInfo(wallet, chain)?.type === "exchange") return reach;
 
       // Hard-excluded: never add to reach map, never expand from, never shown as shared node.
       // DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz — noisy reward wallet
@@ -5006,7 +5134,7 @@ export default function WalletDetail() {
       // dag-team, genesis, defi, flagged, protocol, unknown → treated as private.
       // HARD_EXCL addresses are blocked earlier in the BFS loop — no check needed here.
       const isPrivateWallet = (addr: string): boolean => {
-        const info = KNOWN_LABELS[addr];
+        const info = getKnownInfo(addr, chain);
         if (!info) return true; // unknown = private
         const type = (info.type || "").toLowerCase();
         return !["exchange", "bridge", "hot", "custodial", "official", "protocol", "base"].includes(type);
@@ -5070,6 +5198,7 @@ export default function WalletDetail() {
       const addrToPeers = new Map<string, Array<{ wallet: string; path: string[]; tier: number }>>();
       for (const { wallet: pw, reachMap } of allPeerMaps) {
         for (const [addr, data] of reachMap) {
+          if (getKnownInfo(addr, chain)?.type === "exchange") continue;
           if (!addrToPeers.has(addr)) addrToPeers.set(addr, []);
           addrToPeers.get(addr)!.push({ wallet: pw, path: data.path, tier: data.tier });
         }
@@ -5287,8 +5416,9 @@ export default function WalletDetail() {
       // the standalone Exchange Flows button (which uses multiWallets).
       setFullPkgProgress("Step 3/4: Fetching exchange flow data…");
       const allFetchWallets = [...new Set([...pkgWallets, ...multiWallets])];
+      await prepareReportContext([address, ...allFetchWallets]);
       const walletTxMap = new Map<string, Tx[]>();
-      walletTxMap.set(address, allTxs);
+      walletTxMap.set(address, reportRecordsFor(address));
       await Promise.all(
         allFetchWallets.map(async (w) => {
           const wAddr = chain === "xdc" ? normalizeXdcAddress(w) : w;
@@ -5313,7 +5443,10 @@ export default function WalletDetail() {
         ? [address, ...multiWallets]
         : [address, ...pkgWallets];
       const exchWalletTxMap = new Map<string, Tx[]>();
-      for (const w of exchOrderedWallets) exchWalletTxMap.set(w, walletTxMap.get(w) ?? []);
+      for (const w of exchOrderedWallets) {
+        walletTxMap.set(w, reportRecordsFor(w));
+        exchWalletTxMap.set(w, reportRecordsFor(w));
+      }
 
       // 4. Generate all 3 reports + executive summary
       setFullPkgProgress("Step 4/4: Generating reports…");
@@ -5402,13 +5535,13 @@ export default function WalletDetail() {
         `${"═".repeat(64)}`,
       ].join("\n");
 
-      const fullReport = [
+      const fullReport = auditAndSign([
         summaryText,
         secDiv(2, "Commingle Check Report") + commingleText,
         secDiv(3, "Intersection / Funnel Analysis Report") + funnelText,
         secDiv(4, "Exchange Flows Report") + exchText,
-        howToUse,
-      ].join("");
+        "METHODOLOGY: Observed transfer records only. Labels are inferred unless independently verified. Shared private addresses are filtered for dust and exchange endpoints. Pattern scores do not establish identity, intent or common ownership. History coverage and transaction evidence are listed separately.",
+      ], { reportType: "Combined transaction report", chain, target: address, comparisons: pkgWallets });
 
       const title = `Full Package — ${chain.toUpperCase()} — ${pkgWallets.length + 1} wallets`;
       setReportContent(fullReport);
@@ -5490,7 +5623,7 @@ export default function WalletDetail() {
     return (
       <span className={`inline-flex items-center shrink-0 font-mono border ${sz} ${c.bg} ${c.text} ${c.border} ${c.ring} shadow-sm ${c.glow}`}>
         <span>{c.emoji}</span>
-        <span>{info.label}</span>
+        <span>{info.label}<span className="block text-[9px] font-normal normal-case tracking-normal">Inferred · App label catalog</span></span>
       </span>
     );
   };
@@ -5712,6 +5845,7 @@ export default function WalletDetail() {
               className="font-mono text-xs border-emerald-500/40 text-emerald-400 hover:bg-emerald-950/30 hover:border-emerald-500/70 hover:text-emerald-300 disabled:opacity-50"
               title={multiWallets.length > 0 ? `Generate combined exchange flows for all ${multiWallets.length + 1} wallets` : "Generate a report of all exchange, bridge, and protocol transactions"}
               onClick={async () => {
+                await prepareReportContext([address, ...multiWallets]);
                 if (multiWallets.length === 0) {
                   // Single-wallet path — unchanged
                   const rpt = generateExchangeFlowsReport();
@@ -5739,7 +5873,7 @@ export default function WalletDetail() {
                     );
                     // Ensure insertion order matches allWallets order
                     const ordered = new Map<string, Tx[]>();
-                    for (const w of allWallets) ordered.set(w, walletTxMap.get(w) ?? []);
+                    for (const w of allWallets) ordered.set(w, reportRecordsFor(w));
                     const rpt = generateMultiExchangeFlowsReport(ordered);
                     const title = `Multi-Wallet Exchange Flows — ${chain.toUpperCase()} — ${allWallets.length} wallets`;
                     setReportContent(rpt);
@@ -5838,7 +5972,9 @@ export default function WalletDetail() {
               </div>
               <Button
                 className="font-mono text-xs bg-orange-600 hover:bg-orange-500 text-white border-0"
-                onClick={() => {
+                disabled={reportHistoryBusy}
+                onClick={async () => {
+                  await prepareCompleteReportHistory();
                   const rpt = generateReport();
                   const title = `Investigative Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
                   setReportContent(rpt);
@@ -5847,8 +5983,12 @@ export default function WalletDetail() {
                   setShowReportModal(true);
                 }}
               >
-                <FileText className="w-3.5 h-3.5 mr-1.5" /> GENERATE INVESTIGATIVE REPORT
+                <FileText className="w-3.5 h-3.5 mr-1.5" /> {reportHistoryBusy ? "LOADING COMPLETE REPORT HISTORY…" : "GENERATE TRANSACTION REPORT"}
               </Button>
+              <Button variant="outline" disabled={reportHistoryBusy} onClick={() => void prepareCompleteReportHistory()} data-testid="button-complete-report-history">
+                Load complete report history
+              </Button>
+              {reportHistoryStatus && <p role="status" className="max-w-xl break-words text-xs text-muted-foreground" data-testid="status-report-history">{reportHistoryStatus}</p>}
             </div>
           )}
         </div>
@@ -6439,7 +6579,7 @@ export default function WalletDetail() {
         )}
         {!page.current.hasMore && allTxs.length > 0 && !txLoading && (
           <div className="px-5 py-3 border-t border-border/40 text-center text-xs font-mono text-muted-foreground/60">
-            FULL HISTORY LOADED · {allTxs.length.toLocaleString()} TRANSACTIONS
+            {page.current.cursor ? "DISPLAY LIMIT REACHED — OLDER HISTORY MAY REMAIN" : "DISPLAY PAGINATION ENDED — REPORT COVERAGE IS LISTED SEPARATELY"} · {allTxs.length.toLocaleString()} RECORDS
           </div>
         )}
       </Card>
@@ -6465,7 +6605,8 @@ export default function WalletDetail() {
                 )}
               </div>
               <button
-                onClick={() => {
+                onClick={async () => {
+                  await prepareReportContext([address, ...trailEntries.map((entry) => entry.address)]);
                   const rpt = generateTrailReport();
                   const title = `Trail Trace Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
                   setReportContent(rpt);
@@ -7190,6 +7331,7 @@ export default function WalletDetail() {
                     setMultiIntersectLoading(true);
                     try {
                       const allWallets = multiResult.trackedWallets;
+                      await prepareReportContext(allWallets);
                       const walletTxMap = new Map<string, Tx[]>();
                       // Primary wallet uses already-loaded allTxs
                       walletTxMap.set(allWallets[0], allTxs);
@@ -7228,6 +7370,8 @@ export default function WalletDetail() {
                           })
                         );
                       }
+                      await prepareReportContext([...walletTxMap.keys()]);
+                      for (const key of walletTxMap.keys()) if (reportRecordsFor(key).length) walletTxMap.set(key, reportRecordsFor(key));
                       const rpt = generateMultiReport(walletTxMap);
                       const title = `Intersection / Funnel Analysis — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
                       setReportContent(rpt);
@@ -7571,7 +7715,8 @@ export default function WalletDetail() {
                   </span>
                   <button
                     className="ml-auto flex items-center gap-1.5 text-[11px] font-mono font-bold text-white bg-amber-600 hover:bg-amber-500 border border-amber-500/50 rounded px-3 py-1.5 transition-colors shrink-0"
-                    onClick={() => {
+                    onClick={async () => {
+                      await prepareReportContext([address, ...commingleWallets, ...Object.keys(commingleResult?.hopFetchStats ?? {})]);
                     const rpt = generateCommingleReport();
                     const title = `Commingle Check Report — ${(commingleResult?.chain ?? chain).toUpperCase()} — ${(commingleResult?.targetWallet ?? address).slice(0, 12)}`;
                     setReportContent(rpt);
@@ -7954,7 +8099,11 @@ export default function WalletDetail() {
               <div className="flex items-center gap-2">
                 {tieResult && (
                   <button
-                    onClick={() => {
+                    onClick={async () => {
+                      await prepareReportContext([address, tieBWallet, ...(tieResult?.commonNodes.flatMap((node) => [
+                        ...node.pathFromA.map((hop) => hop.address),
+                        ...node.pathFromB.map((hop) => hop.address),
+                      ]) ?? [])]);
                       const rpt = generateTieFinderReport();
                       const title = `Connection Finder Report — ${chain.toUpperCase()} — ${address.slice(0, 12)}`;
                       setReportContent(rpt);

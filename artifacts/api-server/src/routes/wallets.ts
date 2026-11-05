@@ -832,6 +832,7 @@ function parseStellarOp(
   status: "success" | "failed"; direction: "in" | "out" | "self";
   tokenSymbol: string; tokenName: null; memo: string | null;
   destinationTag: null;
+  operationId: string | null; assetId: string | null;
 } | null {
   const type = String(rec["type"] ?? "payment");
   if (!STELLAR_VALUE_OPS.has(type)) return null; // skip non-value ops
@@ -886,7 +887,7 @@ function parseStellarOp(
   // fee_charged comes from Horizon in stroops (1 stroop = 1e-7 XLM) — divide by 1e7.
   const txEmbed = rec["transaction"] as Record<string, unknown> | undefined;
   const memoType = String(txEmbed?.["memo_type"] ?? "none");
-  const memo = (memoType !== "none" && txEmbed?.["memo"]) ? String(txEmbed["memo"]) : null;
+  const memo = (memoType !== "none" && txEmbed?.["memo"] != null) ? String(txEmbed["memo"]) : null;
   const feeXlm = txEmbed?.["fee_charged"]
     ? parseFloat(String(txEmbed["fee_charged"])) / 1e7
     : 0.00001; // 100 stroops — Stellar base fee
@@ -901,6 +902,9 @@ function parseStellarOp(
     blockNumber: 0, status: "success" as const,
     direction, tokenSymbol, tokenName: null, memo,
     destinationTag: null,
+    operationId: rec["id"] != null ? String(rec["id"]) : null,
+    assetId: rec["asset_type"] === "native" ? "native:XLM"
+      : rec["asset_issuer"] ? `${String(rec["asset_code"] ?? tokenSymbol)}:${String(rec["asset_issuer"])}` : null,
   };
 }
 
@@ -1243,6 +1247,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
   const page = query.success ? query.data.page : 1;
   const limit = Math.min(query.success ? (query.data.limit ?? 500) : 500, 500);
   const cursorParam = query.success ? query.data.cursor : undefined;
+  const reportHistory = query.success && query.data.reportHistory === "true";
   // XRP, XLM, HBAR, XDC, DAG addresses are case-sensitive — never lowercase them
   const evmChains = ["ethereum", "polygon", "bsc"];
   const rawAddressTx = params.data.address;
@@ -1256,7 +1261,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
   const priceUsd = PRICE_MAP[chain] ?? 1;
 
   // ── Cache check (first page only — cursor pages are too varied to cache usefully) ──
-  const txCacheKey = !cursorParam ? `tx:${chain}:${address}:${limit}` : null;
+  const txCacheKey = !cursorParam ? `tx:${chain}:${address}:${limit}${reportHistory ? ":report-evidence-v1" : ""}` : null;
   if (txCacheKey) {
     const txHit = txCache.get(txCacheKey);
     if (txHit) { res.setHeader("X-Cache", "HIT"); res.json(txHit); return; }
@@ -1300,7 +1305,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
         if (typeof rawDelivered === "object" && rawDelivered !== null) {
           // IOU / non-native token: delivered_amount is {"currency":"USD","value":"1.5","issuer":"r..."}
           const iou = rawDelivered as Record<string, unknown>;
-          value = parseFloat(String(iou["value"] ?? "0")).toFixed(6);
+          value = reportHistory ? String(iou["value"] ?? "0") : parseFloat(String(iou["value"] ?? "0")).toFixed(6);
           txTokenSymbol = String(iou["currency"] ?? "XRP");
         } else {
           const deliveredStr = String(rawDelivered ?? "0");
@@ -1338,6 +1343,10 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
             ? "success" : "failed") as "success" | "failed",
           direction,
           tokenSymbol: txTokenSymbol, tokenName: null, memo, destinationTag,
+          ...(reportHistory ? { operationId: meta?.["TransactionIndex"] != null ? String(meta["TransactionIndex"]) : null,
+            assetId: typeof rawDelivered === "object" && rawDelivered !== null
+            ? `${txTokenSymbol}:${String((rawDelivered as Record<string, unknown>)["issuer"] ?? "issuer unavailable")}`
+            : "native:XRP" } : {}),
         };
       });
 
@@ -1519,6 +1528,7 @@ router.get("/wallets/:address/transactions", async (req, res): Promise<void> => 
           .map((rec) => parseStellarOp(rec, address, priceUsd))
           .filter((t): t is NonNullable<typeof t> => t !== null)
           .filter((t) => {
+            if (reportHistory) return true;
             // Drop unknown tokens and anything below the per-asset minimum
             const sym = t.tokenSymbol ?? "XLM";
             const min = XLM_SERVER_MIN[sym];

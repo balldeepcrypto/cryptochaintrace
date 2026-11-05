@@ -143,6 +143,7 @@ export const ClusterFinderGraph = memo(function ClusterFinderGraph({ nodes: allN
         label: (
           <div style={{ minWidth: 148, maxWidth: 180, textAlign: "left", fontFamily: "ui-monospace, SFMono-Regular, monospace" }}>
             <div style={{ color, fontSize: 9, letterSpacing: "0.14em", fontWeight: 700, marginBottom: 7, textTransform: "uppercase" }}>{title}</div>
+            {node.label && <div style={{ color: "#a9b7c8", fontSize: 8, marginBottom: 4 }}>Inferred · App label catalog</div>}
             <div title={node.address} style={{ color: "#d8e1ec", fontSize: 10, overflow: "hidden", textOverflow: "ellipsis" }}>{shorten(node.address)}</div>
             <div style={{ marginTop: 8, color: "#697b8f", fontSize: 8, letterSpacing: "0.12em" }}>{node.role.toUpperCase()} NODE</div>
           </div>

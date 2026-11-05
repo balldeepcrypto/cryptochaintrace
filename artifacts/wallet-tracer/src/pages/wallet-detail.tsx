@@ -29,7 +29,7 @@ import { ConnectionFinderGraph } from "@/components/connection-finder-graph";
 // "dag-team" = DAG official entities (DOR Metagraph, DTM, Team Foundation, Treasury,
 //   Validator Tax Pool, Reward Pool). They are LABELLED PROMINENTLY and highlighted in
 //   reports, but they DO count as private commingling evidence (unlike exchange/bridge/genesis).
-const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" | "founder" }> = {
+const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis" | "defi" | "flagged" | "bridge" | "dag-team" | "official" | "mixer" | "founder" | "named" }> = {
   // ── XRP ────────────────────────────────────────────────────────────────────
   rDm17MrJxpqMTu5tZNgwDBGyov5wkKixUQ: { label: "Bitvavo 2", type: "exchange" },
   rJGb4etn9GSwNHYVu7dNMbdiVgzqxaTSUG: { label: "First Ledger 1", type: "exchange" },
@@ -843,6 +843,49 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   "1Bh2AAQCnSiXqJWTGVTTTVMFAFPjguegYZ":           { label: "Gate.io BTC",   type: "exchange" },
   "1GR9qNz7zgtaW5HwwVpEJWMnGWhsbsieCG":           { label: "MEXC BTC",      type: "exchange" },
   // ── DAG (Constellation Network) ────────────────────────────────────────────
+  DAG4jFXdsWe6usU8LfJQaEus3MUN5hYxVVzFvNJk: { label: "Bitrue System Wallet", type: "exchange" },
+  DAG5CyQo9cSUPnMfPjS3c4Sz7VsQKwmozNgPZKkh: { label: "Bitrue User Account", type: "exchange" },
+  DAG0bRqRqZytL3tRs26GEmAHLSmSfNfKdm7ZKWUg: { label: "Bitrue User Account", type: "exchange" },
+  DAG5iacoqPtaaR277TzFRbvnF9Ns7oCHzFuHrUWS: { label: "Bitrue User Account", type: "exchange" },
+  DAG6ipRGeHmgGNNsPG8nQG4txeFNxwXJnXCEn3zQ: { label: "Team Foundation", type: "official" },
+  DAG4xPWQj3BpAg2YKg3kbdw2AJcMfZz2SUKqYb1t: { label: "Stardust Creatives", type: "named" },
+  DAG77VVVRvdZiYxZ2hCtkHz68h85ApT5b2xzdTkn: { label: "Softnode Reward Pool", type: "official" },
+  DAG8jE4CHy9T2izWFEv8K6rp5hNJq11SyLEVYnt8: { label: "Integrationnet Reward Pool", type: "official" },
+  DAG4mvkyoYPeRLo9nDVoKm4epFUoauj9JeRWDnzK: { label: "DCent Wallet", type: "named" },
+  DAG24YuozSEK1QVNrsiYayZt7M38X5avtEEVwSK1: { label: "Dagnum", type: "named" },
+  DAG4YVoWqsLefL2sa8y5kwC9ZBHf4mg22tLh8LdR: { label: "Dagnum", type: "named" },
+  DAG6qrXsyF2EBW7UPvRxSmfKSwTXLJoJ6PnPRxuu: { label: "Dagnum", type: "named" },
+  DAG8tvj8uCacSCYaFHd9aVP5V7JAvjmzU6FnVtEF: { label: "Dagnum", type: "named" },
+  DAG6H9nMSX8B17kVowwBqxxvsGqjdH5LoPCSf3uo: { label: "Dagnum", type: "named" },
+  DAG25x6WbBu2aNpZJWjRY3Lf1rGZgYQ1eRQYeB2e: { label: "Dagnum", type: "named" },
+  DAG8QDawEdifoTVbhVUeWe8VKUPewPZLEdrPhcvs: { label: "Dagnum", type: "named" },
+  DAG0MiKaMdywByYKfegkiT4ir9LiirhyKa5gaozc: { label: "JustLiveIt", type: "named" },
+  DAG3GSihfDVfPt2NJseum5TSCPCV1EvrZFVjv4WR: { label: "JustLiveIt", type: "named" },
+  DAG8BREgYowvxvTeKnXD5Hi4BZf2TcC3PFr8w4pn: { label: "Prophet", type: "named" },
+  DAG4KzpEvMTx38r9KaUHG6RGa8e7P8TtfGmcXjwX: { label: "Ed O", type: "named" },
+  DAG8z7k16YK9XkzbrGKYHnvUTfQndkY7tnWRTG5r: { label: "Ed O", type: "named" },
+  DAG62Z8Mpj1Ui4Do9VVaRxXYvaz9eXbuLPDmMxbZ: { label: "PoliticalSparks", type: "named" },
+  DAG5U6kgVLsLnZ4AZfnNAGwx3ttzfCk73AgGistJ: { label: "BitcoinBarry", type: "named" },
+  DAG2qxj6Sz4zHTuQgfDH87aNEsrtCgMMUmNMx4xv: { label: "Blue Collar Nodes", type: "named" },
+  DAG2QadMTJiMW1uTmQtswVJgYTrBc2Z59wMp5JG7: { label: "joaopfc", type: "named" },
+  DAG8zkPnVNXGAGDZpAF3wk4x1EnSyqDfpRgZeVFW: { label: "Gen.BearJew", type: "named" },
+  DAG7jxqLiY4SLpRVSHTKMPeDKMXr2yvFwLtc1QcX: { label: "Patriot_Brad", type: "named" },
+  DAG06SBX551EfmT1YowYHzzivcWHaxRdtTZJKGDg: { label: "AllDayErrryDay", type: "named" },
+  DAG7bbpkqrMuvtaoS3C1u8SUoQsLCfznPkk4vFHd: { label: "BullDogBandit", type: "named" },
+  DAG4dD8WcdykFapK36wYYGm829BQ5TDEhgGU8MEn: { label: "DAGLTX207", type: "named" },
+  DAG0fwU5Sw2vcZe8dScAY1xVGjdsF2HFfxdcpQJt: { label: "Day 1 DAGger", type: "named" },
+  DAG5DpN4cLaZjSKhEJ4gmpib7mRKSGueQFxFM8VF: { label: "DAGnabit", type: "named" },
+  DAG0oXkFMTvWu5NPe4X2n1K6hmvXW6Kbzn21Hvtg: { label: "HyperNova", type: "named" },
+  DAG4uwZCWtSnCkHKFz4ZX9WgMCwjCzbJgEXH9zaz: { label: "MAGA Node", type: "named" },
+  DAG0gJR6BRx7DCGmkMGrWrjwnCUwKHKkkXazzxa5: { label: "MAGIC BUTTON", type: "named" },
+  DAG4u8WTsf6bypPNC92Q8Nzpka32QMsEJ9Ns2dMC: { label: "PinSeeker", type: "named" },
+  DAG3BQhQmt7jhtBhc1F1yzuGUtse1jJ9GuK2zktm: { label: "Starchiver", type: "named" },
+  DAG7kLrYPr6S8317mgGvZpNuoWbejMFaYRMGdbCH: { label: "Stonedpipes", type: "named" },
+  DAG21eje4KqSRezdNtBmMfMBmtGusg2wRSpmD4oq: { label: "Teton Node", type: "named" },
+  DAG3sE767QmmYRGaZ9TYTfMrG3omkci7qpaMJxSP: { label: "The Sharepot", type: "named" },
+  DAG0NeNnZo5z4qsZS9qBZbcwyLnmpqLyyYrx9HYP: { label: "dag to the moon", type: "named" },
+  DAG8JkBtJuoPBffeFMyq4Ujqr6Pxdc7cFvzDaHQt: { label: "Victim", type: "flagged" },
+  DAG22po6o3yHa2DiohXcEZCDGofE6Qb6REutQN4d: { label: "THEFT-1", type: "flagged" },
   // ── DAG Official Entities (type "official") ────────────────────────────────
   // Labelled in reports; count as PRIVATE COMMINGLING (not excluded like exchanges).
   // Team Foundation
@@ -869,7 +912,7 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG045Bmio7Jrv3aErTKjAisRnpBKvp16pp1wSqT: { label: "DOR Validator Tax Pool",    type: "official" },
   DAG2JsH1QKj8LrzmcgX2pf9MAcdhQWuihYnZMUNW: { label: "DOR Validator Tax",         type: "official" },
   // DTM Enterprise
-  DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE: { label: "DTM Enterprise Wallet",     type: "official" },
+  DAG8s4uKsTKV5hNVv9oHWophX1CYKVqJ88hM9MZE: { label: "DTM Enterprise Client",     type: "official" },
   DAG06pFXdTtqrx2H11oHyH5rBe6Ccx7XG8WSsPSA: { label: "DTM Enterprise Wallet",     type: "official" },
   // DTM Reward Pool
   DAG0U7R9jXMSiNMU5mgqpvCVuaBwfRBzY77nJZM1: { label: "DTM Reward Pool",           type: "official" },
@@ -894,18 +937,18 @@ const KNOWN_LABELS: Record<string, { label: string; type: "exchange" | "genesis"
   DAG3Sycgyv3UHQM3JDuGguoF5776ceR8GiwpdFJ9: { label: "Historical Treasury (2023 Transition)", type: "dag-team" },
   DAG0kib4L4YYZCWrch6eBYeQkYCywTCuEZX58vTp: { label: "Historical Treasury (2023 Transition)", type: "dag-team" },
   // Bridge / Infrastructure (DAG only)
-  DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Official Bridge / Base Wallet", type: "official" },
-  DAG7R9cHuBgWS7w2tybcJHrTHFxtMdNB6523JAMQ: { label: "Constellation Official Bridge / Base Wallet", type: "official" },
+  DAG3pBTP4AKQQa6Vpbk59Np7MVa7ogToqujCKa1B: { label: "Official Bridge / Base Wallet (Bridge Hot Wallet)", type: "official" },
+  DAG7R9cHuBgWS7w2tybcJHrTHFxtMdNB6523JAMQ: { label: "Constellation Official Bridge / Base Wallet (Bridge Hot Wallet)", type: "official" },
   DAG471pakWWz3ZAFvX5uhA7uyufSkv7E41Lh77Ge: { label: "Gate Bridge Cold Wallet", type: "bridge" },
   DAG5KmHp9gFS723uN6uukwRqCTwvrddaW5QuKKKz: { label: "DAG Reward / Team Wallet",      type: "genesis"  },
   // Constellation Foundation Wallets
   DAG7R5sZCC87GB2C7oxsLE7EvSkPZyCGtPEqd25n: { label: "Constellation Foundation / Legacy Distribution Wallet", type: "official" },
   DAG8MKzFQkgwxzAMAV1CPyNRwx3stvLTgkKu4QJW: { label: "Constellation Foundation / Reward Distribution Wallet", type: "official" },
   DAG72buDf2jPtHXBZqb2gdcGaWx9JkPYTX1YmSSS: { label: "Constellation Foundation / Core Wallet",                type: "official" },
-  DAG6stSuh8C46VVHvFybyCjdC4UPu42xXq2Si9Z3: { label: "Constellation Distribution Wallet (Node Rewards)",      type: "official" },
+  DAG6stSuh8C46VVHvFybyCjdC4UPu42xXq2Si9Z3: { label: "Softnode Reward Distribution",      type: "official" },
   DAG7X5idd4aLfp4XC6WQdG1eDfR3LGPVEwtUUB2W: { label: "PacaSwap METAGRAPH", type: "defi" },
-  DAG5LEmVdtMGryBs1UBLMfg37LoSiVHC8Q4odps9: { label: "Node Staking Reward Wallet", type: "official" },
-  DAG5hKjytwENhcx2vmC5qWyWSgnqWmYq7cUvGLDG: { label: "Node Staking Reward Wallet", type: "official" },
+  DAG5LEmVdtMGryBs1UBLMfg37LoSiVHC8Q4odps9: { label: "Integrationnet Reward Distribution", type: "official" },
+  DAG5hKjytwENhcx2vmC5qWyWSgnqWmYq7cUvGLDG: { label: "DTM Reward Distribution", type: "official" },
   DAG85WHJvW9yVfVj1CYshjAg5zrptbNHrhVEbh6o: { label: "Dor Enterprise Reward Wallet", type: "official" },
   DAG7Ghth1WhWK83SB3MtXnnHYZbCsmiRTwJrgaW1: { label: "Upsider Reward METAGRAPH Wallet", type: "official" },
   // DAG Exchanges
